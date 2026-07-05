@@ -37,8 +37,12 @@ describe('classic Bobble League shared rules', () => {
 
     const accepted = launchBobble(s, 'l', { bobbleId: 'left-1', aimAngle: 0, impulse: 600 }, 1000);
     expect(accepted).toBe(true);
-    expect(s.phase).toBe('resolving');
+    expect(s.phase).toBe('planning');
     expect(s.pendingIntents['left-1']?.impulse).toBe(600);
+    for (const id of ['left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: 0, impulse: 1 }, 1000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
+    stepGame(s, {}, 1000, seq([0.1, 0.2, 0.3]));
+    expect(s.phase).toBe('resolving');
 
     for (let i = 0; i < 260 && s.phase === 'resolving'; i++) stepGame(s, {}, 1000 + i * 33, seq([0.1, 0.2, 0.3]));
 
@@ -59,7 +63,8 @@ describe('classic Bobble League shared rules', () => {
       addPlayer(s, 'r', 'Righty', 'tigers', 'right');
       startGame(s);
       s.turn = maxTurns;
-      launchBobble(s, 'l', { bobbleId: 'left-1', aimAngle: Math.PI, impulse: 1 }, 1000);
+      for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
+      for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: 0, impulse: 1 }, 1000);
       for (let i = 0; i < 260 && s.phase !== 'finished'; i++) stepGame(s, {}, 1000 + i * 33);
       expect(s.phase).toBe('finished');
       expect(s.winner).toBeNull();
@@ -93,5 +98,34 @@ describe('classic Bobble League shared rules', () => {
       'bigHead', 'ghosted', 'movePlayer'
     ]));
     expect(BOX_TYPE_IDS).toHaveLength(11);
+  });
+
+  it('distributes four bobbles across four teammates and resolves when all eight are aimed', () => {
+    const s = createInitialState('EIGHT', 1);
+    for (let i = 0; i < 4; i++) addPlayer(s, `l${i}`, `Left ${i}`, 'pigs', 'left');
+    for (let i = 0; i < 4; i++) addPlayer(s, `r${i}`, `Right ${i}`, 'parrots', 'right');
+    startGame(s, seq([0.5]));
+    for (let i = 0; i < 4; i++) expect(s.players[`l${i}`].controlledBobbleIds).toEqual([`left-${i + 1}`]);
+    for (let i = 0; i < 4; i++) expect(s.players[`r${i}`].controlledBobbleIds).toEqual([`right-${i + 1}`]);
+    for (let i = 1; i <= 4; i++) launchBobble(s, `l${i - 1}`, { bobbleId: `left-${i}`, aimAngle: 0, impulse: 50 }, 1000);
+    for (let i = 1; i <= 4; i++) launchBobble(s, `r${i - 1}`, { bobbleId: `right-${i}`, aimAngle: Math.PI, impulse: 50 }, 1000);
+    stepGame(s, {}, 1000, seq([0.5]));
+    expect(s.phase).toBe('resolving');
+    expect(Object.keys(s.pendingIntents)).toHaveLength(8);
+  });
+
+  it('scores only after the ball crosses through the goal mouth trigger', () => {
+    const s = createInitialState('GOAL', 1);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.ball.pos = { x: FIELD.width + FIELD.goalDepth, y: FIELD.goalY + FIELD.goalHeight / 2 };
+    s.ball.vel = { x: 20, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.phase).toBe('finished');
+    expect(s.winner).toBe('left');
+    expect(s.score.left).toBe(1);
   });
 });

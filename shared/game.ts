@@ -29,6 +29,7 @@ const BOBBLE_DRAG = 0.985;
 const BALL_DRAG = 0.992;
 const SETTLE_SPEED = 18;
 const MAX_RESOLVE_MS = 2500;
+const TURN_DURATION_MS = 15000;
 
 export function createInitialState(roomCode: string, mode: GameMode = 3): GameState {
   const length = GAME_LENGTHS[mode];
@@ -36,10 +37,11 @@ export function createInitialState(roomCode: string, mode: GameMode = 3): GameSt
     roomCode,
     phase: 'lobby',
     mode,
-    config: { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] },
+    config: { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] },
     winner: null,
     turn: 1,
     kickoffAt: Date.now(),
+    turnDeadlineAt: Date.now() + TURN_DURATION_MS,
     resolvingStartedAt: null,
     nextBoxId: 1,
     players: {},
@@ -104,13 +106,15 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.swappedGoalsUntilTurn = null;
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius };
   buildBobbles(state);
+  state.kickoffAt = Date.now();
+  state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   pushEvent(state, `Kickoff! First to ${state.mode}.`);
 }
 
 export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.random) {
   const length = GAME_LENGTHS[mode];
   state.mode = mode;
-  state.config = { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] };
+  state.config = { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] };
   state.phase = 'lobby';
   state.winner = null;
   state.turn = 1;
@@ -121,41 +125,61 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius };
+  state.kickoffAt = Date.now();
+  state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   for (const p of Object.values(state.players)) p.score = 0;
   buildBobbles(state);
   pushEvent(state, `Reset to ${length.length} first-to-${mode}.`);
 }
 
-export function launchBobble(state: GameState, playerId: string, intent: TurnIntent, now = Date.now()) {
+export function launchBobble(state: GameState, playerId: string, intent: TurnIntent, _now = Date.now()) {
   if (state.phase !== 'planning') return false;
   const player = state.players[playerId];
   if (!player || !player.connected || !player.controlledBobbleIds.includes(intent.bobbleId)) return false;
   const bobble = state.bobbles.find(b => b.id === intent.bobbleId);
   if (!bobble || bobble.lastLaunchedTurn === state.turn) return false;
   const impulse = Math.max(1, Math.min(900, intent.impulse));
-  const boost = bobble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
-  bobble.vel.x += Math.cos(intent.aimAngle) * impulse * boost;
-  bobble.vel.y += Math.sin(intent.aimAngle) * impulse * boost;
-  bobble.lastLaunchedTurn = state.turn;
   state.pendingIntents[bobble.id] = { bobbleId: bobble.id, aimAngle: intent.aimAngle, impulse };
-  state.phase = 'resolving';
-  state.resolvingStartedAt = now;
-  pushEvent(state, `${player.name} launched ${bobble.id}.`);
+  bobble.lastLaunchedTurn = state.turn;
+  pushEvent(state, `${player.name} aimed ${bobble.id}.`);
   return true;
 }
 
 export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> = {}, now = Date.now(), rng: Rng = Math.random, dtMs = TICK_MS) {
+  if (state.phase === 'planning') {
+    if (shouldResolveTurn(state, now)) beginResolving(state, now);
+    else return;
+  }
   if (state.phase !== 'resolving') return;
   const dt = dtMs / 1000;
   expireTurnEffects(state);
   for (const b of state.bobbles) integrateCircle(b.pos, b.vel, b.radius, dt, BOBBLE_DRAG);
   integrateBall(state, dt);
+  resolveCornerBumpers(state);
   resolveBobbleCollisions(state);
   collectBoxesForBobbles(state, now);
   const goal = detectGoal(state);
   if (goal) return handleClassicGoal(state, goal, now, rng);
   const started = state.resolvingStartedAt ?? now;
   if (now - started >= MAX_RESOLVE_MS || allSettled(state)) endTurn(state, now, rng);
+}
+
+function shouldResolveTurn(state: GameState, now: number) {
+  const required = state.bobbles.map(b => b.id);
+  return now >= state.turnDeadlineAt || required.every(id => Boolean(state.pendingIntents[id]));
+}
+
+function beginResolving(state: GameState, now: number) {
+  for (const intent of Object.values(state.pendingIntents)) {
+    const bobble = state.bobbles.find(b => b.id === intent.bobbleId);
+    if (!bobble) continue;
+    const boost = bobble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
+    bobble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost;
+    bobble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost;
+  }
+  state.phase = 'resolving';
+  state.resolvingStartedAt = now;
+  pushEvent(state, `Turn ${state.turn} resolving with ${Object.keys(state.pendingIntents).length}/${state.bobbles.length} bobbles aimed.`);
 }
 
 export function collectPowerBox(state: GameState, bobble: BobbleState, now = Date.now()) {
@@ -205,7 +229,11 @@ function buildBobbles(state: GameState) {
   for (const side of ['left', 'right'] as const) {
     const playerIds = Object.values(state.players).filter(p => p.side === side).map(p => p.id);
     const ids = Array.from({ length: 4 }, (_, i) => `${side}-${i + 1}`);
-    for (const playerId of playerIds) state.players[playerId].controlledBobbleIds = ids;
+    for (const playerId of playerIds) state.players[playerId].controlledBobbleIds = [];
+    ids.forEach((bobbleId, i) => {
+      if (playerIds.length === 0) return;
+      state.players[playerIds[i % playerIds.length]].controlledBobbleIds.push(bobbleId);
+    });
     for (let i = 0; i < 4; i++) state.bobbles.push({ id: ids[i], side, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, radius: FIELD.bobbleRadius, effects: [], lastLaunchedTurn: 0 });
     placeFormation(state, side);
   }
@@ -258,6 +286,36 @@ function integrateBall(state: GameState, dt: number) {
     if (b.pos.x < b.radius) { b.pos.x = b.radius; b.vel.x = Math.abs(b.vel.x) * 0.88; }
     if (b.pos.x > FIELD.width - b.radius) { b.pos.x = FIELD.width - b.radius; b.vel.x = -Math.abs(b.vel.x) * 0.88; }
   }
+}
+
+function resolveCornerBumpers(state: GameState) {
+  const bumpers = [
+    { x: 92, y: 92 },
+    { x: FIELD.width - 92, y: 92 },
+    { x: 92, y: FIELD.height - 92 },
+    { x: FIELD.width - 92, y: FIELD.height - 92 }
+  ];
+  const bumperRadius = 36;
+  for (const c of bumpers) {
+    for (const b of state.bobbles) staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, 0.92);
+    staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, 1.04);
+  }
+}
+
+function staticCircleBounce(pos: Vec, vel: Vec, radius: number, center: Vec, bumperRadius: number, restitution: number) {
+  const dx = pos.x - center.x, dy = pos.y - center.y;
+  const d = Math.hypot(dx, dy) || 0.0001;
+  const min = radius + bumperRadius;
+  if (d >= min) return false;
+  const nx = dx / d, ny = dy / d;
+  pos.x = center.x + nx * min;
+  pos.y = center.y + ny * min;
+  const into = vel.x * nx + vel.y * ny;
+  if (into < 0) {
+    vel.x -= (1 + restitution) * into * nx;
+    vel.y -= (1 + restitution) * into * ny;
+  }
+  return true;
 }
 
 function resolveBobbleCollisions(state: GameState) {
@@ -353,6 +411,7 @@ function endTurn(state: GameState, now: number, rng: Rng) {
   state.resolvingStartedAt = null;
   state.pendingIntents = {};
   resetForPlanning(state, rng);
+  state.turnDeadlineAt = now + state.config.turnDurationMs;
   if (state.turn % state.config.boxSpawnEveryTurns === 0) spawnBox(state, now, rng);
 }
 
