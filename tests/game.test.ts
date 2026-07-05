@@ -114,6 +114,29 @@ describe('classic Bobble League shared rules', () => {
     expect(Object.keys(s.pendingIntents)).toHaveLength(8);
   });
 
+  it('resets ball and formations to kickoff after a non-winning goal', () => {
+    const s = createInitialState('KICK', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.ball.pos = { x: FIELD.width + FIELD.goalDepth, y: FIELD.goalY + FIELD.goalHeight / 2 };
+    s.ball.vel = { x: 20, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+
+    expect(s.score.left).toBe(1);
+    expect(s.phase).toBe('planning');
+    expect(s.turn).toBe(2);
+    expect(s.ball.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 });
+
+    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: 0, impulse: 1 }, 2000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 2000);
+    for (let i = 0; i < 260 && s.turn === 2; i++) stepGame(s, {}, 2000 + i * 33, seq([0.5]));
+    expect(s.score.left).toBe(1);
+    expect(s.score.right).toBe(0);
+  });
+
   it('scores only after the ball crosses through the goal mouth trigger', () => {
     const s = createInitialState('GOAL', 1);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');

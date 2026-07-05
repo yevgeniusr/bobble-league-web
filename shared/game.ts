@@ -396,6 +396,9 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
     pushEvent(state, `${scorer} wins first-to-${state.mode}!`);
     return;
   }
+  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius };
+  placeFormation(state, 'left');
+  placeFormation(state, 'right');
   endTurn(state, now, rng);
 }
 
