@@ -7,10 +7,17 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, dev
 const errors = [];
 page.on('pageerror', e => errors.push(String(e)));
 page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-await page.goto(url, { waitUntil: 'networkidle' });
-await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /create room/i.test(b.textContent || ''))?.click());
-await page.waitForTimeout(600);
-await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /start match/i.test(b.textContent || ''))?.click());
+await page.goto(url, { waitUntil: 'domcontentloaded' });
+await page.locator('button', { hasText: /create room/i }).click({ force: true, timeout: 8000 });
+await page.waitForTimeout(1000);
+await page.evaluate(() => {
+  const b = [...document.querySelectorAll('button')].find(x => /start/i.test(x.textContent || ''));
+  if (!b) throw new Error('Start match button not found');
+  b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+});
+await page.waitForFunction(() => /planning/.test(document.body.innerText), null, { timeout: 8000 });
 await page.waitForTimeout(1600);
 const text = await page.locator('body').innerText().catch(()=>'');
 const canvasData = await page.evaluate(() => {
