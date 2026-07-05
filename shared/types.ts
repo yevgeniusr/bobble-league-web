@@ -130,6 +130,8 @@ export type GameState = {
   resolvingStartedAt: number | null;
   nextBoxId: number;
   players: Record<string, PlayerState>;
+  sideTeams: Record<PlayerSide, TeamId>;
+  formationSelectionTurn: number | null;
   formations: Record<PlayerSide, FormationId>;
   bobbles: BobbleState[];
   ball: BallState;
@@ -146,14 +148,15 @@ export type GameState = {
 };
 
 export type ClientToServerEvents = {
-  'room:create': (payload: { name: string; team: TeamId; mode: GameMode }, cb: (r: JoinResult) => void) => void;
-  'room:join': (payload: { roomCode: string; name: string; team: TeamId }, cb: (r: JoinResult) => void) => void;
+  'room:create': (payload: { name: string; team?: TeamId; mode: GameMode }, cb: (r: JoinResult) => void) => void;
+  'room:join': (payload: { roomCode: string; name: string; team?: TeamId }, cb: (r: JoinResult) => void) => void;
   'player:input': (input: PlayerInput) => void;
   'player:launch': (intent: TurnIntent) => void;
   'player:power': (use: PowerPlayUse) => void;
   'player:fieldRotate': (payload: { id: string }) => void;
   'player:formation': (formation: FormationId) => void;
   'player:team': (team: TeamId) => void;
+  'player:cheatBoxes': () => void;
   'game:start': () => void;
   'game:reset': (mode: GameMode) => void;
 };

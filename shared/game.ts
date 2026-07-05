@@ -29,10 +29,13 @@ export type Rng = () => number;
 export const blankInput: PlayerInput = { up: false, down: false, left: false, right: false, kick: false };
 
 const TICK_MS = 1000 / 30;
-// Higher floor friction so pieces settle instead of gliding like ice.
-const BOBBLE_DRAG = 0.962;
-const BALL_DRAG = 0.976;
-const BEACH_BALL_DRAG = 0.988;
+// Tuned for a heavy tabletop feel: strong pull impulse, visible inertia,
+// and enough rolling friction to avoid ice-like endless sliding.
+const BOBBLE_DRAG = 0.952;
+const BALL_DRAG = 0.968;
+const BEACH_BALL_DRAG = 0.982;
+export const BOBBLE_IMPULSE_SCALE = 1.12;
+export const BALL_MASS_FACTOR = 0.78;
 export const BOX_LIFETIME_TURNS = 3;
 const SETTLE_SPEED = 18;
 export const MAX_RESOLVE_MS = 10000;
@@ -55,6 +58,8 @@ export function createInitialState(roomCode: string, mode: GameMode = 3): GameSt
     resolvingStartedAt: null,
     nextBoxId: 1,
     players: {},
+    sideTeams: { left: 'pigs', right: 'tigers' },
+    formationSelectionTurn: null,
     formations: { left: 'forward', right: 'forward' },
     bobbles: [],
     ball: { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null },
@@ -73,11 +78,12 @@ export function createInitialState(roomCode: string, mode: GameMode = 3): GameSt
 
 export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide): PlayerState {
   const chosenSide = side ?? chooseSide(state);
+  const chosenTeam = state.sideTeams[chosenSide] ?? team;
   const p: PlayerState = {
     id,
     name: sanitizeName(name),
     side: chosenSide,
-    team,
+    team: chosenTeam,
     score: state.score[chosenSide],
     connected: true,
     controlledBobbleIds: []
@@ -88,7 +94,16 @@ export function addPlayer(state: GameState, id: string, name: string, team: Team
 }
 
 export function setPlayerTeam(state: GameState, id: string, team: TeamId) {
-  if (state.players[id] && TEAM_IDS.includes(team)) state.players[id].team = team;
+  return setSideTeam(state, id, team);
+}
+
+export function setSideTeam(state: GameState, id: string, team: TeamId) {
+  const player = state.players[id];
+  if (!player || !TEAM_IDS.includes(team)) return false;
+  state.sideTeams[player.side] = team;
+  for (const p of Object.values(state.players)) if (p.side === player.side) p.team = team;
+  pushEvent(state, `${player.side} chose ${team} mascot.`);
+  return true;
 }
 
 export function removePlayer(state: GameState, id: string) {
@@ -98,11 +113,14 @@ export function removePlayer(state: GameState, id: string) {
   }
 }
 
+export function canSelectFormation(state: GameState) {
+  return state.phase === 'lobby' || state.formationSelectionTurn === state.turn;
+}
+
 export function applyFormation(state: GameState, side: PlayerSide, formation: FormationId) {
-  if (!FORMATION_IDS.includes(formation)) return false;
+  if (!FORMATION_IDS.includes(formation) || !canSelectFormation(state)) return false;
   state.formations[side] = formation;
   if (state.bobbles.some(b => b.side === side)) placeFormation(state, side);
-  if (state.phase === 'formationSelect') state.phase = 'planning';
   pushEvent(state, `${side} selected ${formation} formation.`);
   return true;
 }
@@ -110,6 +128,7 @@ export function applyFormation(state: GameState, side: PlayerSide, formation: Fo
 export function startGame(state: GameState, rng: Rng = Math.random) {
   state.phase = 'planning';
   state.winner = null;
+  state.formationSelectionTurn = 1;
   state.turn = 1;
   state.score = { left: 0, right: 0 };
   state.boxes = [];
@@ -132,6 +151,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.mode = mode;
   state.config = { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] };
   state.phase = 'lobby';
+  state.formationSelectionTurn = null;
   state.winner = null;
   state.turn = 1;
   state.score = { left: 0, right: 0 };
@@ -195,8 +215,8 @@ function beginResolving(state: GameState, now: number) {
     if (!bobble) continue;
     const boost = bobble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
     const bigHead = bobble.effects.some(e => e.type === 'bigHead' && e.untilTurn >= state.turn) ? 1.3 : 1;
-    bobble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead;
-    bobble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead;
+    bobble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * BOBBLE_IMPULSE_SCALE;
+    bobble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * BOBBLE_IMPULSE_SCALE;
   }
   state.phase = 'resolving';
   state.resolvingStartedAt = now;
@@ -222,6 +242,14 @@ export function usePowerPlay(state: GameState, playerId: string, use: PowerPlayU
   inventory.splice(itemIndex, 1);
   applyPowerPlay(state, player.side, use, now);
   pushEvent(state, `${player.name} used ${BOX_TYPES[use.type].label}.`);
+  return true;
+}
+
+export function addCheatBoxes(state: GameState, playerIdOrSide: string | PlayerSide) {
+  const side = playerIdOrSide === 'left' || playerIdOrSide === 'right' ? playerIdOrSide : state.players[playerIdOrSide]?.side;
+  if (!side) return false;
+  state.powerPlayInventories[side].push(...BOX_TYPE_IDS.map(type => ({ type, availableTurn: state.turn })));
+  pushEvent(state, `CHEAT MODE: ${side} received every Power Play box for testing. All users are warned.`);
   return true;
 }
 
@@ -434,7 +462,7 @@ function circleBounce(a: Vec, av: Vec, ar: number, b: Vec, bv: Vec, br: number, 
   a.x -= nx * overlap; a.y -= ny * overlap; b.x += nx * overlap; b.y += ny * overlap;
   const rvx = bv.x - av.x, rvy = bv.y - av.y; const sep = rvx * nx + rvy * ny;
   const j = Math.max(24, Math.abs(sep) * impulse);
-  av.x -= nx * j * 0.25; av.y -= ny * j * 0.25; bv.x += nx * j; bv.y += ny * j;
+  av.x -= nx * j * 0.22; av.y -= ny * j * 0.22; bv.x += nx * j * BALL_MASS_FACTOR; bv.y += ny * j * BALL_MASS_FACTOR;
   return true;
 }
 
@@ -515,10 +543,10 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null };
   placeFormation(state, 'left');
   placeFormation(state, 'right');
-  endTurn(state, now, rng);
+  endTurn(state, now, rng, true);
 }
 
-function endTurn(state: GameState, now: number, rng: Rng) {
+function endTurn(state: GameState, now: number, rng: Rng, unlockFormation = false) {
   if (state.turn >= state.config.maxTurns) {
     state.phase = 'finished';
     state.winner = state.score.left === state.score.right ? null : state.score.left > state.score.right ? 'left' : 'right';
@@ -527,6 +555,7 @@ function endTurn(state: GameState, now: number, rng: Rng) {
   }
   state.turn += 1;
   state.phase = 'planning';
+  state.formationSelectionTurn = unlockFormation ? state.turn : null;
   state.resolvingStartedAt = null;
   state.pendingIntents = {};
   resetForPlanning(state, rng);

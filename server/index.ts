@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { addPlayer, applyFormation, blankInput, createInitialState, launchBobble, removePlayer, resetGame, rotateFieldObject, setPlayerTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, launchBobble, removePlayer, resetGame, rotateFieldObject, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,8 +38,8 @@ if (isProd) {
 const httpServer = createServer(app);
 const io: IOServer = new Server(httpServer, { cors: { origin: true, credentials: false } });
 
-const createSchema = z.object({ name: z.string().max(24), team: z.enum(TEAM_IDS as [string, ...string[]]), mode: z.union([z.literal(1), z.literal(3), z.literal(5)]) });
-const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), team: z.enum(TEAM_IDS as [string, ...string[]]) });
+const createSchema = z.object({ name: z.string().max(24), team: z.enum(TEAM_IDS as [string, ...string[]]).optional(), mode: z.union([z.literal(1), z.literal(3), z.literal(5)]) });
+const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), team: z.enum(TEAM_IDS as [string, ...string[]]).optional() });
 
 io.on('connection', socket => {
   socket.on('room:create', (payload, cb) => {
@@ -49,7 +49,7 @@ io.on('connection', socket => {
     const state = createInitialState(roomCode, parsed.data.mode as GameMode);
     const room: Room = { state, inputs: {}, lastActiveAt: Date.now() };
     rooms.set(roomCode, room);
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId);
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
     cb({ ok: true, roomCode, playerId: socket.id });
   });
 
@@ -59,7 +59,7 @@ io.on('connection', socket => {
     const room = rooms.get(parsed.data.roomCode);
     if (!room) return cb({ ok: false, error: 'Room not found.' });
     if (Object.values(room.state.players).filter(p => p.connected).length >= 8) return cb({ ok: false, error: 'Room is full.' });
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId);
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
     cb({ ok: true, roomCode: parsed.data.roomCode, playerId: socket.id });
   });
 
@@ -91,13 +91,22 @@ io.on('connection', socket => {
   socket.on('player:formation', formation => {
     const room = currentRoom(socket); if (!room) return;
     const player = room.state.players[socket.id];
-    if (player && FORMATION_IDS.includes(formation)) applyFormation(room.state, player.side, formation);
+    if (player && FORMATION_IDS.includes(formation)) {
+      if (!applyFormation(room.state, player.side, formation)) socket.emit('room:error', 'Position selection is only available on kickoff and right after a goal.');
+    }
     room.lastActiveAt = Date.now();
   });
 
   socket.on('player:team', team => {
     const room = currentRoom(socket); if (!room) return;
-    if (TEAM_IDS.includes(team)) setPlayerTeam(room.state, socket.id, team);
+    if (TEAM_IDS.includes(team)) setSideTeam(room.state, socket.id, team);
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('player:cheatBoxes', () => {
+    const room = currentRoom(socket); if (!room) return;
+    if (addCheatBoxes(room.state, socket.id)) io.to(room.state.roomCode).emit('room:error', 'CHEAT MODE: a player added every Power Play box for testing.');
+    room.lastActiveAt = Date.now();
   });
 
   socket.on('game:start', () => { const room = currentRoom(socket); if (room) startGame(room.state); });
@@ -105,11 +114,12 @@ io.on('connection', socket => {
   socket.on('disconnect', () => { const room = currentRoom(socket); if (room) removePlayer(room.state, socket.id); });
 });
 
-function joinRoom(socket: IOSocket, room: Room, name: string, team: TeamId) {
+function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
   socket.data.roomCode = room.state.roomCode;
   socket.data.playerId = socket.id;
   socket.join(room.state.roomCode);
   addPlayer(room.state, socket.id, name, team);
+  if (team) setSideTeam(room.state, socket.id, team);
   room.inputs[socket.id] = { ...blankInput };
   room.lastActiveAt = Date.now();
   socket.emit('game:state', room.state, socket.id);
@@ -126,4 +136,4 @@ setInterval(() => {
   }
 }, 1000 / 30);
 
-httpServer.listen(port, () => console.log(`Bobble League listening on :${port}`));
+httpServer.listen(port, () => console.log(`BAbble League listening on :${port}`));

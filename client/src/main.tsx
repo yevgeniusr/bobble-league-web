@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
-import { BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, PowerPlayUse, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, TeamId, Vec } from '../../shared/types';
+import { BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, PowerPlayUse, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
 import { BobbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
 
@@ -12,7 +12,6 @@ function App() {
   const [state, setState] = React.useState<GameState | null>(null);
   const [you, setYou] = React.useState('');
   const [name, setName] = React.useState(() => localStorage.getItem('bobble:name') || `Player${Math.floor(Math.random()*99)}`);
-  const [team, setTeam] = React.useState<TeamId>('pigs');
   const [mode, setMode] = React.useState<GameMode>(3);
   const [roomCode, setRoomCode] = React.useState('');
   const [error, setError] = React.useState('');
@@ -25,28 +24,28 @@ function App() {
 
   function createRoom() {
     localStorage.setItem('bobble:name', name);
-    socket.emit('room:create', { name, team, mode }, res => res.ok ? (setRoomCode(res.roomCode), setError('')) : setError(res.error));
+    socket.emit('room:create', { name, mode }, res => res.ok ? (setRoomCode(res.roomCode), setError('')) : setError(res.error));
   }
   function joinRoom() {
     localStorage.setItem('bobble:name', name);
-    socket.emit('room:join', { roomCode: roomCode.toUpperCase(), name, team }, res => res.ok ? (setError(''), setRoomCode(res.roomCode)) : setError(res.error));
+    socket.emit('room:join', { roomCode: roomCode.toUpperCase(), name }, res => res.ok ? (setError(''), setRoomCode(res.roomCode)) : setError(res.error));
   }
 
   return <main>
     {!state && <section className="panel hero">
       <div className="heroLeft">
         <p className="eyebrow">arcade tabletop soccer</p>
-        <h1>Bobble<br/>League</h1>
-        <p className="sub">Drag-launch your bobbleheads, smash corner bumpers, and grab mystery Power Plays in turn-based arcade soccer.</p>
+        <h1>BAbble<br/>League</h1>
+        <p className="sub">Drag-launch your babbleheads, smash corner bumpers, and grab mystery Power Plays in turn-based arcade soccer.</p>
         <ArenaPreview/>
         <div className="powerTiles">{POWER_PREVIEW.map(t=><div key={t} className="powerTile" style={{background: BOX_TYPES[t].color}} title={BOX_TYPES[t].description}><span className="powerIcon">{POWER_ICONS[t] ?? '★'}</span>{BOX_TYPES[t].label}</div>)}</div>
       </div>
       <div className="heroRight">
         <section className="lobbyCard">
-          <h2>Suit up</h2>
+          <h2>Create or join</h2>
           <label>Your name <input value={name} onChange={e=>setName(e.target.value)} maxLength={18}/></label>
-          <p className="fieldLabel">Pick a mascot</p>
-          <div className="mascotGrid">{TEAM_IDS.map(id=><button key={id} type="button" className={`mascot ${team===id?'selected':''}`} style={{ background: TEAMS[id].primary, color: TEAMS[id].secondary }} onClick={()=>setTeam(id)}><span className="mEmoji">{TEAMS[id].emoji}</span><span className="mName">{TEAMS[id].label}</span></button>)}</div>
+          <p className="fieldLabel">Pick mascots after joining the room with your team</p>
+          <div className="lobbyMascotPreview">{(['left','right'] as const).map(side=>{ const id = side === 'left' ? 'pigs' : 'tigers'; const t = TEAMS[id]; return <div key={side} className="teamPreviewCard" style={{ background: t.primary, color: t.secondary }}><span>{side === 'left' ? 'Left' : 'Right'}</span><b>{t.emoji} {t.label}</b></div>; })}</div>
           <div className="lobbySplit">
             <div className="lobbyCol">
               <p className="fieldLabel">Host a match</p>
@@ -117,7 +116,7 @@ function RoomCodeBadge({ code }: { code: string }) {
     <span className="roomCodeLabel">Room</span>
     <b className="roomCodeValue">{code}</b>
     <button type="button" onClick={()=>copy(code, 'code')}>{copied === 'code' ? 'Copied!' : 'Copy code'}</button>
-    <button type="button" onClick={()=>copy(`Join my Bobble League match! Room code: ${code} → ${location.origin}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
+    <button type="button" onClick={()=>copy(`Join my BAbble League match! Room code: ${code} → ${location.origin}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
   </div>;
 }
 
@@ -128,32 +127,51 @@ function GameScreen({ state, you, mode, setMode, error }: { state: GameState; yo
   return <section className="gameShell">
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing}/>
     <RoomCodeBadge code={state.roomCode}/>
+    <RoomPanel state={state} you={you}/>
     <HUD state={state} you={you} mode={mode} setMode={setMode} placing={placing} setPlacing={setPlacing}/>
     {error && <section className="panel error">{error}</section>}
   </section>;
 }
 
+function RoomPanel({ state, you }: { state: GameState; you: string }) {
+  const me = state.players[you];
+  const connected = Object.values(state.players).filter(p => p.connected);
+  const sides = ['left','right'] as const;
+  return <aside className="roomPanel">
+    <b>Room teams</b>
+    {sides.map(side => { const team = TEAMS[state.sideTeams[side]]; const players = connected.filter(p => p.side === side); const mine = me?.side === side; return <section key={side} className="sidePreview" style={{ borderColor: team.primary }}>
+      <div className="sideHeader"><span>{side.toUpperCase()}</span><strong>{team.emoji} {team.label}</strong></div>
+      {mine && <div className="miniMascots">{TEAM_IDS.map(id => <button key={id} type="button" className={state.sideTeams[side]===id?'selected':''} title={TEAMS[id].label} style={{ background: TEAMS[id].primary, color: TEAMS[id].secondary }} onClick={()=>socket.emit('player:team', id)}>{TEAMS[id].emoji}</button>)}</div>}
+      <div className="playerPreview">{players.length ? players.map(p => <span key={p.id} className={p.id===you?'you':''}>{p.name}{p.id===you?' (you)':''}</span>) : <span>Waiting…</span>}</div>
+    </section>; })}
+  </aside>;
+}
+
 function HUD({ state, you, mode, setMode, placing, setPlacing }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void }) {
+  const [targetBobbleId, setTargetBobbleId] = React.useState('');
   const me = state.players[you];
   const inventory = me ? state.powerPlayInventories[me.side] : [];
   const ownRotatable = me ? state.fieldObjects.filter(o => o.owner === me.side && o.untilTurn >= state.turn && ROTATABLE_FIELD_OBJECTS.includes(o.type)) : [];
+  const formationOpen = state.phase === 'lobby' || state.formationSelectionTurn === state.turn;
+  const targetId = targetBobbleId || state.bobbles.find(b => b.side === me?.side)?.id || state.bobbles[0]?.id || '';
   return <section className="panel gameHud">
     <div className="domScore"><b>Left</b><span>{state.score.left}</span><small>{state.config.length}: first to {state.config.goalTarget}, turn {state.turn}/{state.config.maxTurns} · {state.phase} · {Math.max(0, Math.ceil((state.turnDeadlineAt - Date.now())/1000))}s · aimed {Object.keys(state.pendingIntents).length}/{state.bobbles.length}</small><span>{state.score.right}</span><b>Right</b></div>
-    <div className="actions"><button onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button><select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select><button onClick={()=>socket.emit('game:reset', mode)}>Reset</button></div>
-    {me && <div className="actions formations">{FORMATION_IDS.map(id=><button key={id} className={state.formations[me.side]===id?'selected':''} onClick={()=>socket.emit('player:formation', id)} title={FORMATIONS[id].description}>{FORMATIONS[id].label}</button>)}</div>}
-    {me && <div className="inventory"><b>Power Plays</b>{inventory.length ? inventory.map((item, i)=><button key={`${item.type}-${i}`} disabled={item.availableTurn > state.turn} title={BOX_TYPES[item.type].description} onClick={()=>useInventory(item.type as BoxType, state, me.side, setPlacing)}>{BOX_TYPES[item.type].label}{item.availableTurn > state.turn ? ` (turn ${item.availableTurn})` : ''}</button>) : <small>No Power Plays yet. Run a bobble into the ? box.</small>}</div>}
+    <div className="actions"><button onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button><select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select><button onClick={()=>socket.emit('game:reset', mode)}>Reset</button><button className="cheat" title="Testing only: warns all users" onClick={()=>socket.emit('player:cheatBoxes')}>Cheat boxes ⚠</button></div>
+    {me && <div className="actions formations">{formationOpen ? FORMATION_IDS.map(id=><button key={id} className={state.formations[me.side]===id?'selected':''} onClick={()=>socket.emit('player:formation', id)} title={FORMATIONS[id].description}>{FORMATIONS[id].label}</button>) : <small>Position selection locked until the next goal.</small>}</div>}
+    {me && <div className="inventory targetPicker"><b>Box target</b><select value={targetId} onChange={e=>setTargetBobbleId(e.target.value)}>{state.bobbles.map(b => <option key={b.id} value={b.id}>{b.side} {b.id}</option>)}</select><small>Boxes can target any player.</small></div>}
+    {me && <div className="inventory"><b>Power Plays</b>{inventory.length ? inventory.map((item, i)=><button key={`${item.type}-${i}`} disabled={item.availableTurn > state.turn} title={BOX_TYPES[item.type].description} onClick={()=>useInventory(item.type as BoxType, state, me.side, targetId, setPlacing)}>{BOX_TYPES[item.type].label}{item.availableTurn > state.turn ? ` (turn ${item.availableTurn})` : ''}</button>) : <small>No Power Plays yet. Run a bobble or last-touched ball into the ? box.</small>}</div>}
     {placing && <div className="inventory hint"><b>Placing {BOX_TYPES[placing.type as BoxType].label}</b><small>Move mouse to aim · R rotates · click to place · Esc cancels</small></div>}
     {!placing && ownRotatable.length > 0 && state.phase === 'planning' && <div className="inventory hint"><small>Tip: click your placed pads to rotate them 45°.</small></div>}
   </section>;
 }
 
-function useInventory(type: BoxType, state: GameState, side: 'left' | 'right', setPlacing: (p: PlacingGhost | null)=>void) {
+function useInventory(type: BoxType, state: GameState, side: 'left' | 'right', targetBobbleId: string, setPlacing: (p: PlacingGhost | null)=>void) {
   if (PLACEABLE.includes(type)) {
     setPlacing({ type: type as FieldObjectType, pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: side === 'left' ? 0 : Math.PI });
     return;
   }
-  const own = state.bobbles.find(b => b.side === side);
-  const use: PowerPlayUse = { type, targetBobbleId: own?.id, position: { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: side === 'left' ? 0 : Math.PI };
+  const target = state.bobbles.find(b => b.id === targetBobbleId) ?? state.bobbles.find(b => b.side === side);
+  const use: PowerPlayUse = { type, targetBobbleId: target?.id, position: target?.pos ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: side === 'left' ? 0 : Math.PI };
   socket.emit('player:power', use);
 }
 
@@ -161,15 +179,23 @@ function Game3D({ state, you, placing, setPlacing }: { state: GameState; you: st
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const rendererRef = React.useRef<BobbleLeague3DRenderer | null>(null);
   const [drag, setDrag] = React.useState<{ bobbleId: string; start: Vec; current: Vec } | null>(null);
+  const [renderError, setRenderError] = React.useState('');
   const me = state.players[you];
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const renderer = new BobbleLeague3DRenderer(canvas);
-    rendererRef.current = renderer;
+    let renderer: BobbleLeague3DRenderer | null = null;
+    try {
+      renderer = new BobbleLeague3DRenderer(canvas);
+      rendererRef.current = renderer;
+      setRenderError('');
+    } catch (err) {
+      rendererRef.current = null;
+      setRenderError('3D renderer unavailable in this browser; gameplay state still loads.');
+    }
     return () => {
-      renderer.dispose();
+      renderer?.dispose();
       rendererRef.current = null;
     };
   }, []);
@@ -224,7 +250,10 @@ function Game3D({ state, you, placing, setPlacing }: { state: GameState; you: st
     setDrag(null);
   };
 
-  return <canvas className="field threeField" ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setDrag(null)} aria-label="3D Bobble League field"/>;
+  return <>
+    <canvas className="field threeField" ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setDrag(null)} aria-label="3D BAbble League field"/>
+    {renderError && <div className="renderFallback"><b>3D preview unavailable</b><span>{renderError}</span></div>}
+  </>;
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addCheatBoxes,
   addPlayer,
   applyFormation,
   BOX_LIFETIME_TURNS,
@@ -8,6 +9,7 @@ import {
   launchBobble,
   MAX_RESOLVE_MS,
   rotateFieldObject,
+  setSideTeam,
   spawnBox,
   startGame,
   stepGame,
@@ -127,6 +129,69 @@ describe('classic Bobble League shared rules', () => {
     expect(s.boxes.some(b => b.id === 'ball-box')).toBe(false);
     expect(s.powerPlayInventories.left).toEqual([{ type: 'boost', availableTurn: 2 }]);
     expect(s.powerPlayInventories.right).toHaveLength(0);
+  });
+
+  it('allows power plays to target any player on either team', () => {
+    const s = createInitialState('ANY', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'bigHead', availableTurn: 1 });
+
+    expect(usePowerPlay(s, 'l', { type: 'bigHead', targetBobbleId: 'right-2' }, 1000)).toBe(true);
+
+    expect(s.bobbles.find(b => b.id === 'right-2')?.effects.map(e => e.type)).toContain('bigHead');
+    expect(s.bobbles.find(b => b.id === 'left-1')?.effects.map(e => e.type)).not.toContain('bigHead');
+  });
+
+  it('locks formation selection except kickoff and the first turn after a goal', () => {
+    const s = createInitialState('FORM', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(applyFormation(s, 'left', 'box')).toBe(true);
+    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: 0, impulse: 1 }, 1000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
+    for (let i = 0; i < 400 && s.phase === 'planning'; i++) stepGame(s, {}, 1000 + i * 33, seq([0.5]));
+    for (let i = 0; i < 400 && s.phase === 'resolving'; i++) stepGame(s, {}, 2000 + i * 33, seq([0.5]));
+    expect(s.phase).toBe('planning');
+    expect(s.turn).toBe(2);
+    expect(applyFormation(s, 'left', 'rush')).toBe(false);
+
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 5000;
+    s.ball.pos = { x: FIELD.width + FIELD.goalDepth, y: FIELD.goalY + FIELD.goalHeight / 2 };
+    s.ball.vel = { x: 20, y: 0 };
+    stepGame(s, {}, 5033, seq([0.5]));
+    expect(s.phase).toBe('planning');
+    expect(applyFormation(s, 'left', 'rush')).toBe(true);
+  });
+
+  it('cheat boxes add every box type to the requesting side with immediate availability and warnings', () => {
+    const s = createInitialState('CHEAT', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    // addCheatBoxes should be implemented by production code.
+    expect(() => addCheatBoxes(s, 'l')).not.toThrow();
+    expect(s.powerPlayInventories.left.map(i => i.type).sort()).toEqual([...BOX_TYPE_IDS].sort());
+    expect(s.powerPlayInventories.left.every(i => i.availableTurn === s.turn)).toBe(true);
+    expect(s.events.at(-1)?.message).toMatch(/CHEAT/i);
+  });
+
+  it('lets a side mascot change in the room and mirrors it to team players', () => {
+    const s = createInitialState('TEAM', 3);
+    addPlayer(s, 'l1', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'l2', 'Left Two', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+
+    expect(setSideTeam(s, 'l1', 'bees')).toBe(true);
+    expect(s.sideTeams.left).toBe('bees');
+    expect(s.players.l1.team).toBe('bees');
+    expect(s.players.l2.team).toBe('bees');
+    expect(s.players.r.team).toBe('tigers');
   });
 
   it('defines all eleven researched power plays as box types', () => {
