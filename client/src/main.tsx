@@ -32,20 +32,20 @@ function App() {
   }
 
   return <main>
-    <section className="panel hero">
-      <div><p className="eyebrow">turn-based drag-launch bobble soccer</p><h1>Bobble League Classic</h1><p className="sub">Four bobbles per side, formations, Power Plays, and {state?.config.length ?? 'qualifier'} match rules.</p></div>
-      <div className="roomBadge">{state ? `ROOM ${state.roomCode}` : 'CREATE OR JOIN'}</div>
-    </section>
-    {!state && <section className="panel lobby">
-      <label>Your name <input value={name} onChange={e=>setName(e.target.value)} maxLength={18}/></label>
-      <label>Team <select value={team} onChange={e=>setTeam(e.target.value as TeamId)}>{TEAM_IDS.map(id=><option key={id} value={id}>{TEAMS[id].emoji} {TEAMS[id].label}</option>)}</select></label>
-      <label>Game length <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage: 1 goal / 30 turns</option><option value={3}>Qualifier: 3 goals / 90 turns</option><option value={5}>Champion: 5 goals / 150 turns</option></select></label>
-      <button onClick={createRoom}>Create room</button>
-      <label>Room code <input value={roomCode} onChange={e=>setRoomCode(e.target.value)} maxLength={8}/></label>
-      <button onClick={joinRoom}>Join room</button>
+    {!state && <section className="panel hero">
+      <div><p className="eyebrow">arcade tabletop soccer</p><h1>Bobble<br/>League</h1><p className="sub">Choose a mascot, invite players, pick the match length, then drag-launch bobbles and Power Plays.</p></div>
+      <div className="roomBadge">CREATE OR JOIN</div>
+      <section className="panel lobby">
+        <label>Your name <input value={name} onChange={e=>setName(e.target.value)} maxLength={18}/></label>
+        <label>Team <select value={team} onChange={e=>setTeam(e.target.value as TeamId)}>{TEAM_IDS.map(id=><option key={id} value={id}>{TEAMS[id].emoji} {TEAMS[id].label}</option>)}</select></label>
+        <label>Game length <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage: 1 goal / 30 turns</option><option value={3}>Qualifier: 3 goals / 90 turns</option><option value={5}>Champion: 5 goals / 150 turns</option></select></label>
+        <button onClick={createRoom}>Create room</button>
+        <label>Room code <input value={roomCode} onChange={e=>setRoomCode(e.target.value)} maxLength={8}/></label>
+        <button onClick={joinRoom}>Join room</button>
+      </section>
       {error && <p className="error">{error}</p>}
     </section>}
-    {state && <><GameCanvas state={state} you={you}/><HUD state={state} you={you} mode={mode} setMode={setMode}/>{error && <section className="panel error">{error}</section>}</>}
+    {state && <section className="gameShell"><GameCanvas state={state} you={you}/><HUD state={state} you={you} mode={mode} setMode={setMode}/>{error && <section className="panel error">{error}</section>}</section>}
   </main>;
 }
 
@@ -124,42 +124,89 @@ function draw(ctx: CanvasRenderingContext2D, state: GameState, you: string, drag
     ctx.strokeStyle='rgba(255,255,255,.65)'; ctx.lineWidth=2; ctx.stroke();
     ctx.fillStyle='#fff'; ctx.font='900 20px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?', box.pos.x, box.pos.y-2);
   }
-  for (const b of state.bobbles) {
+  const actors = [
+    ...state.bobbles.map(b => ({ kind: 'bobble' as const, y: b.pos.y, bobble: b })),
+    { kind: 'ball' as const, y: state.ball.pos.y, bobble: null }
+  ].sort((a, b) => a.y - b.y);
+  for (const actor of actors) {
+    if (actor.kind === 'ball') {
+      const ball = state.ball;
+      drawSoccerBall(ctx, ball.pos.x, ball.pos.y, ball.radius);
+      continue;
+    }
+    const b = actor.bobble;
     const player = Object.values(state.players).find(p => p.side === b.side && p.controlledBobbleIds.includes(b.id)) ?? Object.values(state.players).find(p => p.side === b.side);
     const t = TEAMS[player?.team ?? 'pigs'];
     const selected = state.players[you]?.controlledBobbleIds.includes(b.id) ?? false;
-    drawBobble3D(ctx, b.pos.x, b.pos.y, b.radius, t.primary, t.secondary, t.emoji, selected);
-    ctx.font='800 12px Inter, sans-serif'; ctx.textAlign='center'; ctx.fillStyle='rgba(255,255,255,.95)'; ctx.fillText(b.id,b.pos.x,b.pos.y-b.radius-15);
-    for (const e of b.effects) ctx.fillText(BOX_TYPES[e.type].label,b.pos.x,b.pos.y+b.radius+17);
+    drawBobble3D(ctx, b.pos.x, b.pos.y, b.radius, t.primary, t.secondary, t.emoji, selected, b.side);
+    const label = player?.name?.slice(0, 10).toUpperCase() ?? b.id.toUpperCase();
+    ctx.font='900 18px Fredoka, sans-serif'; ctx.textAlign='center'; ctx.fillStyle='rgba(255,255,255,.38)'; ctx.fillText(label,b.pos.x,b.pos.y+b.radius+28);
+    for (const e of b.effects) ctx.fillText(BOX_TYPES[e.type].label,b.pos.x,b.pos.y+b.radius+48);
   }
   if (drag) {
     ctx.strokeStyle='#fef08a'; ctx.lineWidth=5; ctx.setLineDash([12, 8]);
     ctx.beginPath(); ctx.moveTo(drag.start.x, drag.start.y); ctx.lineTo(drag.current.x, drag.current.y); ctx.stroke(); ctx.setLineDash([]);
     drawShadow(ctx, drag.start.x, drag.start.y + 24, 30, 8, .25);
   }
-  const ball = state.ball;
-  drawShadow(ctx, ball.pos.x, ball.pos.y + ball.radius + 8, ball.radius * 1.15, 5, .28);
-  const ballGrad = ctx.createRadialGradient(ball.pos.x - 6, ball.pos.y - 8, 2, ball.pos.x, ball.pos.y, ball.radius + 5);
-  ballGrad.addColorStop(0, '#ffffff'); ballGrad.addColorStop(.65, '#e5e7eb'); ballGrad.addColorStop(1, '#64748b');
-  ctx.fillStyle=ballGrad; ctx.beginPath(); ctx.arc(ball.pos.x,ball.pos.y,ball.radius,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#111827'; ctx.lineWidth=2; ctx.stroke();
+  drawTopHud(ctx, state);
   if (state.phase==='finished') { ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,FIELD.width,FIELD.height); ctx.fillStyle='#fff'; ctx.font='800 56px Inter,sans-serif'; ctx.textAlign='center'; ctx.fillText(state.winner ? `${state.winner.toUpperCase()} WINS!` : 'DRAW!',FIELD.width/2,FIELD.height/2); }
 }
 function drawArena3D(ctx: CanvasRenderingContext2D) {
-  const grad = ctx.createLinearGradient(0,0,FIELD.width,FIELD.height); grad.addColorStop(0,'#22a05a'); grad.addColorStop(.55,'#13753f'); grad.addColorStop(1,'#0b3b2e'); ctx.fillStyle=grad; ctx.fillRect(0,0,FIELD.width,FIELD.height);
-  ctx.fillStyle='rgba(0,0,0,.24)'; ctx.fillRect(0,0,FIELD.width,34); ctx.fillRect(0,FIELD.height-34,FIELD.width,34);
-  for (let y=64; y<FIELD.height; y+=82) { ctx.fillStyle = y % 164 === 64 ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.035)'; ctx.fillRect(0,y,FIELD.width,41); }
-  ctx.strokeStyle='rgba(255,255,255,.38)'; ctx.lineWidth=5; ctx.strokeRect(14,14,FIELD.width-28,FIELD.height-28); ctx.beginPath(); ctx.arc(FIELD.width/2,FIELD.height/2,88,0,Math.PI*2); ctx.stroke(); ctx.beginPath(); ctx.moveTo(FIELD.width/2,14); ctx.lineTo(FIELD.width/2,FIELD.height-14); ctx.stroke();
-  ctx.fillStyle='rgba(2,6,23,.34)'; ctx.fillRect(0, FIELD.goalY-10, 52, FIELD.goalHeight+20); ctx.fillRect(FIELD.width-52, FIELD.goalY-10, 52, FIELD.goalHeight+20);
-  ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=2; ctx.strokeRect(52, FIELD.goalY-50, 120, FIELD.goalHeight+100); ctx.strokeRect(FIELD.width-172, FIELD.goalY-50, 120, FIELD.goalHeight+100);
+  ctx.fillStyle = '#5a6ed6'; ctx.fillRect(0,0,FIELD.width/2,FIELD.height);
+  ctx.fillStyle = '#f05d48'; ctx.fillRect(FIELD.width/2,0,FIELD.width/2,FIELD.height);
+  ctx.save();
+  ctx.shadowColor='rgba(0,0,0,.26)'; ctx.shadowBlur=18; ctx.shadowOffsetY=9;
+  roundRect(ctx, 46, 82, FIELD.width-92, FIELD.height-112, 54); ctx.fillStyle='#fff6bf'; ctx.fill();
+  ctx.shadowColor='transparent';
+  roundRect(ctx, 76, 112, FIELD.width-152, FIELD.height-172, 38); ctx.fillStyle='#f8b33e'; ctx.fill();
+  roundRect(ctx, 94, 130, FIELD.width-188, FIELD.height-208, 30); ctx.fillStyle='#57c4d6'; ctx.fill();
+  ctx.restore();
+  for (let i=0;i<8;i++) { ctx.fillStyle = i%2 ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.035)'; ctx.fillRect(94+i*(FIELD.width-188)/8,130,(FIELD.width-188)/8,FIELD.height-208); }
+  ctx.strokeStyle='rgba(255,255,255,.86)'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(FIELD.width/2,130); ctx.lineTo(FIELD.width/2,FIELD.height-78); ctx.stroke();
+  ctx.beginPath(); ctx.arc(FIELD.width/2,FIELD.height/2,74,0,Math.PI*2); ctx.stroke();
+  ctx.strokeRect(94, FIELD.goalY-10, 150, FIELD.goalHeight+20); ctx.strokeRect(FIELD.width-244, FIELD.goalY-10, 150, FIELD.goalHeight+20);
+  ctx.fillStyle='rgba(74,90,214,.82)'; roundRect(ctx, 0, FIELD.goalY-38, 88, FIELD.goalHeight+76, 18); ctx.fill();
+  ctx.fillStyle='rgba(240,93,72,.82)'; roundRect(ctx, FIELD.width-88, FIELD.goalY-38, 88, FIELD.goalHeight+76, 18); ctx.fill();
+  ctx.strokeStyle='#b95363'; ctx.lineWidth=12; ctx.beginPath(); ctx.moveTo(8,FIELD.goalY+FIELD.goalHeight+42); ctx.bezierCurveTo(60,FIELD.goalY+FIELD.goalHeight-20,60,FIELD.goalY+20,8,FIELD.goalY-42); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(FIELD.width-8,FIELD.goalY+FIELD.goalHeight+42); ctx.bezierCurveTo(FIELD.width-60,FIELD.goalY+FIELD.goalHeight-20,FIELD.width-60,FIELD.goalY+20,FIELD.width-8,FIELD.goalY-42); ctx.stroke();
+  for (const [x,y] of [[118,110],[FIELD.width-118,110]]) { ctx.fillStyle='#c94d5b'; ctx.beginPath(); ctx.arc(x,y,34,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#7a3e45'; ctx.lineWidth=5; ctx.stroke(); ctx.fillStyle='#f4d3b0'; ctx.beginPath(); ctx.arc(x,y,18,0,Math.PI*2); ctx.fill(); }
 }
-function drawBobble3D(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, primary: string, secondary: string, emoji: string, selected: boolean) {
-  drawShadow(ctx, x, y + r * .82, r * 1.08, r * .30, .34);
-  const body = ctx.createRadialGradient(x - r*.35, y - r*.42, 2, x, y, r*1.15);
-  body.addColorStop(0, '#ffffff'); body.addColorStop(.12, secondary); body.addColorStop(.45, primary); body.addColorStop(1, '#111827');
-  ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(x, y, r, r*1.03, 0, 0, Math.PI*2); ctx.fill();
-  ctx.lineWidth = selected ? 6 : 3; ctx.strokeStyle = selected ? '#fef08a' : 'rgba(255,255,255,.55)'; ctx.stroke();
-  ctx.fillStyle='rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(x-r*.24, y-r*.38, r*.24, r*.12, -.45, 0, Math.PI*2); ctx.fill();
-  ctx.font = `${Math.max(20,r)}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(emoji,x,y+1);
+function drawTopHud(ctx: CanvasRenderingContext2D, state: GameState) {
+  ctx.save();
+  ctx.fillStyle='#7a524e'; ctx.strokeStyle='#fff6bf'; ctx.lineWidth=8;
+  roundRect(ctx, 252, -18, 228, 86, 18); ctx.fill(); ctx.stroke();
+  roundRect(ctx, 620, -18, 228, 86, 18); ctx.fill(); ctx.stroke();
+  roundRect(ctx, 468, -8, 164, 98, 14); ctx.fillStyle='#fff6bf'; ctx.fill(); ctx.strokeStyle='#7a524e'; ctx.lineWidth=5; ctx.stroke();
+  ctx.font='900 46px Fredoka, sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#6679de'; ctx.fillText(String(state.score.left), 430, 38);
+  ctx.fillStyle='#f05d48'; ctx.fillText(String(state.score.right), 670, 38);
+  ctx.fillStyle='#f7b43a'; ctx.fillText(`${state.turn}/${state.config.maxTurns}`, 550, 34);
+  ctx.font='900 18px Fredoka, sans-serif'; ctx.fillStyle='#8b4b43'; ctx.fillText('TURNS', 550, 70);
+  ctx.font='900 36px Fredoka, sans-serif'; ctx.fillStyle='#fff6bf'; ctx.textAlign='right'; ctx.fillText('Bobble', FIELD.width-90, 34); ctx.fillText('League', FIELD.width-80, 62);
+  ctx.fillStyle='#fff6bf'; roundRect(ctx, FIELD.width-58, 18, 40, 40, 10); ctx.fill(); ctx.fillStyle='#8b4b43'; ctx.font='900 30px Fredoka'; ctx.textAlign='center'; ctx.fillText('⚙', FIELD.width-38, 40);
+  ctx.fillStyle='rgba(122,82,78,.95)'; roundRect(ctx, 330, FIELD.height-72, 440, 54, 12); ctx.fill();
+  ctx.strokeStyle='#f7b43a'; ctx.lineWidth=8; ctx.stroke();
+  ctx.fillStyle='#fff6bf'; roundRect(ctx, 294, FIELD.height-70, 44, 50, 8); ctx.fill(); roundRect(ctx, 762, FIELD.height-70, 44, 50, 8); ctx.fill();
+  ctx.font='900 18px Fredoka'; ctx.fillStyle='#8b4b43'; ctx.fillText('✓', 784, FIELD.height-43); ctx.fillText('••', 316, FIELD.height-43);
+  ctx.restore();
+}
+function drawSoccerBall(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  drawShadow(ctx, x, y + r + 10, r * 1.2, 5, .35);
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#111'; ctx.lineWidth=2; ctx.stroke();
+  ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(x,y,r*.38,0,Math.PI*2); ctx.fill();
+  for (let i=0;i<5;i++){const a=i*Math.PI*2/5-Math.PI/2; ctx.beginPath(); ctx.arc(x+Math.cos(a)*r*.78,y+Math.sin(a)*r*.78,r*.22,0,Math.PI*2); ctx.fill();}
+}
+function drawBobble3D(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, primary: string, secondary: string, emoji: string, selected: boolean, side: 'left' | 'right') {
+  drawShadow(ctx, x, y + r * 1.35, r * 1.25, r * .34, .34);
+  const base = side === 'left' ? '#e25a4c' : '#5147a8';
+  ctx.fillStyle=base; ctx.beginPath(); ctx.ellipse(x, y+r*.42, r*.82, r*.34, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle=secondary; ctx.beginPath(); ctx.ellipse(x, y+r*.22, r*.78, r*.28, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle=base; ctx.fillRect(x-r*.78, y-r*.10, r*1.56, r*.38);
+  const body = ctx.createRadialGradient(x - r*.35, y - r*.75, 2, x, y-r*.55, r*1.15);
+  body.addColorStop(0, '#ffffff'); body.addColorStop(.14, secondary); body.addColorStop(.52, primary); body.addColorStop(1, '#73332f');
+  ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(x, y-r*.42, r*.74, r*.88, 0, 0, Math.PI*2); ctx.fill();
+  ctx.lineWidth = selected ? 5 : 3; ctx.strokeStyle = selected ? '#ffe86a' : 'rgba(65,45,45,.35)'; ctx.stroke();
+  ctx.font = `${Math.max(22,r*1.05)}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(emoji,x,y-r*.48);
 }
 function drawShadow(ctx: CanvasRenderingContext2D, x: number, y: number, rx: number, ry: number, alpha: number) { ctx.save(); ctx.fillStyle=`rgba(0,0,0,${alpha})`; ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fill(); ctx.restore(); }
 function roundRect(ctx: CanvasRenderingContext2D, x:number,y:number,w:number,h:number,r:number){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
