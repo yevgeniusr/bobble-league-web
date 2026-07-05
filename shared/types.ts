@@ -62,6 +62,16 @@ export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
 
 export type Vec = { x: number; y: number };
+
+export const BUMPER_RADIUS = 36;
+export const BIG_BUMPER_RADIUS = 52;
+export const BUMPERS: readonly Vec[] = [
+  { x: 92, y: 92 },
+  { x: FIELD.width - 92, y: 92 },
+  { x: 92, y: FIELD.height - 92 },
+  { x: FIELD.width - 92, y: FIELD.height - 92 }
+] as const;
+
 export type PlayerInput = { up: boolean; down: boolean; left: boolean; right: boolean; kick: boolean };
 export type PlayerSide = 'left' | 'right';
 export type EffectName = BoxType;
@@ -89,7 +99,11 @@ export type BobbleState = {
 export type BallState = { pos: Vec; vel: Vec; radius: number };
 export type BoxAnchor = 'topMid' | 'bottomMid' | 'midLeft' | 'midRight';
 export type BoxState = { id: string; type: BoxType; anchor: BoxAnchor; pos: Vec; spawnedAt: number };
-export type FieldObject = { id: string; type: 'boost' | 'stickyGoo' | 'ramp' | 'block'; owner: PlayerSide; pos: Vec; angle: number; untilTurn: number };
+export type FieldObjectType = 'boost' | 'stickyGoo' | 'ramp' | 'block';
+export const FIELD_OBJECT_TYPES: readonly FieldObjectType[] = ['boost', 'stickyGoo', 'ramp', 'block'] as const;
+export const ROTATABLE_FIELD_OBJECTS: readonly FieldObjectType[] = ['boost', 'ramp', 'block'] as const;
+export type FieldObject = { id: string; type: FieldObjectType; owner: PlayerSide; pos: Vec; angle: number; untilTurn: number };
+export type BumperEvent = { pos: Vec; at: number };
 export type RoomPhase = 'lobby' | 'formationSelect' | 'planning' | 'resolving' | 'goal' | 'finished';
 export type ChatEvent = { at: number; message: string };
 export type TurnIntent = { bobbleId: string; aimAngle: number; impulse: number };
@@ -121,6 +135,9 @@ export type GameState = {
   ball: BallState;
   boxes: BoxState[];
   fieldObjects: FieldObject[];
+  bumperEvents: BumperEvent[];
+  bigBumpersUntilTurn: number | null;
+  beachBallUntilTurn: number | null;
   pendingIntents: Record<string, TurnIntent>;
   powerPlayInventories: Record<PlayerSide, InventoryItem[]>;
   score: Record<PlayerSide, number>;
@@ -134,6 +151,7 @@ export type ClientToServerEvents = {
   'player:input': (input: PlayerInput) => void;
   'player:launch': (intent: TurnIntent) => void;
   'player:power': (use: PowerPlayUse) => void;
+  'player:fieldRotate': (payload: { id: string }) => void;
   'player:formation': (formation: FormationId) => void;
   'player:team': (team: TeamId) => void;
   'game:start': () => void;

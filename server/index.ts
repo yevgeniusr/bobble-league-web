@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { addPlayer, applyFormation, blankInput, createInitialState, launchBobble, removePlayer, resetGame, setPlayerTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { addPlayer, applyFormation, blankInput, createInitialState, launchBobble, removePlayer, resetGame, rotateFieldObject, setPlayerTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -78,6 +78,13 @@ io.on('connection', socket => {
   socket.on('player:power', use => {
     const room = currentRoom(socket); if (!room) return;
     if (!usePowerPlay(room.state, socket.id, use)) socket.emit('room:error', 'That Power Play is not available yet.');
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('player:fieldRotate', payload => {
+    const room = currentRoom(socket); if (!room) return;
+    if (typeof payload?.id !== 'string') return;
+    if (!rotateFieldObject(room.state, socket.id, payload.id)) socket.emit('room:error', 'That obstacle cannot be rotated.');
     room.lastActiveAt = Date.now();
   });
 

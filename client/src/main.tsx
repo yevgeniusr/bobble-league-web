@@ -1,8 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
-import { BOX_TYPES, ClientToServerEvents, FIELD, FORMATION_IDS, FORMATIONS, GameMode, GameState, PowerPlayUse, ServerToClientEvents, TEAM_IDS, TEAMS, TeamId, Vec } from '../../shared/types';
-import { BobbleLeague3DRenderer } from './render3d';
+import { BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, PowerPlayUse, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, TeamId, Vec } from '../../shared/types';
+import { BobbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -46,28 +46,46 @@ function App() {
       </section>
       {error && <p className="error">{error}</p>}
     </section>}
-    {state && <section className="gameShell"><Game3D state={state} you={you}/><HUD state={state} you={you} mode={mode} setMode={setMode}/>{error && <section className="panel error">{error}</section>}</section>}
+    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} error={error}/>}
   </main>;
 }
 
-function HUD({ state, you, mode, setMode }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void }) {
+const PLACEABLE: readonly BoxType[] = ['boost', 'stickyGoo', 'ramp', 'block'];
+
+function GameScreen({ state, you, mode, setMode, error }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; error: string }) {
+  const [placing, setPlacing] = React.useState<PlacingGhost | null>(null);
+  return <section className="gameShell">
+    <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing}/>
+    <HUD state={state} you={you} mode={mode} setMode={setMode} placing={placing} setPlacing={setPlacing}/>
+    {error && <section className="panel error">{error}</section>}
+  </section>;
+}
+
+function HUD({ state, you, mode, setMode, placing, setPlacing }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void }) {
   const me = state.players[you];
   const inventory = me ? state.powerPlayInventories[me.side] : [];
+  const ownRotatable = me ? state.fieldObjects.filter(o => o.owner === me.side && o.untilTurn >= state.turn && ROTATABLE_FIELD_OBJECTS.includes(o.type)) : [];
   return <section className="panel gameHud">
     <div className="domScore"><b>Left</b><span>{state.score.left}</span><small>{state.config.length}: first to {state.config.goalTarget}, turn {state.turn}/{state.config.maxTurns} · {state.phase} · {Math.max(0, Math.ceil((state.turnDeadlineAt - Date.now())/1000))}s · aimed {Object.keys(state.pendingIntents).length}/{state.bobbles.length}</small><span>{state.score.right}</span><b>Right</b></div>
     <div className="actions"><button onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button><select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select><button onClick={()=>socket.emit('game:reset', mode)}>Reset</button></div>
     {me && <div className="actions formations">{FORMATION_IDS.map(id=><button key={id} className={state.formations[me.side]===id?'selected':''} onClick={()=>socket.emit('player:formation', id)} title={FORMATIONS[id].description}>{FORMATIONS[id].label}</button>)}</div>}
-    {me && <div className="inventory"><b>Power Plays</b>{inventory.length ? inventory.map((item, i)=><button key={`${item.type}-${i}`} disabled={item.availableTurn > state.turn} onClick={()=>useInventory(item.type as keyof typeof BOX_TYPES, state, me.side)}>{BOX_TYPES[item.type].label}{item.availableTurn > state.turn ? ` (turn ${item.availableTurn})` : ''}</button>) : <small>No Power Plays yet. Run a bobble into the ? box.</small>}</div>}
+    {me && <div className="inventory"><b>Power Plays</b>{inventory.length ? inventory.map((item, i)=><button key={`${item.type}-${i}`} disabled={item.availableTurn > state.turn} title={BOX_TYPES[item.type].description} onClick={()=>useInventory(item.type as BoxType, state, me.side, setPlacing)}>{BOX_TYPES[item.type].label}{item.availableTurn > state.turn ? ` (turn ${item.availableTurn})` : ''}</button>) : <small>No Power Plays yet. Run a bobble into the ? box.</small>}</div>}
+    {placing && <div className="inventory hint"><b>Placing {BOX_TYPES[placing.type as BoxType].label}</b><small>Move mouse to aim · R rotates · click to place · Esc cancels</small></div>}
+    {!placing && ownRotatable.length > 0 && state.phase === 'planning' && <div className="inventory hint"><small>Tip: click your placed pads to rotate them 45°.</small></div>}
   </section>;
 }
 
-function useInventory(type: keyof typeof BOX_TYPES, state: GameState, side: 'left' | 'right') {
+function useInventory(type: BoxType, state: GameState, side: 'left' | 'right', setPlacing: (p: PlacingGhost | null)=>void) {
+  if (PLACEABLE.includes(type)) {
+    setPlacing({ type: type as FieldObjectType, pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: side === 'left' ? 0 : Math.PI });
+    return;
+  }
   const own = state.bobbles.find(b => b.side === side);
   const use: PowerPlayUse = { type, targetBobbleId: own?.id, position: { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: side === 'left' ? 0 : Math.PI };
   socket.emit('player:power', use);
 }
 
-function Game3D({ state, you }: { state: GameState; you: string }) {
+function Game3D({ state, you, placing, setPlacing }: { state: GameState; you: string; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const rendererRef = React.useRef<BobbleLeague3DRenderer | null>(null);
   const [drag, setDrag] = React.useState<{ bobbleId: string; start: Vec; current: Vec } | null>(null);
@@ -85,23 +103,46 @@ function Game3D({ state, you }: { state: GameState; you: string }) {
   }, []);
 
   React.useEffect(() => {
-    rendererRef.current?.render({ state, you, drag });
-  }, [state, you, drag]);
+    rendererRef.current?.render({ state, you, drag, placing });
+  }, [state, you, drag, placing]);
+
+  React.useEffect(() => {
+    if (!placing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'r' || e.key === 'R') setPlacing({ ...placing, angle: placing.angle + Math.PI / 4 });
+      if (e.key === 'Escape') setPlacing(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [placing, setPlacing]);
 
   const point = (e: React.PointerEvent<HTMLCanvasElement>) => rendererRef.current?.pointFromClient(e.clientX, e.clientY) ?? null;
   const down = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!me || state.phase !== 'planning') return;
+    if (!me) return;
     const p = point(e);
     if (!p) return;
+    if (placing) {
+      const clamped = { x: Math.min(FIELD.width - 40, Math.max(40, p.x)), y: Math.min(FIELD.height - 40, Math.max(40, p.y)) };
+      socket.emit('player:power', { type: placing.type, position: clamped, angle: placing.angle });
+      setPlacing(null);
+      return;
+    }
+    if (state.phase !== 'planning') return;
     const bobble = state.bobbles.find(b => me.controlledBobbleIds.includes(b.id) && Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 16);
     if (bobble) {
       e.currentTarget.setPointerCapture(e.pointerId);
       setDrag({ bobbleId: bobble.id, start: bobble.pos, current: p });
+      return;
     }
+    // rotate one of your placed pads by clicking it
+    const pad = state.fieldObjects.find(o => o.owner === me.side && o.untilTurn >= state.turn && ROTATABLE_FIELD_OBJECTS.includes(o.type) && Math.hypot(o.pos.x - p.x, o.pos.y - p.y) <= 70);
+    if (pad) socket.emit('player:fieldRotate', { id: pad.id });
   };
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const p = point(e);
-    if (drag && p) setDrag({ ...drag, current: p });
+    if (!p) return;
+    if (placing) { setPlacing({ ...placing, pos: p }); return; }
+    if (drag) setDrag({ ...drag, current: p });
   };
   const up = () => {
     if (!drag) return;
