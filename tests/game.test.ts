@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   addPlayer,
   applyFormation,
+  BOX_LIFETIME_TURNS,
   collectPowerBox,
   createInitialState,
   launchBobble,
   MAX_RESOLVE_MS,
   rotateFieldObject,
+  spawnBox,
   startGame,
   stepGame,
   usePowerPlay
@@ -91,6 +93,40 @@ describe('classic Bobble League shared rules', () => {
     expect(usePowerPlay(s, 'l', { type, targetBobbleId: 'left-1' }, 2000)).toBe(true);
     expect(s.powerPlayInventories.left).toHaveLength(0);
     expect(s.bobbles[0].effects.map(e => e.type)).toContain('bigHead');
+  });
+
+  it('keeps spawned boxes alive by turn count so planning timers do not expire pickup', () => {
+    const s = createInitialState('LIFE', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.turn = 2;
+    const box = spawnBox(s, 1000, seq([0.1, 0.0, 0.5]));
+    expect(box.untilTurn).toBe(2 + BOX_LIFETIME_TURNS - 1);
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 17000;
+    // More than the old 14s wall-clock expiry has passed, but same turn boxes still exist.
+    stepGame(s, {}, 17000, seq([0.5]));
+    expect(s.boxes.map(b => b.id)).toContain(box.id);
+  });
+
+  it('lets a last-touched ball collect a power box for that side', () => {
+    const s = createInitialState('BALLBOX', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.ball.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
+    s.ball.vel = { x: 0, y: 0 };
+    s.ball.lastTouchedBy = 'left';
+    s.boxes = [{ id: 'ball-box', type: 'boost', anchor: 'topMid', pos: { ...s.ball.pos }, spawnedAt: 1000, untilTurn: s.turn + 2 }];
+
+    stepGame(s, {}, 1033, seq([0.5]));
+
+    expect(s.boxes.some(b => b.id === 'ball-box')).toBe(false);
+    expect(s.powerPlayInventories.left).toEqual([{ type: 'boost', availableTurn: 2 }]);
+    expect(s.powerPlayInventories.right).toHaveLength(0);
   });
 
   it('defines all eleven researched power plays as box types', () => {

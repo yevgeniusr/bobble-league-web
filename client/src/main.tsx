@@ -34,20 +34,91 @@ function App() {
 
   return <main>
     {!state && <section className="panel hero">
-      <div><p className="eyebrow">arcade tabletop soccer</p><h1>Bobble<br/>League</h1><p className="sub">Choose a mascot, invite players, pick the match length, then drag-launch bobbles and Power Plays.</p></div>
-      <div className="roomBadge">CREATE OR JOIN</div>
-      <section className="panel lobby">
-        <label>Your name <input value={name} onChange={e=>setName(e.target.value)} maxLength={18}/></label>
-        <label>Team <select value={team} onChange={e=>setTeam(e.target.value as TeamId)}>{TEAM_IDS.map(id=><option key={id} value={id}>{TEAMS[id].emoji} {TEAMS[id].label}</option>)}</select></label>
-        <label>Game length <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage: 1 goal / 30 turns</option><option value={3}>Qualifier: 3 goals / 90 turns</option><option value={5}>Champion: 5 goals / 150 turns</option></select></label>
-        <button onClick={createRoom}>Create room</button>
-        <label>Room code <input value={roomCode} onChange={e=>setRoomCode(e.target.value)} maxLength={8}/></label>
-        <button onClick={joinRoom}>Join room</button>
-      </section>
-      {error && <p className="error">{error}</p>}
+      <div className="heroLeft">
+        <p className="eyebrow">arcade tabletop soccer</p>
+        <h1>Bobble<br/>League</h1>
+        <p className="sub">Drag-launch your bobbleheads, smash corner bumpers, and grab mystery Power Plays in turn-based arcade soccer.</p>
+        <ArenaPreview/>
+        <div className="powerTiles">{POWER_PREVIEW.map(t=><div key={t} className="powerTile" style={{background: BOX_TYPES[t].color}} title={BOX_TYPES[t].description}><span className="powerIcon">{POWER_ICONS[t] ?? '★'}</span>{BOX_TYPES[t].label}</div>)}</div>
+      </div>
+      <div className="heroRight">
+        <section className="lobbyCard">
+          <h2>Suit up</h2>
+          <label>Your name <input value={name} onChange={e=>setName(e.target.value)} maxLength={18}/></label>
+          <p className="fieldLabel">Pick a mascot</p>
+          <div className="mascotGrid">{TEAM_IDS.map(id=><button key={id} type="button" className={`mascot ${team===id?'selected':''}`} style={{ background: TEAMS[id].primary, color: TEAMS[id].secondary }} onClick={()=>setTeam(id)}><span className="mEmoji">{TEAMS[id].emoji}</span><span className="mName">{TEAMS[id].label}</span></button>)}</div>
+          <div className="lobbySplit">
+            <div className="lobbyCol">
+              <p className="fieldLabel">Host a match</p>
+              <label>Game length <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage: 1 goal / 30 turns</option><option value={3}>Qualifier: 3 goals / 90 turns</option><option value={5}>Champion: 5 goals / 150 turns</option></select></label>
+              <button className="primary" onClick={createRoom}>Create room</button>
+            </div>
+            <div className="lobbyDivider"><span>or</span></div>
+            <div className="lobbyCol">
+              <p className="fieldLabel">Join friends</p>
+              <label>Room code <input className="codeInput" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())} maxLength={8} placeholder="ABC12"/></label>
+              <button onClick={joinRoom}>Join room</button>
+            </div>
+          </div>
+          {error && <p className="lobbyError">{error}</p>}
+        </section>
+      </div>
     </section>}
     {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} error={error}/>}
   </main>;
+}
+
+const POWER_PREVIEW: readonly BoxType[] = ['beachBall', 'bigBumpers', 'boost', 'stickyGoo', 'ghosted', 'swapGoals'];
+const POWER_ICONS: Partial<Record<BoxType, string>> = { beachBall: '🏖', bigBumpers: '💥', boost: '⚡', stickyGoo: '🟢', ghosted: '👻', swapGoals: '🔄' };
+
+function ArenaPreview() {
+  const bobbles: { x: number; y: number; c: string; s: string }[] = [
+    { x: 96, y: 78, c: '#f8b196', s: '#5b2135' }, { x: 132, y: 130, c: '#f8b196', s: '#5b2135' },
+    { x: 96, y: 182, c: '#f8b196', s: '#5b2135' }, { x: 168, y: 104, c: '#f8b196', s: '#5b2135' },
+    { x: 344, y: 78, c: '#f77f00', s: '#111827' }, { x: 308, y: 130, c: '#f77f00', s: '#111827' },
+    { x: 344, y: 182, c: '#f77f00', s: '#111827' }, { x: 272, y: 156, c: '#f77f00', s: '#111827' }
+  ];
+  return <div className="arenaWrap" aria-hidden="true">
+    <svg className="arenaPreview" viewBox="0 0 440 260">
+      <defs>
+        <linearGradient id="turf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#39b96e"/><stop offset="1" stopColor="#1f8f4e"/></linearGradient>
+        <radialGradient id="ballShine" cx="0.35" cy="0.3" r="1"><stop offset="0" stopColor="#ffffff"/><stop offset="1" stopColor="#cbd5e1"/></radialGradient>
+      </defs>
+      <rect x="8" y="8" width="424" height="244" rx="26" fill="url(#turf)" stroke="#f8bd45" strokeWidth="8"/>
+      {[0,1,2,3,4].map(i=><rect key={i} x={20+i*84} y="14" width="42" height="232" fill="#ffffff" opacity="0.06"/>)}
+      <line x1="220" y1="14" x2="220" y2="246" stroke="#fff8cf" strokeWidth="3" opacity="0.7"/>
+      <circle cx="220" cy="130" r="42" fill="none" stroke="#fff8cf" strokeWidth="3" opacity="0.7"/>
+      <rect x="8" y="90" width="26" height="80" fill="#fff8cf" opacity="0.85" rx="4"/>
+      <rect x="406" y="90" width="26" height="80" fill="#fff8cf" opacity="0.85" rx="4"/>
+      {[[42,42],[398,42],[42,218],[398,218]].map(([x,y],i)=><g key={i}><circle cx={x} cy={y} r="16" fill="#f97316" stroke="#fff8cf" strokeWidth="4"/><circle cx={x} cy={y} r="6" fill="#fff8cf"/></g>)}
+      <rect x="204" y="52" width="30" height="30" rx="6" fill="#facc15" stroke="#92400e" strokeWidth="3" transform="rotate(12 219 67)"/>
+      <text x="219" y="74" textAnchor="middle" fontSize="18" fontWeight="900" fill="#92400e">?</text>
+      {bobbles.map((b,i)=><g key={i}>
+        <ellipse cx={b.x} cy={b.y+16} rx="14" ry="5" fill="#000" opacity="0.25"/>
+        <circle cx={b.x} cy={b.y} r="15" fill={b.c} stroke={b.s} strokeWidth="3"/>
+        <circle cx={b.x-5} cy={b.y-3} r="2.6" fill={b.s}/><circle cx={b.x+5} cy={b.y-3} r="2.6" fill={b.s}/>
+        <path d={`M ${b.x-4} ${b.y+5} Q ${b.x} ${b.y+9} ${b.x+4} ${b.y+5}`} stroke={b.s} strokeWidth="2" fill="none"/>
+      </g>)}
+      <ellipse cx="228" cy="146" rx="10" ry="4" fill="#000" opacity="0.25"/>
+      <circle cx="228" cy="134" r="11" fill="url(#ballShine)" stroke="#334155" strokeWidth="2.5"/>
+    </svg>
+  </div>;
+}
+
+function RoomCodeBadge({ code }: { code: string }) {
+  const [copied, setCopied] = React.useState<'code' | 'invite' | null>(null);
+  const copy = (text: string, kind: 'code' | 'invite') => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 1600);
+    }).catch(() => {});
+  };
+  return <div className="roomCode">
+    <span className="roomCodeLabel">Room</span>
+    <b className="roomCodeValue">{code}</b>
+    <button type="button" onClick={()=>copy(code, 'code')}>{copied === 'code' ? 'Copied!' : 'Copy code'}</button>
+    <button type="button" onClick={()=>copy(`Join my Bobble League match! Room code: ${code} → ${location.origin}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
+  </div>;
 }
 
 const PLACEABLE: readonly BoxType[] = ['boost', 'stickyGoo', 'ramp', 'block'];
@@ -56,6 +127,7 @@ function GameScreen({ state, you, mode, setMode, error }: { state: GameState; yo
   const [placing, setPlacing] = React.useState<PlacingGhost | null>(null);
   return <section className="gameShell">
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing}/>
+    <RoomCodeBadge code={state.roomCode}/>
     <HUD state={state} you={you} mode={mode} setMode={setMode} placing={placing} setPlacing={setPlacing}/>
     {error && <section className="panel error">{error}</section>}
   </section>;

@@ -96,9 +96,9 @@ export type BobbleState = {
   effects: ActiveEffect[];
   lastLaunchedTurn: number;
 };
-export type BallState = { pos: Vec; vel: Vec; radius: number };
+export type BallState = { pos: Vec; vel: Vec; radius: number; lastTouchedBy?: PlayerSide | null };
 export type BoxAnchor = 'topMid' | 'bottomMid' | 'midLeft' | 'midRight';
-export type BoxState = { id: string; type: BoxType; anchor: BoxAnchor; pos: Vec; spawnedAt: number };
+export type BoxState = { id: string; type: BoxType; anchor: BoxAnchor; pos: Vec; spawnedAt: number; untilTurn?: number };
 export type FieldObjectType = 'boost' | 'stickyGoo' | 'ramp' | 'block';
 export const FIELD_OBJECT_TYPES: readonly FieldObjectType[] = ['boost', 'stickyGoo', 'ramp', 'block'] as const;
 export const ROTATABLE_FIELD_OBJECTS: readonly FieldObjectType[] = ['boost', 'ramp', 'block'] as const;

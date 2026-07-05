@@ -29,9 +29,11 @@ export type Rng = () => number;
 export const blankInput: PlayerInput = { up: false, down: false, left: false, right: false, kick: false };
 
 const TICK_MS = 1000 / 30;
-const BOBBLE_DRAG = 0.985;
-const BALL_DRAG = 0.992;
-const BEACH_BALL_DRAG = 0.996;
+// Higher floor friction so pieces settle instead of gliding like ice.
+const BOBBLE_DRAG = 0.962;
+const BALL_DRAG = 0.976;
+const BEACH_BALL_DRAG = 0.988;
+export const BOX_LIFETIME_TURNS = 3;
 const SETTLE_SPEED = 18;
 export const MAX_RESOLVE_MS = 10000;
 const TURN_DURATION_MS = 15000;
@@ -55,7 +57,7 @@ export function createInitialState(roomCode: string, mode: GameMode = 3): GameSt
     players: {},
     formations: { left: 'forward', right: 'forward' },
     bobbles: [],
-    ball: { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius },
+    ball: { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null },
     boxes: [],
     fieldObjects: [],
     bumperEvents: [],
@@ -118,7 +120,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.pendingIntents = {};
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius };
+  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null };
   buildBobbles(state);
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
@@ -141,7 +143,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.pendingIntents = {};
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius };
+  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null };
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   for (const p of Object.values(state.players)) p.score = 0;
@@ -247,7 +249,8 @@ export function spawnBox(state: GameState, now = Date.now(), rng: Rng = Math.ran
     type,
     anchor,
     pos: anchorPosition(anchor, rng),
-    spawnedAt: now
+    spawnedAt: now,
+    untilTurn: state.turn + BOX_LIFETIME_TURNS - 1
   };
   state.boxes = [box];
   pushEvent(state, `Mystery box spawned on the ${anchor === 'topMid' ? 'top' : 'bottom'} lane.`);
@@ -414,7 +417,8 @@ function segmentBounce(pos: Vec, vel: Vec, radius: number, center: Vec, angle: n
 
 function resolveBobbleCollisions(state: GameState) {
   for (const b of state.bobbles) {
-    if (!b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn)) circleBounce(b.pos, b.vel, b.radius, state.ball.pos, state.ball.vel, state.ball.radius, 0.95);
+    if (b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn)) continue;
+    if (circleBounce(b.pos, b.vel, b.radius, state.ball.pos, state.ball.vel, state.ball.radius, 0.95)) state.ball.lastTouchedBy = b.side;
   }
   for (let i = 0; i < state.bobbles.length; i++) for (let j = i + 1; j < state.bobbles.length; j++) {
     const a = state.bobbles[i], b = state.bobbles[j];
@@ -436,7 +440,20 @@ function circleBounce(a: Vec, av: Vec, ar: number, b: Vec, bv: Vec, br: number, 
 
 function collectBoxesForBobbles(state: GameState, now: number) {
   for (const bobble of [...state.bobbles]) collectPowerBox(state, bobble, now);
-  state.boxes = state.boxes.filter(box => now - box.spawnedAt < 14000);
+  collectPowerBoxWithBall(state);
+  // Boxes expire by turn count, never by wall-clock time, so they always
+  // survive the planning phase and can be collected during resolution.
+  state.boxes = state.boxes.filter(box => (box.untilTurn ?? state.turn) >= state.turn);
+}
+
+function collectPowerBoxWithBall(state: GameState) {
+  const side = state.ball.lastTouchedBy;
+  if (!side) return;
+  const index = state.boxes.findIndex(box => dist(box.pos, state.ball.pos) <= state.ball.radius + FIELD.boxSize / 2);
+  if (index < 0) return;
+  const [box] = state.boxes.splice(index, 1);
+  state.powerPlayInventories[side].push({ type: box.type, availableTurn: state.turn + 1 });
+  pushEvent(state, `${side} collected ${BOX_TYPES[box.type].label} with the ball.`);
 }
 
 function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, now: number) {
@@ -495,7 +512,7 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
     pushEvent(state, `${scorer} wins first-to-${state.mode}!`);
     return;
   }
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius };
+  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null };
   placeFormation(state, 'left');
   placeFormation(state, 'right');
   endTurn(state, now, rng);
@@ -522,6 +539,7 @@ function resetForPlanning(state: GameState, _rng: Rng) {
   // Bobble League turns are tabletop turns: pieces stay where physics resolved,
   // but no momentum carries into the next planning turn.
   state.ball.vel = { x: 0, y: 0 };
+  state.ball.lastTouchedBy = null;
   for (const b of state.bobbles) b.vel = { x: 0, y: 0 };
   state.bumperEvents = [];
   state.kickoffAt = Date.now();
