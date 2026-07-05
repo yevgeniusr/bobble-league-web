@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { addPlayer, blankInput, createInitialState, removePlayer, resetGame, setPlayerTeam, startGame, stepGame } from '../shared/game';
-import { ClientToServerEvents, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS } from '../shared/types';
+import { addPlayer, applyFormation, blankInput, createInitialState, launchBobble, removePlayer, resetGame, setPlayerTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -17,6 +17,7 @@ const port = Number(process.env.PORT ?? 3000);
 type InterServerEvents = Record<string, never>;
 type SocketData = { roomCode?: string; playerId?: string };
 type IOServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
+type IOSocket = Parameters<Parameters<IOServer['on']>[1]>[0];
 
 type Room = { state: GameState; inputs: Record<string, typeof blankInput>; lastActiveAt: number };
 const rooms = new Map<string, Room>();
@@ -48,7 +49,7 @@ io.on('connection', socket => {
     const state = createInitialState(roomCode, parsed.data.mode as GameMode);
     const room: Room = { state, inputs: {}, lastActiveAt: Date.now() };
     rooms.set(roomCode, room);
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as never);
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId);
     cb({ ok: true, roomCode, playerId: socket.id });
   });
 
@@ -58,13 +59,32 @@ io.on('connection', socket => {
     const room = rooms.get(parsed.data.roomCode);
     if (!room) return cb({ ok: false, error: 'Room not found.' });
     if (Object.values(room.state.players).filter(p => p.connected).length >= 8) return cb({ ok: false, error: 'Room is full.' });
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as never);
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId);
     cb({ ok: true, roomCode: parsed.data.roomCode, playerId: socket.id });
   });
 
   socket.on('player:input', input => {
     const room = currentRoom(socket); if (!room) return;
     room.inputs[socket.id] = { ...blankInput, ...input };
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('player:launch', intent => {
+    const room = currentRoom(socket); if (!room) return;
+    if (!launchBobble(room.state, socket.id, intent)) socket.emit('room:error', 'That bobble cannot be launched right now.');
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('player:power', use => {
+    const room = currentRoom(socket); if (!room) return;
+    if (!usePowerPlay(room.state, socket.id, use)) socket.emit('room:error', 'That Power Play is not available yet.');
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('player:formation', formation => {
+    const room = currentRoom(socket); if (!room) return;
+    const player = room.state.players[socket.id];
+    if (player && FORMATION_IDS.includes(formation)) applyFormation(room.state, player.side, formation);
     room.lastActiveAt = Date.now();
   });
 
@@ -78,7 +98,7 @@ io.on('connection', socket => {
   socket.on('disconnect', () => { const room = currentRoom(socket); if (room) removePlayer(room.state, socket.id); });
 });
 
-function joinRoom(socket: Parameters<IOServer['on']>[1] extends (s: infer S)=>void ? S : never, room: Room, name: string, team: never) {
+function joinRoom(socket: IOSocket, room: Room, name: string, team: TeamId) {
   socket.data.roomCode = room.state.roomCode;
   socket.data.playerId = socket.id;
   socket.join(room.state.roomCode);
