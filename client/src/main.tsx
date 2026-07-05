@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
-import { BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, PowerPlayUse, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
+import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, PowerPlayUse, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
 import { BobbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
 
@@ -63,7 +63,7 @@ function App() {
         </section>
       </div>
     </section>}
-    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} error={error}/>}
+    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} error={error} onLeave={()=>{ socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
   </main>;
 }
 
@@ -122,13 +122,16 @@ function RoomCodeBadge({ code }: { code: string }) {
 
 const PLACEABLE: readonly BoxType[] = ['boost', 'stickyGoo', 'ramp', 'block'];
 
-function GameScreen({ state, you, mode, setMode, error }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; error: string }) {
+function GameScreen({ state, you, mode, setMode, error, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; error: string; onLeave: ()=>void }) {
   const [placing, setPlacing] = React.useState<PlacingGhost | null>(null);
+  const [targetBobbleId, setTargetBobbleId] = React.useState('');
+  const [showHud, setShowHud] = React.useState(true);
   return <section className="gameShell">
-    <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing}/>
+    <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} targetBobbleId={targetBobbleId} setTargetBobbleId={setTargetBobbleId}/>
     <RoomCodeBadge code={state.roomCode}/>
     <RoomPanel state={state} you={you}/>
-    <HUD state={state} you={you} mode={mode} setMode={setMode} placing={placing} setPlacing={setPlacing}/>
+    {showHud && <HUD state={state} you={you} mode={mode} setMode={setMode} placing={placing} setPlacing={setPlacing} targetBobbleId={targetBobbleId} onLeave={onLeave}/>}
+    <button className="hudToggle" type="button" onClick={()=>setShowHud(v=>!v)}>{showHud ? 'Hide panel ▾' : 'Show panel ▴'}</button>
     {error && <section className="panel error">{error}</section>}
   </section>;
 }
@@ -147,21 +150,24 @@ function RoomPanel({ state, you }: { state: GameState; you: string }) {
   </aside>;
 }
 
-function HUD({ state, you, mode, setMode, placing, setPlacing }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void }) {
-  const [targetBobbleId, setTargetBobbleId] = React.useState('');
+function HUD({ state, you, mode, setMode, placing, setPlacing, targetBobbleId, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void; targetBobbleId: string; onLeave: ()=>void }) {
+  const [cheatOpen, setCheatOpen] = React.useState(false);
   const me = state.players[you];
   const inventory = me ? state.powerPlayInventories[me.side] : [];
   const ownRotatable = me ? state.fieldObjects.filter(o => o.owner === me.side && o.untilTurn >= state.turn && ROTATABLE_FIELD_OBJECTS.includes(o.type)) : [];
   const formationOpen = state.phase === 'lobby' || state.formationSelectionTurn === state.turn;
   const targetId = targetBobbleId || state.bobbles.find(b => b.side === me?.side)?.id || state.bobbles[0]?.id || '';
+  const target = state.bobbles.find(b => b.id === targetId);
+  const toggleCheat = () => { const next = !cheatOpen; setCheatOpen(next); if (next) socket.emit('player:cheatPanel'); };
   return <section className="panel gameHud">
     <div className="domScore"><b>Left</b><span>{state.score.left}</span><small>{state.config.length}: first to {state.config.goalTarget}, turn {state.turn}/{state.config.maxTurns} · {state.phase} · {Math.max(0, Math.ceil((state.turnDeadlineAt - Date.now())/1000))}s · aimed {Object.keys(state.pendingIntents).length}/{state.bobbles.length}</small><span>{state.score.right}</span><b>Right</b></div>
-    <div className="actions"><button onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button><select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select><button onClick={()=>socket.emit('game:reset', mode)}>Reset</button><button className="cheat" title="Testing only: warns all users" onClick={()=>socket.emit('player:cheatBoxes')}>Cheat boxes ⚠</button></div>
+    <div className="actions"><button onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button><select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select><button onClick={()=>socket.emit('game:reset', mode)}>Reset</button><button className={cheatOpen ? 'cheat selected' : 'cheat'} title="Testing only: opening this list warns all users" onClick={toggleCheat}>{cheatOpen ? 'Close cheats ⚠' : 'Cheat panel ⚠'}</button><button onClick={onLeave} title="Leave the match and return to the main menu">Main menu</button></div>
+    {cheatOpen && me && <div className="inventory cheatPanel"><b>⚠ Cheat boosters</b><small className="cheatWarn">Testing only — all players are warned on every grant. One copy each, single-use.</small>{BOX_TYPE_IDS.map(type => { const owned = inventory.some(i => i.type === type); return <button key={type} disabled={owned} title={BOX_TYPES[type].description} onClick={()=>socket.emit('player:cheatBox', { type })}>{BOX_TYPES[type].label}{owned ? ' ✓' : ''}</button>; })}</div>}
     {me && <div className="actions formations">{formationOpen ? FORMATION_IDS.map(id=><button key={id} className={state.formations[me.side]===id?'selected':''} onClick={()=>socket.emit('player:formation', id)} title={FORMATIONS[id].description}>{FORMATIONS[id].label}</button>) : <small>Position selection locked until the next goal.</small>}</div>}
-    {me && <div className="inventory targetPicker"><b>Box target</b><select value={targetId} onChange={e=>setTargetBobbleId(e.target.value)}>{state.bobbles.map(b => <option key={b.id} value={b.id}>{b.side} {b.id}</option>)}</select><small>Boxes can target any player.</small></div>}
+    {me && <div className="inventory targetPicker"><b>Box target</b><span className="targetName">{target ? `${target.side} ${target.id}` : 'none'}</span><small>Click any bobble on the field to target it.</small></div>}
     {me && <div className="inventory"><b>Power Plays</b>{inventory.length ? inventory.map((item, i)=><button key={`${item.type}-${i}`} disabled={item.availableTurn > state.turn} title={BOX_TYPES[item.type].description} onClick={()=>useInventory(item.type as BoxType, state, me.side, targetId, setPlacing)}>{BOX_TYPES[item.type].label}{item.availableTurn > state.turn ? ` (turn ${item.availableTurn})` : ''}</button>) : <small>No Power Plays yet. Run a bobble or last-touched ball into the ? box.</small>}</div>}
-    {placing && <div className="inventory hint"><b>Placing {BOX_TYPES[placing.type as BoxType].label}</b><small>Move mouse to aim · R rotates · click to place · Esc cancels</small></div>}
-    {!placing && ownRotatable.length > 0 && state.phase === 'planning' && <div className="inventory hint"><small>Tip: click your placed pads to rotate them 45°.</small></div>}
+    {placing && <div className="inventory hint"><b>Placing {BOX_TYPES[placing.type as BoxType].label}</b><small>Hold mouse and drag to aim the facing · release to place · R rotates 45° · Esc cancels</small></div>}
+    {!placing && ownRotatable.length > 0 && state.phase === 'planning' && <div className="inventory hint"><small>Tip: hold and drag your placed pads to spin them toward the cursor.</small></div>}
   </section>;
 }
 
@@ -175,12 +181,19 @@ function useInventory(type: BoxType, state: GameState, side: 'left' | 'right', t
   socket.emit('player:power', use);
 }
 
-function Game3D({ state, you, placing, setPlacing }: { state: GameState; you: string; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void }) {
+type PointerMode =
+  | { kind: 'launch'; bobbleId: string; start: Vec; current: Vec }
+  | { kind: 'place'; anchor: Vec; angle: number }
+  | { kind: 'rotatePad'; id: string; center: Vec; angle: number };
+
+function Game3D({ state, you, placing, setPlacing, targetBobbleId, setTargetBobbleId }: { state: GameState; you: string; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void; targetBobbleId: string; setTargetBobbleId: (id: string)=>void }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const rendererRef = React.useRef<BobbleLeague3DRenderer | null>(null);
-  const [drag, setDrag] = React.useState<{ bobbleId: string; start: Vec; current: Vec } | null>(null);
+  const [mode, setMode] = React.useState<PointerMode | null>(null);
+  const lastRotateSent = React.useRef(0);
   const [renderError, setRenderError] = React.useState('');
   const me = state.players[you];
+  const drag = mode?.kind === 'launch' ? { bobbleId: mode.bobbleId, start: mode.start, current: mode.current } : null;
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -201,57 +214,103 @@ function Game3D({ state, you, placing, setPlacing }: { state: GameState; you: st
   }, []);
 
   React.useEffect(() => {
-    rendererRef.current?.render({ state, you, drag, placing });
-  }, [state, you, drag, placing]);
+    rendererRef.current?.render({ state, you, drag, placing, selectedBobbleId: targetBobbleId || null });
+  }, [state, you, mode, placing, targetBobbleId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   React.useEffect(() => {
     if (!placing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'r' || e.key === 'R') setPlacing({ ...placing, angle: placing.angle + Math.PI / 4 });
-      if (e.key === 'Escape') setPlacing(null);
+      if (e.key === 'Escape') { setPlacing(null); setMode(null); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [placing, setPlacing]);
 
   const point = (e: React.PointerEvent<HTMLCanvasElement>) => rendererRef.current?.pointFromClient(e.clientX, e.clientY) ?? null;
+  const clampPos = (p: Vec): Vec => ({ x: Math.min(FIELD.width - 40, Math.max(40, p.x)), y: Math.min(FIELD.height - 40, Math.max(40, p.y)) });
   const down = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!me) return;
     const p = point(e);
     if (!p) return;
     if (placing) {
-      const clamped = { x: Math.min(FIELD.width - 40, Math.max(40, p.x)), y: Math.min(FIELD.height - 40, Math.max(40, p.y)) };
-      socket.emit('player:power', { type: placing.type, position: clamped, angle: placing.angle });
-      setPlacing(null);
-      return;
-    }
-    if (state.phase !== 'planning') return;
-    const bobble = state.bobbles.find(b => me.controlledBobbleIds.includes(b.id) && Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 16);
-    if (bobble) {
+      // hold LMB: anchor the pad here, drag to aim its facing, release to place
+      const anchor = clampPos(p);
       e.currentTarget.setPointerCapture(e.pointerId);
-      setDrag({ bobbleId: bobble.id, start: bobble.pos, current: p });
+      setPlacing({ ...placing, pos: anchor });
+      setMode({ kind: 'place', anchor, angle: placing.angle });
       return;
     }
-    // rotate one of your placed pads by clicking it
-    const pad = state.fieldObjects.find(o => o.owner === me.side && o.untilTurn >= state.turn && ROTATABLE_FIELD_OBJECTS.includes(o.type) && Math.hypot(o.pos.x - p.x, o.pos.y - p.y) <= 70);
-    if (pad) socket.emit('player:fieldRotate', { id: pad.id });
+    if (state.phase === 'planning') {
+      const bobble = state.bobbles.find(b => me.controlledBobbleIds.includes(b.id) && Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 16);
+      if (bobble) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setMode({ kind: 'launch', bobbleId: bobble.id, start: bobble.pos, current: p });
+        return;
+      }
+    }
+    // click any bobble on the field to select it as the box target
+    const target = state.bobbles.find(b => Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 16);
+    if (target) { setTargetBobbleId(target.id); return; }
+    // hold & drag one of your placed pads to rotate it toward the cursor
+    if (state.phase === 'planning') {
+      const pad = state.fieldObjects.find(o => o.owner === me.side && o.untilTurn >= state.turn && ROTATABLE_FIELD_OBJECTS.includes(o.type) && Math.hypot(o.pos.x - p.x, o.pos.y - p.y) <= 70);
+      if (pad) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setMode({ kind: 'rotatePad', id: pad.id, center: pad.pos, angle: pad.angle });
+      }
+    }
   };
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const p = point(e);
     if (!p) return;
-    if (placing) { setPlacing({ ...placing, pos: p }); return; }
-    if (drag) setDrag({ ...drag, current: p });
+    if (mode?.kind === 'place' && placing) {
+      const dx = p.x - mode.anchor.x, dy = p.y - mode.anchor.y;
+      if (Math.hypot(dx, dy) > 12) {
+        const angle = Math.atan2(dy, dx);
+        setMode({ ...mode, angle });
+        setPlacing({ ...placing, pos: mode.anchor, angle });
+      }
+      return;
+    }
+    if (mode?.kind === 'rotatePad') {
+      const angle = Math.atan2(p.y - mode.center.y, p.x - mode.center.x);
+      setMode({ ...mode, angle });
+      const now = performance.now();
+      if (now - lastRotateSent.current > 50) {
+        lastRotateSent.current = now;
+        socket.emit('player:fieldRotate', { id: mode.id, angle });
+      }
+      return;
+    }
+    if (mode?.kind === 'launch') { setMode({ ...mode, current: p }); return; }
+    if (placing) setPlacing({ ...placing, pos: clampPos(p) });
   };
   const up = () => {
-    if (!drag) return;
-    const dx = drag.start.x - drag.current.x;
-    const dy = drag.start.y - drag.current.y;
-    socket.emit('player:launch', { bobbleId: drag.bobbleId, aimAngle: Math.atan2(dy, dx), impulse: Math.min(900, Math.max(1, Math.hypot(dx, dy) * 6)) });
-    setDrag(null);
+    if (mode?.kind === 'place' && placing) {
+      socket.emit('player:power', { type: placing.type, position: mode.anchor, angle: mode.angle });
+      setPlacing(null);
+      setMode(null);
+      return;
+    }
+    if (mode?.kind === 'rotatePad') {
+      socket.emit('player:fieldRotate', { id: mode.id, angle: mode.angle });
+      setMode(null);
+      return;
+    }
+    if (mode?.kind === 'launch') {
+      const dx = mode.start.x - mode.current.x;
+      const dy = mode.start.y - mode.current.y;
+      const pull = Math.hypot(dx, dy);
+      // a click (no pull) selects your own bobble as the box target instead of wasting its launch
+      if (pull < 8) setTargetBobbleId(mode.bobbleId);
+      else socket.emit('player:launch', { bobbleId: mode.bobbleId, aimAngle: Math.atan2(dy, dx), impulse: Math.min(900, Math.max(1, pull * 6)) });
+      setMode(null);
+    }
   };
 
   return <>
-    <canvas className="field threeField" ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setDrag(null)} aria-label="3D BAbble League field"/>
+    <canvas className="field threeField" ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setMode(null)} aria-label="3D BAbble League field"/>
     {renderError && <div className="renderFallback"><b>3D preview unavailable</b><span>{renderError}</span></div>}
   </>;
 }

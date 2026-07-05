@@ -1,14 +1,26 @@
 import * as THREE from 'three';
+import { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from '../../shared/game';
 import { BIG_BUMPER_RADIUS, BOX_TYPES, BUMPER_RADIUS, BUMPERS, FIELD, FieldObjectType, GameState, TEAMS, Vec } from '../../shared/types';
 
 export type WorldXZ = { x: number; z: number };
 export type PlacingGhost = { type: FieldObjectType; pos: Vec; angle: number };
-export type RenderInput = { state: GameState; you: string; drag: { bobbleId: string; start: Vec; current: Vec } | null; placing?: PlacingGhost | null };
+export type RenderInput = { state: GameState; you: string; drag: { bobbleId: string; start: Vec; current: Vec } | null; placing?: PlacingGhost | null; selectedBobbleId?: string | null };
 
 export function fieldToWorld(p: Vec): WorldXZ { return { x: (p.x - FIELD.width / 2) / 50, z: (p.y - FIELD.height / 2) / 50 }; }
 export function worldToField(p: WorldXZ): Vec { return { x: p.x * 50 + FIELD.width / 2, y: p.z * 50 + FIELD.height / 2 }; }
 export function fieldRadiusToWorld(r: number): number { return r / 50; }
 export const BUMPER_WORLD_POSITIONS: WorldXZ[] = BUMPERS.map(fieldToWorld);
+
+// Deterministic ball rotation from the authoritative spin state so the visual
+// roll always matches travel direction (field x -> world x, field y -> world z).
+export function ballSpinToRotation(spin: Vec): { x: number; z: number } {
+  return { x: spin.y, z: -spin.x };
+}
+
+export const GOAL_COLORS = { left: 0x4a5ad6, right: 0xf05d48 } as const;
+export function goalDisplayColors(swapped: boolean): { left: number; right: number } {
+  return swapped ? { left: GOAL_COLORS.right, right: GOAL_COLORS.left } : { left: GOAL_COLORS.left, right: GOAL_COLORS.right };
+}
 
 const FIELD_X = FIELD.width / 50;
 const FIELD_Z = FIELD.height / 50;
@@ -27,6 +39,7 @@ export class BobbleLeague3DRenderer {
   private matCache = new Map<string, THREE.Material>();
   private board = new THREE.Group();
   private dynamic = new THREE.Group();
+  private goalTint: Record<'left' | 'right', THREE.MeshStandardMaterial[]> = { left: [], right: [] };
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
@@ -74,13 +87,14 @@ export class BobbleLeague3DRenderer {
     return this.raycaster.ray.intersectPlane(this.plane, hit) ? worldToField({ x: hit.x, z: hit.z }) : null;
   }
 
-  render({ state, you, drag, placing }: RenderInput) {
+  render({ state, you, drag, placing, selectedBobbleId }: RenderInput) {
     this.clearDynamic();
     this.buildHud(state);
+    this.applyGoalSwap(state);
     for (const obj of state.fieldObjects) if (obj.untilTurn >= state.turn) this.addFieldObject(obj.type, obj.pos, obj.angle);
     for (const box of state.boxes) this.addPowerBox(box.pos, BOX_TYPES[box.type].color);
-    for (const b of state.bobbles) this.addBobble(b, state, you);
-    this.addBall(state.ball.pos, state.ball.radius);
+    for (const b of state.bobbles) this.addBobble(b, state, you, selectedBobbleId);
+    this.addBall(state.ball.pos, state.ball.radius, state.ball.spin);
     this.addBumperFx(state);
     if (state.phase === 'planning') this.addCommittedIntents(state, you, drag?.bobbleId);
     if (drag) this.addAimAffordance(state, drag);
@@ -162,15 +176,22 @@ export class BobbleLeague3DRenderer {
   private addGoal(side: -1 | 1) {
     const g = this.board;
     const x = side * (FIELD_X / 2 - 0.35);
-    const col = side < 0 ? 0x4a5ad6 : 0xf05d48;
+    const key = side < 0 ? 'left' : 'right';
+    const col = GOAL_COLORS[key];
     const halfGoal = fieldRadiusToWorld(FIELD.goalHeight) / 2;
+    // dedicated tintable materials so Swap Goals can visibly recolor the gates
+    const frameTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.35, metalness: 0.03 });
+    const mouthTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.6, metalness: 0.03, transparent: true, opacity: 0.35 });
+    this.goalTint[key].push(frameTint, mouthTint);
+    this.matCache.set(`goalFrame:${key}`, frameTint);
+    this.matCache.set(`goalMouth:${key}`, mouthTint);
     // posts
     for (const s of [-1, 1] as const) {
-      this.mesh(g, new THREE.CylinderGeometry(0.16, 0.2, 1.5, 20), this.mat(col, 0.35), x, 1.6, s * halfGoal, true);
+      this.mesh(g, new THREE.CylinderGeometry(0.16, 0.2, 1.5, 20), frameTint, x, 1.6, s * halfGoal, true);
       this.mesh(g, new THREE.SphereGeometry(0.22, 20, 12), this.mat(0xfff3be, 0.35), x, 2.36, s * halfGoal, true);
     }
     // crossbar hoop
-    const bar = new THREE.Mesh(this.geo(`goalBar${halfGoal.toFixed(2)}`, () => new THREE.CylinderGeometry(0.13, 0.13, halfGoal * 2, 16)), this.mat(col, 0.35));
+    const bar = new THREE.Mesh(this.geo(`goalBar${halfGoal.toFixed(2)}`, () => new THREE.CylinderGeometry(0.13, 0.13, halfGoal * 2, 16)), frameTint);
     bar.position.set(x, 2.32, 0); bar.rotation.x = Math.PI / 2; bar.castShadow = true; g.add(bar);
     // net: translucent wireframe box sunk into the goal mouth
     const net = new THREE.Mesh(
@@ -179,8 +200,32 @@ export class BobbleLeague3DRenderer {
     );
     net.position.set(x + side * 0.55, 1.68, 0); g.add(net);
     // glowing goal mouth strip on the turf
-    const mouth = this.mesh(g, new THREE.BoxGeometry(0.9, 0.03, halfGoal * 2), this.mat(col, 0.6, { transparent: true, opacity: 0.35 }), x - side * 0.2, TURF_Y + 0.015, 0);
+    const mouth = this.mesh(g, new THREE.BoxGeometry(0.9, 0.03, halfGoal * 2), mouthTint, x - side * 0.2, TURF_Y + 0.015, 0);
     mouth.receiveShadow = false;
+  }
+
+  // Swap Goals power play: recolor the gates while active so everyone can see
+  // which direction currently scores, plus a pulsing halo and center banner.
+  private applyGoalSwap(state: GameState) {
+    const swapped = state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn >= state.turn;
+    const cols = goalDisplayColors(swapped);
+    for (const m of this.goalTint.left) { m.color.setHex(cols.left); m.emissive.setHex(swapped ? cols.left : 0x000000); m.emissiveIntensity = swapped ? 0.45 : 0; }
+    for (const m of this.goalTint.right) { m.color.setHex(cols.right); m.emissive.setHex(swapped ? cols.right : 0x000000); m.emissiveIntensity = swapped ? 0.45 : 0; }
+    if (!swapped) return;
+    const t = performance.now() / 1000;
+    const halfGoal = fieldRadiusToWorld(FIELD.goalHeight) / 2;
+    for (const side of [-1, 1] as const) {
+      const halo = new THREE.Mesh(this.geo('goalSwapHalo', () => new THREE.TorusGeometry(1, 0.07, 8, 48)),
+        new THREE.MeshBasicMaterial({ color: side < 0 ? cols.left : cols.right, transparent: true, opacity: 0.5 + Math.sin(t * 5) * 0.25 }));
+      halo.position.set(side * (FIELD_X / 2 - 0.35), TURF_Y + 0.08, 0);
+      halo.rotation.x = Math.PI / 2;
+      halo.scale.setScalar(halfGoal * 0.9 + Math.sin(t * 5) * 0.08);
+      this.dynamic.add(halo);
+    }
+    const banner = this.text('GOALS SWAPPED!', 40, '#f9a8f9');
+    banner.position.set(0, 3.4, 0);
+    banner.scale.multiplyScalar(1.2);
+    this.dynamic.add(banner);
   }
 
   private addBumper(x: number, z: number) {
@@ -198,7 +243,7 @@ export class BobbleLeague3DRenderer {
     m.position.set(x, TURF_Y + 0.03, z); m.rotation.x = -Math.PI / 2; m.scale.setScalar(r); m.receiveShadow = false; this.dynamic.add(m);
   }
 
-  private addBobble(b: GameState['bobbles'][number], state: GameState, you: string) {
+  private addBobble(b: GameState['bobbles'][number], state: GameState, you: string, selectedBobbleId?: string | null) {
     const player = Object.values(state.players).find(p => p.side === b.side && p.controlledBobbleIds.includes(b.id)) ?? Object.values(state.players).find(p => p.side === b.side);
     const team = TEAMS[player?.team ?? 'pigs'];
     const w = fieldToWorld(b.pos);
@@ -240,13 +285,25 @@ export class BobbleLeague3DRenderer {
       const ring = new THREE.Mesh(this.geo('ctrlRing', () => new THREE.TorusGeometry(1, 0.06, 8, 48)), this.mat(0xffe86a, 0.4, { emissive: 0x6b5410 }));
       ring.position.set(w.x, TURF_Y + 0.04, w.z); ring.rotation.x = Math.PI / 2; ring.scale.setScalar(r * 1.55); this.dynamic.add(ring);
     }
+    // click-to-select box target: pulsing cyan ring plus TARGET label
+    if (selectedBobbleId === b.id) {
+      const pulse = 1.8 + Math.sin(performance.now() / 180) * 0.12;
+      const sel = new THREE.Mesh(this.geo('targetRing', () => new THREE.TorusGeometry(1, 0.09, 8, 48)),
+        new THREE.MeshBasicMaterial({ color: 0x38f0e6, transparent: true, opacity: 0.9 }));
+      sel.position.set(w.x, TURF_Y + 0.07, w.z); sel.rotation.x = Math.PI / 2; sel.scale.setScalar(r * pulse); this.dynamic.add(sel);
+      const label = this.text('TARGET', 26, '#7ff7ee');
+      label.position.set(w.x, TURF_Y + 2.6 + bobY, w.z);
+      this.dynamic.add(label);
+    }
   }
 
-  private addBall(p: Vec, radius: number) {
+  private addBall(p: Vec, radius: number, spin?: Vec) {
     const w = fieldToWorld(p); const r = fieldRadiusToWorld(radius);
     this.blobShadow(w.x, w.z, r * 1.5);
     const grp = new THREE.Group(); grp.position.set(w.x, TURF_Y + r + 0.06, w.z);
-    grp.rotation.y = (p.x / FIELD.width) * Math.PI * 4; grp.rotation.x = (p.y / FIELD.height) * Math.PI * 2;
+    // authoritative rolling spin: rotation axis always matches travel direction
+    const rot = ballSpinToRotation(spin ?? { x: 0, y: 0 });
+    grp.rotation.set(rot.x, 0, rot.z);
     this.dynamic.add(grp);
     const ball = this.mesh(grp, new THREE.SphereGeometry(r, 36, 24), this.mat(0xfdfdfa, 0.3), 0, 0, 0, true);
     ball.castShadow = true;
@@ -293,10 +350,18 @@ export class BobbleLeague3DRenderer {
       this.mesh(grp, new THREE.BoxGeometry(2.5, 0.62, 0.5), fx(col, 0.4), 0, TURF_Y + 0.32, 0, !ghost);
       this.mesh(grp, new THREE.BoxGeometry(2.62, 0.14, 0.62), fx(0x64748b, 0.5), 0, TURF_Y + 0.08, 0);
     } else if (type === 'ramp') {
-      // angled deflector wedge (halfLen 55 -> 2.2 long)
-      const wedge = this.mesh(grp, new THREE.BoxGeometry(2.3, 0.5, 0.46), fx(col, 0.35), 0, TURF_Y + 0.26, 0, !ghost);
-      wedge.rotation.x = -0.32;
-      this.mesh(grp, new THREE.BoxGeometry(2.42, 0.12, 0.6), fx(0x7c6ae8, 0.45), 0, TURF_Y + 0.07, 0);
+      // true wedge shape matching physics zone: low lip at -x rising to the
+      // launch lip at +x (local +x == ramp facing/launch direction)
+      const wedge = new THREE.Mesh(this.geo('rampWedge', () => this.wedgeGeometry()), fx(col, 0.35));
+      wedge.position.y = TURF_Y + 0.01; wedge.castShadow = !ghost; wedge.receiveShadow = true; grp.add(wedge);
+      // base plate + launch direction chevrons up the slope
+      this.mesh(grp, new THREE.BoxGeometry(fieldRadiusToWorld(RAMP_HALF_LEN) * 2 + 0.24, 0.08, fieldRadiusToWorld(RAMP_HALF_WIDTH) * 2 + 0.24), fx(0x7c6ae8, 0.45), 0, TURF_Y + 0.04, 0);
+      for (const [off, h] of [[-0.7, 0.28], [0, 0.52], [0.7, 0.76]] as const) {
+        const arrow = new THREE.Mesh(this.geo('rampArrow', () => new THREE.ConeGeometry(0.18, 0.44, 4)), ghost ? fx(0xf5f3ff, 0.3) : this.mat(0xf5f3ff, 0.3));
+        arrow.position.set(off, TURF_Y + h, 0);
+        arrow.rotation.set(0, Math.PI / 4, -Math.PI / 2);
+        grp.add(arrow);
+      }
     } else {
       // boost pad (physics radius 70 -> 1.4) with chevron arrows along the push direction
       const pad = this.mesh(grp, new THREE.CylinderGeometry(1.4, 1.5, 0.1, 36), fx(col, 0.45), 0, TURF_Y + 0.06, 0);
@@ -310,20 +375,50 @@ export class BobbleLeague3DRenderer {
     }
   }
 
+  // wedge prism: flat low edge at local -x rising to a tall launch lip at +x
+  private wedgeGeometry() {
+    const hx = fieldRadiusToWorld(RAMP_HALF_LEN);
+    const hz = fieldRadiusToWorld(RAMP_HALF_WIDTH);
+    const H = 0.82;
+    const a = [-hx, 0, -hz], b = [hx, 0, -hz], c = [hx, H, -hz];
+    const d = [-hx, 0, hz], e = [hx, 0, hz], f = [hx, H, hz];
+    const tris = [
+      a, c, b, // side z-
+      d, e, f, // side z+
+      a, d, f, a, f, c, // slope
+      b, c, f, b, f, e, // tall back face
+      a, b, e, a, e, d // bottom
+    ].flat();
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(tris, 3));
+    geo.computeVertexNormals();
+    return geo;
+  }
+
   // -- bumper hit FX ------------------------------------------------------
   private addBumperFx(state: GameState) {
     const now = Date.now();
     const big = state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
     if (big) {
       const t = performance.now() / 1000;
+      const bigR = fieldRadiusToWorld(BIG_BUMPER_RADIUS);
       for (const w of BUMPER_WORLD_POSITIONS) {
+        // persistent super-charged bumper shell: enlarged glowing drum + dome
+        this.mesh(this.dynamic, this.geo('bigBumperBase', () => new THREE.CylinderGeometry(1.02, 1.14, 0.34, 40)), this.mat(0xb3421f, 0.5), w.x, 1.2, w.z, true);
+        this.mesh(this.dynamic, this.geo('bigBumperDrum', () => new THREE.CylinderGeometry(0.94, 1.0, 0.52, 40)), this.mat(0xf97316, 0.35, { emissive: 0x7a2e08 }), w.x, 1.6, w.z, true);
+        this.mesh(this.dynamic, this.geo('bigBumperCap', () => new THREE.CylinderGeometry(1.0, 1.0, 0.12, 40)), this.mat(0xffd166, 0.3, { emissive: 0x6b4d0a }), w.x, 1.9, w.z, true);
+        const dome = this.mesh(this.dynamic, this.geo('bigBumperDome', () => new THREE.SphereGeometry(0.5, 28, 16)), this.mat(0xffe08a, 0.25, { emissive: 0x8a5a12 }), w.x, 2.12, w.z, true);
+        dome.scale.setScalar(1 + Math.sin(t * 6) * 0.05);
         const ring = new THREE.Mesh(this.geo('bumperBigRing', () => new THREE.TorusGeometry(1, 0.07, 8, 48)),
           new THREE.MeshBasicMaterial({ color: 0xffb454, transparent: true, opacity: 0.55 + Math.sin(t * 6) * 0.25 }));
         ring.position.set(w.x, TURF_Y + 0.08, w.z);
         ring.rotation.x = Math.PI / 2;
-        ring.scale.setScalar(fieldRadiusToWorld(BIG_BUMPER_RADIUS) + 0.25 + Math.sin(t * 6) * 0.08);
+        ring.scale.setScalar(bigR + 0.25 + Math.sin(t * 6) * 0.08);
         this.dynamic.add(ring);
       }
+      const banner = this.text('BIG BUMPERS!', 34, '#ffb454');
+      banner.position.set(0, 4.2, FIELD_Z / 2 + 0.6);
+      this.dynamic.add(banner);
     }
     for (const ev of state.bumperEvents ?? []) {
       const age = (now - ev.at) / 650;

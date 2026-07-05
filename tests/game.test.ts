@@ -3,12 +3,17 @@ import {
   addCheatBoxes,
   addPlayer,
   applyFormation,
+  BIG_BUMPER_BOOST_MULT,
+  BOOST_PAD_ACCEL,
   BOX_LIFETIME_TURNS,
   collectPowerBox,
   createInitialState,
+  grantCheatBox,
   launchBobble,
   MAX_RESOLVE_MS,
+  RAMP_LAUNCH_SPEED,
   rotateFieldObject,
+  setFieldObjectAngle,
   setSideTeam,
   spawnBox,
   startGame,
@@ -362,6 +367,129 @@ describe('classic Bobble League shared rules', () => {
     usePowerPlay(s, 'l', { type: 'stickyGoo', position: { x: 400, y: 300 } }, 1000);
     const goo = s.fieldObjects.find(o => o.type === 'stickyGoo')!;
     expect(rotateFieldObject(s, 'l', goo.id)).toBe(false); // goo is not rotatable
+  });
+
+  it('ramps launch movers along the ramp direction with a guaranteed exit speed', () => {
+    const s = createInitialState('RAMP', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.fieldObjects = [{ id: 'ramp-1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: 99 }];
+    // slow ball rolling up the ramp gets redirected and launched off the lip
+    s.ball.pos = { x: 505, y: 330 };
+    s.ball.vel = { x: 150, y: -60 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.ball.vel.x).toBeGreaterThanOrEqual(RAMP_LAUNCH_SPEED - 1);
+    expect(Math.abs(s.ball.vel.y)).toBeLessThan(1); // aligned to the ramp facing
+  });
+
+  it('ramps bounce movers that hit the tall back face instead of ramping them', () => {
+    const s = createInitialState('RAMPB', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.fieldObjects = [{ id: 'ramp-1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: 99 }];
+    s.ball.pos = { x: 620, y: 310 };
+    s.ball.vel = { x: -200, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.ball.vel.x).toBeGreaterThan(0); // reflected back off the wedge cliff
+    expect(s.ball.pos.x).toBeGreaterThan(610); // pushed out past the lip
+  });
+
+  it('boost pads give a strong, noticeable acceleration', () => {
+    expect(BOOST_PAD_ACCEL).toBeGreaterThanOrEqual(2000);
+    const s = createInitialState('BOOSTP', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.fieldObjects = [{ id: 'b1', type: 'boost', owner: 'left', pos: { x: 470, y: 310 }, angle: 0, untilTurn: 99 }];
+    s.ball.pos = { x: 470, y: 310 };
+    s.ball.vel = { x: 50, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.ball.vel.x).toBeGreaterThan(110); // more than doubled in one tick
+  });
+
+  it('big bumpers hit far harder than normal bumpers', () => {
+    expect(BIG_BUMPER_BOOST_MULT).toBeGreaterThanOrEqual(2.5);
+    const run = (big: boolean) => {
+      const s = createInitialState('BIGHIT', 3);
+      addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+      addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+      startGame(s, seq([0.5]));
+      s.phase = 'resolving';
+      s.resolvingStartedAt = 1000;
+      if (big) s.bigBumpersUntilTurn = s.turn;
+      s.ball.pos = { x: BUMPERS[0].x + 55, y: BUMPERS[0].y };
+      s.ball.vel = { x: -300, y: 0 };
+      stepGame(s, {}, 1033, seq([0.5]));
+      return s.ball.vel.x;
+    };
+    const normal = run(false);
+    const big = run(true);
+    expect(normal).toBeGreaterThan(0);
+    expect(big).toBeGreaterThan(normal + 150);
+  });
+
+  it('accumulates authoritative ball spin matching travelled distance over radius', () => {
+    const s = createInitialState('SPIN', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.ball.spin = { x: 0, y: 0 };
+    s.ball.vel = { x: 300, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.ball.spin!.x).toBeCloseTo(300 * (1 / 30) / FIELD.ballRadius, 3);
+    expect(s.ball.spin!.y).toBeCloseTo(0, 5);
+    const before = s.ball.spin!.y;
+    s.ball.vel = { x: 0, y: -240 };
+    stepGame(s, {}, 1066, seq([0.5]));
+    expect(s.ball.spin!.y).toBeLessThan(before); // spin follows the new travel direction
+  });
+
+  it('grants cheat boosters exactly once and never duplicates unused grants', () => {
+    const s = createInitialState('CHEAT1', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(grantCheatBox(s, 'l', 'boost')).toBe(true);
+    expect(s.events.at(-1)?.message).toMatch(/CHEAT/i);
+    expect(grantCheatBox(s, 'l', 'boost')).toBe(false); // no duplicate while unused
+    expect(grantCheatBox(s, 'l', 'boost')).toBe(false);
+    expect(s.powerPlayInventories.left.filter(i => i.type === 'boost')).toHaveLength(1);
+    expect(s.powerPlayInventories.left[0].availableTurn).toBe(s.turn); // usable immediately
+
+    // one-time: using it consumes it, after which a new grant is allowed
+    expect(usePowerPlay(s, 'l', { type: 'boost', position: { x: 500, y: 300 }, angle: 0 }, 1000)).toBe(true);
+    expect(s.powerPlayInventories.left.filter(i => i.type === 'boost')).toHaveLength(0);
+    expect(grantCheatBox(s, 'l', 'boost')).toBe(true);
+    expect(grantCheatBox(s, 'l', 'ghosted')).toBe(true); // other types unaffected
+  });
+
+  it('sets absolute pad angles for drag-hold rotation, owner only', () => {
+    const s = createInitialState('ROTABS', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'ramp', availableTurn: 1 });
+    expect(usePowerPlay(s, 'l', { type: 'ramp', position: { x: 500, y: 300 }, angle: 0 }, 1000)).toBe(true);
+    const placed = s.fieldObjects[0];
+    expect(setFieldObjectAngle(s, 'r', placed.id, 1.2)).toBe(false); // opponent cannot rotate
+    expect(setFieldObjectAngle(s, 'l', placed.id, Number.NaN)).toBe(false);
+    expect(setFieldObjectAngle(s, 'l', placed.id, 1.2)).toBe(true);
+    expect(placed.angle).toBeCloseTo(1.2);
+    s.powerPlayInventories.left.push({ type: 'stickyGoo', availableTurn: 1 });
+    usePowerPlay(s, 'l', { type: 'stickyGoo', position: { x: 400, y: 300 } }, 1000);
+    const goo = s.fieldObjects.find(o => o.type === 'stickyGoo')!;
+    expect(setFieldObjectAngle(s, 'l', goo.id, 1)).toBe(false); // goo is not rotatable
   });
 
   it('scores only after the ball crosses through the goal mouth trigger', () => {

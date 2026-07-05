@@ -42,7 +42,17 @@ export const MAX_RESOLVE_MS = 10000;
 const TURN_DURATION_MS = 15000;
 const MAX_SPEED = 1600;
 export const BUMPER_BOOST = 220;
+// Big Bumpers power play: noticeably stronger corner hits plus higher restitution.
+export const BIG_BUMPER_BOOST_MULT = 2.6;
+export const BIG_BUMPER_RESTITUTION = 1.22;
 const BUMPER_EVENT_TTL_MS = 1500;
+// Boost pad acceleration (units/s^2) applied while a mover sits on the pad.
+export const BOOST_PAD_ACCEL = 2400;
+// Ramp wedge: movers riding up the slope get redirected along the ramp
+// direction and launched off the lip at a minimum exit speed.
+export const RAMP_LAUNCH_SPEED = 540;
+export const RAMP_HALF_LEN = 60;
+export const RAMP_HALF_WIDTH = 34;
 
 export function createInitialState(roomCode: string, mode: GameMode = 3): GameState {
   const length = GAME_LENGTHS[mode];
@@ -62,7 +72,7 @@ export function createInitialState(roomCode: string, mode: GameMode = 3): GameSt
     formationSelectionTurn: null,
     formations: { left: 'forward', right: 'forward' },
     bobbles: [],
-    ball: { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null },
+    ball: { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } },
     boxes: [],
     fieldObjects: [],
     bumperEvents: [],
@@ -139,7 +149,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.pendingIntents = {};
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null };
+  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
   buildBobbles(state);
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
@@ -163,7 +173,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.pendingIntents = {};
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null };
+  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   for (const p of Object.values(state.players)) p.score = 0;
@@ -254,13 +264,39 @@ export function addCheatBoxes(state: GameState, playerIdOrSide: string | PlayerS
 }
 
 export function rotateFieldObject(state: GameState, playerId: string, id: string, delta = Math.PI / 4) {
-  if (state.phase !== 'planning') return false;
-  const player = state.players[playerId];
-  if (!player || !player.connected) return false;
-  const obj = state.fieldObjects.find(o => o.id === id && o.owner === player.side && o.untilTurn >= state.turn);
-  if (!obj || !ROTATABLE_FIELD_OBJECTS.includes(obj.type)) return false;
+  const obj = ownedRotatable(state, playerId, id);
+  if (!obj) return false;
   obj.angle = (obj.angle + delta) % (Math.PI * 2);
-  pushEvent(state, `${player.name} rotated a ${obj.type} pad.`);
+  pushEvent(state, `${state.players[playerId].name} rotated a ${obj.type} pad.`);
+  return true;
+}
+
+// Drag-hold rotation: set an absolute facing angle on an owned rotatable pad.
+export function setFieldObjectAngle(state: GameState, playerId: string, id: string, angle: number) {
+  if (typeof angle !== 'number' || !Number.isFinite(angle)) return false;
+  const obj = ownedRotatable(state, playerId, id);
+  if (!obj) return false;
+  obj.angle = angle % (Math.PI * 2);
+  return true;
+}
+
+function ownedRotatable(state: GameState, playerId: string, id: string) {
+  if (state.phase !== 'planning') return null;
+  const player = state.players[playerId];
+  if (!player || !player.connected) return null;
+  const obj = state.fieldObjects.find(o => o.id === id && o.owner === player.side && o.untilTurn >= state.turn);
+  if (!obj || !ROTATABLE_FIELD_OBJECTS.includes(obj.type)) return null;
+  return obj;
+}
+
+// Cheat panel: grant exactly one testing copy of a Power Play. Repeated clicks
+// never duplicate an unused cheat item; using it up allows granting again.
+export function grantCheatBox(state: GameState, playerIdOrSide: string | PlayerSide, type: BoxType) {
+  const side = playerIdOrSide === 'left' || playerIdOrSide === 'right' ? playerIdOrSide : state.players[playerIdOrSide]?.side;
+  if (!side || !BOX_TYPE_IDS.includes(type)) return false;
+  if (state.powerPlayInventories[side].some(item => item.type === type)) return false;
+  state.powerPlayInventories[side].push({ type, availableTurn: state.turn });
+  pushEvent(state, `CHEAT MODE: ${side} granted one ${BOX_TYPES[type].label} for testing. All users are warned.`);
   return true;
 }
 
@@ -339,6 +375,10 @@ function integrateBall(state: GameState, dt: number) {
   const drag = state.beachBallUntilTurn !== null && state.beachBallUntilTurn >= state.turn ? BEACH_BALL_DRAG : BALL_DRAG;
   b.pos.x += b.vel.x * dt;
   b.pos.y += b.vel.y * dt;
+  // Authoritative rolling spin: angular displacement = travelled distance / radius.
+  if (!b.spin) b.spin = { x: 0, y: 0 };
+  b.spin.x += (b.vel.x * dt) / b.radius;
+  b.spin.y += (b.vel.y * dt) / b.radius;
   b.vel.x *= drag;
   b.vel.y *= drag;
   if (b.pos.y < b.radius) { b.pos.y = b.radius; b.vel.y = Math.abs(b.vel.y) * 0.88; }
@@ -357,12 +397,12 @@ export function bigBumpersActive(state: GameState) {
 function resolveCornerBumpers(state: GameState, now: number) {
   const big = bigBumpersActive(state);
   const bumperRadius = big ? BIG_BUMPER_RADIUS : BUMPER_RADIUS;
-  const boost = big ? BUMPER_BOOST * 1.6 : BUMPER_BOOST;
+  const boost = big ? BUMPER_BOOST * BIG_BUMPER_BOOST_MULT : BUMPER_BOOST;
   for (const c of BUMPERS) {
     for (const b of state.bobbles) {
-      if (staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, 0.92, boost * 0.85)) pushBumperEvent(state, c, now);
+      if (staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, big ? 1.05 : 0.92, boost * 0.85)) pushBumperEvent(state, c, now);
     }
-    if (staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, 1.04, boost)) pushBumperEvent(state, c, now);
+    if (staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, big ? BIG_BUMPER_RESTITUTION : 1.04, boost)) pushBumperEvent(state, c, now);
   }
   state.bumperEvents = state.bumperEvents.filter(e => now - e.at < BUMPER_EVENT_TTL_MS).slice(-12);
 }
@@ -408,8 +448,8 @@ function resolveFieldObjects(state: GameState, dt: number) {
     for (const m of movers) {
       if (o.type === 'boost') {
         if (dist(m.pos, o.pos) <= 70 + m.radius) {
-          m.vel.x += Math.cos(o.angle) * 900 * dt;
-          m.vel.y += Math.sin(o.angle) * 900 * dt;
+          m.vel.x += Math.cos(o.angle) * BOOST_PAD_ACCEL * dt;
+          m.vel.y += Math.sin(o.angle) * BOOST_PAD_ACCEL * dt;
           clampSpeed(m.vel);
         }
       } else if (o.type === 'stickyGoo') {
@@ -417,10 +457,37 @@ function resolveFieldObjects(state: GameState, dt: number) {
       } else if (o.type === 'block') {
         if (!m.ghosted) segmentBounce(m.pos, m.vel, m.radius, o.pos, o.angle, 60, 14, 0.75);
       } else if (o.type === 'ramp') {
-        if (!m.ghosted && segmentBounce(m.pos, m.vel, m.radius, o.pos, o.angle, 55, 12, 1.25)) clampSpeed(m.vel);
+        if (!m.ghosted) resolveRamp(m.pos, m.vel, m.radius, o.pos, o.angle);
       }
     }
   }
+}
+
+// Ramp wedge physics: movers travelling with the ramp direction ride up the
+// slope, get aligned to the ramp's facing and launched off the lip; movers
+// hitting the tall back face bounce off like a wall.
+function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: number) {
+  const dirX = Math.cos(angle), dirY = Math.sin(angle);
+  const relX = pos.x - center.x, relY = pos.y - center.y;
+  const along = relX * dirX + relY * dirY;
+  const lateral = -relX * dirY + relY * dirX;
+  if (Math.abs(along) > RAMP_HALF_LEN + radius || Math.abs(lateral) > RAMP_HALF_WIDTH + radius) return false;
+  const into = vel.x * dirX + vel.y * dirY;
+  if (into >= 0) {
+    // riding up the wedge: redirect along the ramp and guarantee launch speed
+    const speed = Math.hypot(vel.x, vel.y);
+    const exit = Math.max(speed, RAMP_LAUNCH_SPEED);
+    vel.x = dirX * exit;
+    vel.y = dirY * exit;
+    clampSpeed(vel);
+    return true;
+  }
+  // hitting the tall back of the wedge: push out and reflect
+  pos.x = center.x + dirX * (RAMP_HALF_LEN + radius) - dirY * lateral;
+  pos.y = center.y + dirY * (RAMP_HALF_LEN + radius) + dirX * lateral;
+  vel.x -= 1.8 * into * dirX;
+  vel.y -= 1.8 * into * dirY;
+  return true;
 }
 
 function segmentBounce(pos: Vec, vel: Vec, radius: number, center: Vec, angle: number, halfLen: number, thickness: number, restitution: number) {
@@ -540,7 +607,7 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
     pushEvent(state, `${scorer} wins first-to-${state.mode}!`);
     return;
   }
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null };
+  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
   placeFormation(state, 'left');
   placeFormation(state, 'right');
   endTurn(state, now, rng, true);

@@ -96,7 +96,9 @@ export type BobbleState = {
   effects: ActiveEffect[];
   lastLaunchedTurn: number;
 };
-export type BallState = { pos: Vec; vel: Vec; radius: number; lastTouchedBy?: PlayerSide | null };
+// spin accumulates rolling rotation (radians) derived from authoritative movement:
+// spin.x from travel along field x, spin.y from travel along field y.
+export type BallState = { pos: Vec; vel: Vec; radius: number; lastTouchedBy?: PlayerSide | null; spin?: Vec };
 export type BoxAnchor = 'topMid' | 'bottomMid' | 'midLeft' | 'midRight';
 export type BoxState = { id: string; type: BoxType; anchor: BoxAnchor; pos: Vec; spawnedAt: number; untilTurn?: number };
 export type FieldObjectType = 'boost' | 'stickyGoo' | 'ramp' | 'block';
@@ -153,10 +155,13 @@ export type ClientToServerEvents = {
   'player:input': (input: PlayerInput) => void;
   'player:launch': (intent: TurnIntent) => void;
   'player:power': (use: PowerPlayUse) => void;
-  'player:fieldRotate': (payload: { id: string }) => void;
+  'player:fieldRotate': (payload: { id: string; angle?: number }) => void;
   'player:formation': (formation: FormationId) => void;
   'player:team': (team: TeamId) => void;
   'player:cheatBoxes': () => void;
+  'player:cheatBox': (payload: { type: BoxType }) => void;
+  'player:cheatPanel': () => void;
+  'room:leave': () => void;
   'game:start': () => void;
   'game:reset': (mode: GameMode) => void;
 };

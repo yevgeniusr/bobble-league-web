@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, launchBobble, removePlayer, resetGame, rotateFieldObject, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
-import { ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
+import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, grantCheatBox, launchBobble, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -84,7 +84,10 @@ io.on('connection', socket => {
   socket.on('player:fieldRotate', payload => {
     const room = currentRoom(socket); if (!room) return;
     if (typeof payload?.id !== 'string') return;
-    if (!rotateFieldObject(room.state, socket.id, payload.id)) socket.emit('room:error', 'That obstacle cannot be rotated.');
+    const ok = typeof payload.angle === 'number' && Number.isFinite(payload.angle)
+      ? setFieldObjectAngle(room.state, socket.id, payload.id, payload.angle)
+      : rotateFieldObject(room.state, socket.id, payload.id);
+    if (!ok) socket.emit('room:error', 'That obstacle cannot be rotated.');
     room.lastActiveAt = Date.now();
   });
 
@@ -106,6 +109,33 @@ io.on('connection', socket => {
   socket.on('player:cheatBoxes', () => {
     const room = currentRoom(socket); if (!room) return;
     if (addCheatBoxes(room.state, socket.id)) io.to(room.state.roomCode).emit('room:error', 'CHEAT MODE: a player added every Power Play box for testing.');
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('player:cheatPanel', () => {
+    const room = currentRoom(socket); if (!room) return;
+    const name = room.state.players[socket.id]?.name ?? 'A player';
+    io.to(room.state.roomCode).emit('room:error', `CHEAT MODE: ${name} opened the cheat booster list.`);
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('player:cheatBox', payload => {
+    const room = currentRoom(socket); if (!room) return;
+    const type = payload?.type as BoxType;
+    if (!BOX_TYPE_IDS.includes(type)) return;
+    if (grantCheatBox(room.state, socket.id, type)) {
+      const name = room.state.players[socket.id]?.name ?? 'A player';
+      io.to(room.state.roomCode).emit('room:error', `CHEAT MODE: ${name} granted themselves ${BOX_TYPES[type].label} for testing.`);
+    }
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('room:leave', () => {
+    const room = currentRoom(socket); if (!room) return;
+    removePlayer(room.state, socket.id);
+    socket.leave(room.state.roomCode);
+    socket.data.roomCode = undefined;
+    delete room.inputs[socket.id];
     room.lastActiveAt = Date.now();
   });
 
