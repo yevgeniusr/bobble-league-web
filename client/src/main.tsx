@@ -103,19 +103,65 @@ function GameCanvas({ state, you }: { state: GameState; you: string }) {
 
 function draw(ctx: CanvasRenderingContext2D, state: GameState, you: string, drag: { bobbleId: string; start: Vec; current: Vec } | null) {
   ctx.clearRect(0,0,FIELD.width,FIELD.height);
-  const grad = ctx.createLinearGradient(0,0,FIELD.width,FIELD.height); grad.addColorStop(0,'#166534'); grad.addColorStop(1,'#0f3d2e'); ctx.fillStyle=grad; ctx.fillRect(0,0,FIELD.width,FIELD.height);
-  ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=4; ctx.strokeRect(8,8,FIELD.width-16,FIELD.height-16); ctx.beginPath(); ctx.arc(FIELD.width/2,FIELD.height/2,88,0,Math.PI*2); ctx.stroke(); ctx.beginPath(); ctx.moveTo(FIELD.width/2,8); ctx.lineTo(FIELD.width/2,FIELD.height-8); ctx.stroke();
-  ctx.fillStyle='rgba(255,255,255,.16)'; ctx.fillRect(0, FIELD.goalY, 42, FIELD.goalHeight); ctx.fillRect(FIELD.width-42, FIELD.goalY, 42, FIELD.goalHeight);
-  for (const obj of state.fieldObjects) { if (obj.pos.x < 0) continue; ctx.save(); ctx.translate(obj.pos.x, obj.pos.y); ctx.rotate(obj.angle); ctx.fillStyle = obj.type === 'stickyGoo' ? 'rgba(132,204,22,.55)' : obj.type === 'block' ? '#cbd5e1' : obj.type === 'ramp' ? '#a78bfa' : '#38bdf8'; roundRect(ctx,-28,-14,56,28,6); ctx.fill(); ctx.restore(); }
-  for (const box of state.boxes) { const spec=BOX_TYPES[box.type]; ctx.fillStyle=spec.color; ctx.shadowColor=spec.color; ctx.shadowBlur=18; roundRect(ctx, box.pos.x-17, box.pos.y-17,34,34,8); ctx.fill(); ctx.shadowBlur=0; ctx.fillStyle='#111827'; ctx.font='bold 18px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?', box.pos.x, box.pos.y); }
+  drawArena3D(ctx);
+  for (const obj of state.fieldObjects) {
+    if (obj.pos.x < 0) continue;
+    ctx.save();
+    ctx.translate(obj.pos.x, obj.pos.y);
+    ctx.rotate(obj.angle);
+    drawShadow(ctx, 0, 12, 38, 12, .22);
+    const fill = obj.type === 'stickyGoo' ? 'rgba(132,204,22,.70)' : obj.type === 'block' ? '#dbeafe' : obj.type === 'ramp' ? '#a78bfa' : '#38bdf8';
+    ctx.fillStyle = fill; roundRect(ctx,-30,-16,60,30,7); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,.35)'; roundRect(ctx,-25,-13,50,8,4); ctx.fill();
+    ctx.restore();
+  }
+  for (const box of state.boxes) {
+    const spec=BOX_TYPES[box.type];
+    drawShadow(ctx, box.pos.x, box.pos.y + 18, 25, 8, .32);
+    const g = ctx.createLinearGradient(box.pos.x-18, box.pos.y-20, box.pos.x+18, box.pos.y+20);
+    g.addColorStop(0, '#fff7'); g.addColorStop(.18, spec.color); g.addColorStop(1, '#111827');
+    ctx.fillStyle=g; ctx.shadowColor=spec.color; ctx.shadowBlur=20; roundRect(ctx, box.pos.x-19, box.pos.y-22,38,38,9); ctx.fill(); ctx.shadowBlur=0;
+    ctx.strokeStyle='rgba(255,255,255,.65)'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.font='900 20px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?', box.pos.x, box.pos.y-2);
+  }
   for (const b of state.bobbles) {
     const player = Object.values(state.players).find(p => p.side === b.side && p.controlledBobbleIds.includes(b.id)) ?? Object.values(state.players).find(p => p.side === b.side);
-    const t = TEAMS[player?.team ?? 'pigs']; ctx.save(); ctx.fillStyle = t.primary; ctx.beginPath(); ctx.arc(b.pos.x,b.pos.y,b.radius,0,Math.PI*2); ctx.fill(); ctx.lineWidth = state.players[you]?.controlledBobbleIds.includes(b.id) ? 6 : 3; ctx.strokeStyle = state.players[you]?.controlledBobbleIds.includes(b.id) ? '#fef08a' : t.secondary; ctx.stroke(); ctx.font = `${Math.max(20,b.radius)}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(t.emoji,b.pos.x,b.pos.y+1); ctx.font='700 12px Inter, sans-serif'; ctx.fillStyle='#fff'; ctx.fillText(b.id,b.pos.x,b.pos.y-b.radius-10); for (const e of b.effects) ctx.fillText(BOX_TYPES[e.type].label,b.pos.x,b.pos.y+b.radius+13); ctx.restore();
+    const t = TEAMS[player?.team ?? 'pigs'];
+    const selected = state.players[you]?.controlledBobbleIds.includes(b.id) ?? false;
+    drawBobble3D(ctx, b.pos.x, b.pos.y, b.radius, t.primary, t.secondary, t.emoji, selected);
+    ctx.font='800 12px Inter, sans-serif'; ctx.textAlign='center'; ctx.fillStyle='rgba(255,255,255,.95)'; ctx.fillText(b.id,b.pos.x,b.pos.y-b.radius-15);
+    for (const e of b.effects) ctx.fillText(BOX_TYPES[e.type].label,b.pos.x,b.pos.y+b.radius+17);
   }
-  if (drag) { ctx.strokeStyle='#fef08a'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(drag.start.x, drag.start.y); ctx.lineTo(drag.current.x, drag.current.y); ctx.stroke(); }
-  const ball = state.ball; ctx.fillStyle='#f8fafc'; ctx.beginPath(); ctx.arc(ball.pos.x,ball.pos.y,ball.radius,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#111827'; ctx.lineWidth=2; ctx.stroke();
+  if (drag) {
+    ctx.strokeStyle='#fef08a'; ctx.lineWidth=5; ctx.setLineDash([12, 8]);
+    ctx.beginPath(); ctx.moveTo(drag.start.x, drag.start.y); ctx.lineTo(drag.current.x, drag.current.y); ctx.stroke(); ctx.setLineDash([]);
+    drawShadow(ctx, drag.start.x, drag.start.y + 24, 30, 8, .25);
+  }
+  const ball = state.ball;
+  drawShadow(ctx, ball.pos.x, ball.pos.y + ball.radius + 8, ball.radius * 1.15, 5, .28);
+  const ballGrad = ctx.createRadialGradient(ball.pos.x - 6, ball.pos.y - 8, 2, ball.pos.x, ball.pos.y, ball.radius + 5);
+  ballGrad.addColorStop(0, '#ffffff'); ballGrad.addColorStop(.65, '#e5e7eb'); ballGrad.addColorStop(1, '#64748b');
+  ctx.fillStyle=ballGrad; ctx.beginPath(); ctx.arc(ball.pos.x,ball.pos.y,ball.radius,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#111827'; ctx.lineWidth=2; ctx.stroke();
   if (state.phase==='finished') { ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,FIELD.width,FIELD.height); ctx.fillStyle='#fff'; ctx.font='800 56px Inter,sans-serif'; ctx.textAlign='center'; ctx.fillText(state.winner ? `${state.winner.toUpperCase()} WINS!` : 'DRAW!',FIELD.width/2,FIELD.height/2); }
 }
+function drawArena3D(ctx: CanvasRenderingContext2D) {
+  const grad = ctx.createLinearGradient(0,0,FIELD.width,FIELD.height); grad.addColorStop(0,'#22a05a'); grad.addColorStop(.55,'#13753f'); grad.addColorStop(1,'#0b3b2e'); ctx.fillStyle=grad; ctx.fillRect(0,0,FIELD.width,FIELD.height);
+  ctx.fillStyle='rgba(0,0,0,.24)'; ctx.fillRect(0,0,FIELD.width,34); ctx.fillRect(0,FIELD.height-34,FIELD.width,34);
+  for (let y=64; y<FIELD.height; y+=82) { ctx.fillStyle = y % 164 === 64 ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.035)'; ctx.fillRect(0,y,FIELD.width,41); }
+  ctx.strokeStyle='rgba(255,255,255,.38)'; ctx.lineWidth=5; ctx.strokeRect(14,14,FIELD.width-28,FIELD.height-28); ctx.beginPath(); ctx.arc(FIELD.width/2,FIELD.height/2,88,0,Math.PI*2); ctx.stroke(); ctx.beginPath(); ctx.moveTo(FIELD.width/2,14); ctx.lineTo(FIELD.width/2,FIELD.height-14); ctx.stroke();
+  ctx.fillStyle='rgba(2,6,23,.34)'; ctx.fillRect(0, FIELD.goalY-10, 52, FIELD.goalHeight+20); ctx.fillRect(FIELD.width-52, FIELD.goalY-10, 52, FIELD.goalHeight+20);
+  ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=2; ctx.strokeRect(52, FIELD.goalY-50, 120, FIELD.goalHeight+100); ctx.strokeRect(FIELD.width-172, FIELD.goalY-50, 120, FIELD.goalHeight+100);
+}
+function drawBobble3D(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, primary: string, secondary: string, emoji: string, selected: boolean) {
+  drawShadow(ctx, x, y + r * .82, r * 1.08, r * .30, .34);
+  const body = ctx.createRadialGradient(x - r*.35, y - r*.42, 2, x, y, r*1.15);
+  body.addColorStop(0, '#ffffff'); body.addColorStop(.12, secondary); body.addColorStop(.45, primary); body.addColorStop(1, '#111827');
+  ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(x, y, r, r*1.03, 0, 0, Math.PI*2); ctx.fill();
+  ctx.lineWidth = selected ? 6 : 3; ctx.strokeStyle = selected ? '#fef08a' : 'rgba(255,255,255,.55)'; ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(x-r*.24, y-r*.38, r*.24, r*.12, -.45, 0, Math.PI*2); ctx.fill();
+  ctx.font = `${Math.max(20,r)}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(emoji,x,y+1);
+}
+function drawShadow(ctx: CanvasRenderingContext2D, x: number, y: number, rx: number, ry: number, alpha: number) { ctx.save(); ctx.fillStyle=`rgba(0,0,0,${alpha})`; ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fill(); ctx.restore(); }
 function roundRect(ctx: CanvasRenderingContext2D, x:number,y:number,w:number,h:number,r:number){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 
 createRoot(document.getElementById('root')!).render(<App />);
