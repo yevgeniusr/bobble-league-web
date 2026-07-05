@@ -356,11 +356,11 @@ function endTurn(state: GameState, now: number, rng: Rng) {
   if (state.turn % state.config.boxSpawnEveryTurns === 0) spawnBox(state, now, rng);
 }
 
-function resetForPlanning(state: GameState, rng: Rng) {
-  state.ball.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
-  state.ball.vel = { x: (rng() - 0.5) * 20, y: 0 };
-  state.ball.radius = FIELD.ballRadius;
-  for (const b of state.bobbles) b.vel = { x: 0, y: 0 };
+function resetForPlanning(state: GameState, _rng: Rng) {
+  // Bobble League turns are tabletop turns: pieces stay where physics resolved.
+  // Only very small residual velocities are cleared so the next planning phase is stable.
+  if (Math.hypot(state.ball.vel.x, state.ball.vel.y) < SETTLE_SPEED * 1.8) state.ball.vel = { x: 0, y: 0 };
+  for (const b of state.bobbles) if (Math.hypot(b.vel.x, b.vel.y) < SETTLE_SPEED * 1.8) b.vel = { x: 0, y: 0 };
   state.kickoffAt = Date.now();
 }
 

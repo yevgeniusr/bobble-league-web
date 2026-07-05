@@ -1,0 +1,23 @@
+import { chromium } from 'playwright';
+import { writeFile } from 'node:fs/promises';
+const url = process.env.BOBBLE_URL || 'http://127.0.0.1:3117';
+const out = process.env.OUT || 'tmp/our-gameplay.png';
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+const errors = [];
+page.on('pageerror', e => errors.push(String(e)));
+page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+await page.goto(url, { waitUntil: 'networkidle' });
+await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /create room/i.test(b.textContent || ''))?.click());
+await page.waitForTimeout(600);
+await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /start match/i.test(b.textContent || ''))?.click());
+await page.waitForTimeout(1600);
+const text = await page.locator('body').innerText().catch(()=>'');
+const canvasData = await page.evaluate(() => {
+  const c = document.querySelector('canvas');
+  return c ? c.toDataURL('image/png') : null;
+});
+if (!canvasData) throw new Error('No canvas found');
+await writeFile(out, Buffer.from(canvasData.split(',')[1], 'base64'));
+console.log(JSON.stringify({ out, errors, text: text.slice(0, 300) }, null, 2));
+await browser.close();
