@@ -14,9 +14,15 @@ import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
 const port = Number(process.env.PORT ?? 3000);
+// Dev/test cheat hooks (window.__babbleDev on the client) are rejected in
+// production unless the deployment explicitly opts in with ENABLE_CHEATS=true.
+const cheatsEnabled = !isProd || process.env.ENABLE_CHEATS === 'true';
+// Light rate limiting so the cheat hooks cannot spam rooms even where enabled.
+const CHEAT_BOX_COOLDOWN_MS = 800;
+const CHEAT_ALL_COOLDOWN_MS = 5000;
 
 type InterServerEvents = Record<string, never>;
-type SocketData = { roomCode?: string; playerId?: string };
+type SocketData = { roomCode?: string; playerId?: string; lastCheatAt?: number; lastCheatAllAt?: number };
 type IOServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 type IOSocket = Parameters<Parameters<IOServer['on']>[1]>[0];
 
@@ -108,28 +114,31 @@ io.on('connection', socket => {
     room.lastActiveAt = Date.now();
   });
 
+  // Dev/test-only cheat hooks. Rejected outright in production deployments
+  // unless ENABLE_CHEATS=true; every successful grant warns the whole room.
   socket.on('player:cheatBoxes', () => {
     const room = currentRoom(socket); if (!room) return;
+    if (!cheatsEnabled) return socket.emit('room:error', 'Cheats are disabled on this server.');
+    const now = Date.now();
+    if (now - (socket.data.lastCheatAllAt ?? 0) < CHEAT_ALL_COOLDOWN_MS) return;
+    socket.data.lastCheatAllAt = now;
     if (addCheatBoxes(room.state, socket.id)) io.to(room.state.roomCode).emit('room:error', 'CHEAT MODE: a player added every Power Play box for testing.');
-    room.lastActiveAt = Date.now();
-  });
-
-  socket.on('player:cheatPanel', () => {
-    const room = currentRoom(socket); if (!room) return;
-    const name = room.state.players[socket.id]?.name ?? 'A player';
-    io.to(room.state.roomCode).emit('room:error', `CHEAT MODE: ${name} opened the cheat booster list.`);
-    room.lastActiveAt = Date.now();
+    room.lastActiveAt = now;
   });
 
   socket.on('player:cheatBox', payload => {
     const room = currentRoom(socket); if (!room) return;
+    if (!cheatsEnabled) return socket.emit('room:error', 'Cheats are disabled on this server.');
     const type = payload?.type as BoxType;
     if (!BOX_TYPE_IDS.includes(type)) return;
+    const now = Date.now();
+    if (now - (socket.data.lastCheatAt ?? 0) < CHEAT_BOX_COOLDOWN_MS) return;
+    socket.data.lastCheatAt = now;
     if (grantCheatBox(room.state, socket.id, type)) {
       const name = room.state.players[socket.id]?.name ?? 'A player';
       io.to(room.state.roomCode).emit('room:error', `CHEAT MODE: ${name} granted themselves ${BOX_TYPES[type].label} for testing.`);
     }
-    room.lastActiveAt = Date.now();
+    room.lastActiveAt = now;
   });
 
   socket.on('room:leave', () => {

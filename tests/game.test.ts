@@ -11,7 +11,10 @@ import {
   findDisconnectedSeat,
   grantCheatBox,
   launchBabble,
+  BUMPER_MIN_EXIT_BALL,
+  BUMPER_MIN_EXIT_BABBLE,
   MAX_RESOLVE_MS,
+  MAX_SPEED,
   RAMP_LAUNCH_SPEED,
   reclaimPlayer,
   redactStateFor,
@@ -268,26 +271,44 @@ describe('classic Babble League shared rules', () => {
     stepGame(s, {}, 1033, seq([0.5]));
 
     expect(s.ball.vel.x).toBeGreaterThan(300); // reflected AND boosted beyond incoming speed
-    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeLessThanOrEqual(1600); // clamped
+    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeLessThanOrEqual(MAX_SPEED); // clamped
     expect(s.bumperEvents.length).toBeGreaterThanOrEqual(1);
     expect(s.bumperEvents[0].pos).toEqual({ x: BUMPERS[0].x, y: BUMPERS[0].y });
   });
 
-  it('allows up to 10 seconds of resolution and zeroes all velocities before the next turn', () => {
-    expect(MAX_RESOLVE_MS).toBe(10000);
+  it('bumpers guarantee a strong minimum exit speed even on weak grazes', () => {
+    expect(BUMPER_MIN_EXIT_BALL).toBeGreaterThanOrEqual(600);
+    expect(BUMPER_MIN_EXIT_BABBLE).toBeGreaterThanOrEqual(400);
+    const s = createInitialState('MINEXIT', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    // park babbles away from the bumper so only the ball interacts with it
+    s.babbles.forEach((b, i) => { b.pos = { x: 400 + i * 60, y: 310 }; b.vel = { x: 0, y: 0 }; });
+    s.ball.pos = { x: BUMPERS[0].x + 51, y: BUMPERS[0].y };
+    s.ball.vel = { x: -40, y: 0 }; // barely creeping into the bumper
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeGreaterThanOrEqual(BUMPER_MIN_EXIT_BALL * 0.95);
+    expect(s.ball.vel.x).toBeGreaterThan(0); // reflected away from the corner
+  });
+
+  it(`allows up to ${MAX_RESOLVE_MS / 1000} seconds of resolution and zeroes all velocities before the next turn`, () => {
+    expect(MAX_RESOLVE_MS).toBe(8000);
     const s = createInitialState('TIME', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
     s.phase = 'resolving';
     s.resolvingStartedAt = 1000;
-    for (let now = 1033; now <= 10990; now += 33) {
+    for (let now = 1033; now < 1000 + MAX_RESOLVE_MS; now += 33) {
       s.babbles[0].vel = { x: 500, y: 0 }; // keep an object perpetually fast
       stepGame(s, {}, now, seq([0.5]));
-      expect(s.phase).toBe('resolving'); // still resolving before the 10s cap
+      expect(s.phase).toBe('resolving'); // still resolving before the failsafe cap
     }
     s.babbles[0].vel = { x: 500, y: 0 };
-    stepGame(s, {}, 11001, seq([0.5]));
+    stepGame(s, {}, 1001 + MAX_RESOLVE_MS, seq([0.5]));
     expect(s.phase).toBe('planning');
     expect(s.turn).toBe(2);
     expect(s.ball.vel).toEqual({ x: 0, y: 0 });

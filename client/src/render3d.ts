@@ -67,6 +67,26 @@ export function goalDisplayColors(swapped: boolean): { left: number; right: numb
   return swapped ? { left: GOAL_COLORS.right, right: GOAL_COLORS.left } : { left: GOAL_COLORS.left, right: GOAL_COLORS.right };
 }
 
+// Probe the real GL renderer string on a throwaway context. CPU rasterizers
+// (SwiftShader in headless Chromium, llvmpipe/softpipe on GPU-less Linux)
+// render this scene at seconds-per-frame, which would block the main thread;
+// callers use this to pick a cheap quality profile instead.
+export function detectSoftwareWebGL(): boolean {
+  try {
+    const c = document.createElement('canvas');
+    const gl = (c.getContext('webgl2') ?? c.getContext('webgl')) as WebGLRenderingContext | null;
+    if (!gl) return true;
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(
+      (dbg && gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || ''
+    );
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return /swiftshader|llvmpipe|softpipe|software|basic render/i.test(name);
+  } catch {
+    return false;
+  }
+}
+
 const FIELD_X = FIELD.width / 50;
 const FIELD_Z = FIELD.height / 50;
 const TURF_Y = 1.02;
@@ -89,11 +109,17 @@ export class BabbleLeague3DRenderer {
   private ballQuat = new THREE.Quaternion();
   private lastBallPos: Vec | null = null;
 
+  // True when WebGL is CPU-rasterized (SwiftShader/llvmpipe/Mesa soft — e.g.
+  // headless browsers or GPU-less machines). Full-quality frames there take
+  // seconds and starve React/input, so we drop to a lightweight profile.
+  readonly lowPower: boolean;
+
   constructor(private canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
-    this.renderer.shadowMap.enabled = true;
+    this.lowPower = detectSoftwareWebGL();
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.lowPower, preserveDrawingBuffer: true });
+    this.renderer.shadowMap.enabled = !this.lowPower;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(this.lowPower ? 0.5 : Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setClearColor(0xf16845, 1);
     this.scene.fog = new THREE.Fog(0xf16845, 34, 70);
     this.camera = new THREE.PerspectiveCamera(42, 16 / 9, 0.1, 200);

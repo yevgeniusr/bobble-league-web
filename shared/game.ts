@@ -35,16 +35,23 @@ const TICK_MS = 1000 / 30;
 // Body integration, damping, wall/block collisions and ball/babble impacts now
 // run in Rapier 2D (see shared/physics.ts). The rule layer below keeps the
 // tabletop feel knobs: strong pull impulse and lively bumpers/pads/ramps.
-export const BABBLE_IMPULSE_SCALE = 1.12;
+export const BABBLE_IMPULSE_SCALE = 1.22;
 export const BOX_LIFETIME_TURNS = 3;
-const SETTLE_SPEED = 18;
-export const MAX_RESOLVE_MS = 10000;
+export const SETTLE_SPEED = 28;
+export const MAX_RESOLVE_MS = 8000;
 // BABBLE_TURN_MS is a server-side test hook (used by scripts/box-control-check.mjs,
 // where headless WebGL is too slow to finish a scripted turn in 15s). Browsers have
 // no `process`, so players always get the standard 15s turn.
 const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 15000;
-const MAX_SPEED = 1600;
-export const BUMPER_BOOST = 220;
+export const MAX_SPEED = 1750;
+export const BUMPER_BOOST = 340;
+// Bumper hits are event moments: even a graze exits at a strong minimum speed.
+export const BUMPER_MIN_EXIT_BALL = 620;
+export const BUMPER_MIN_EXIT_BABBLE = 460;
+// Low-speed brake: extra per-tick decay below this speed so pieces stop
+// crisply instead of gliding for seconds at a visible crawl.
+export const LOW_SPEED_BRAKE_THRESHOLD = 120;
+const LOW_SPEED_BRAKE_FACTOR = 0.88;
 // Big Bumpers power play: noticeably stronger corner hits plus higher restitution.
 export const BIG_BUMPER_BOOST_MULT = 2.6;
 export const BIG_BUMPER_RESTITUTION = 1.22;
@@ -52,10 +59,10 @@ const BUMPER_EVENT_TTL_MS = 1500;
 const RAMP_EVENT_TTL_MS = 1500;
 // Boost pad acceleration (units/s^2) applied while a mover sits on the pad.
 // Tuned strong enough that crossing the pad visibly slingshots the mover.
-export const BOOST_PAD_ACCEL = 4200;
+export const BOOST_PAD_ACCEL = 5600;
 // Ramp wedge: movers riding up the slope get redirected along the ramp
 // direction and launched off the lip at a minimum exit speed.
-export const RAMP_LAUNCH_SPEED = 760;
+export const RAMP_LAUNCH_SPEED = 940;
 export { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from './types';
 
 export function createInitialState(roomCode: string, mode: GameMode = 3): GameState {
@@ -239,6 +246,7 @@ export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> 
   clampAllSpeeds(state);
   resolveFieldObjects(state, dt, now);
   resolveCornerBumpers(state, now);
+  applyLowSpeedBrake(state);
   collectBoxesForBabbles(state, now);
   const goal = detectGoal(state);
   if (goal) return handleClassicGoal(state, goal, now, rng);
@@ -437,6 +445,18 @@ function clampAllSpeeds(state: GameState) {
   for (const b of state.babbles) clampSpeed(b.vel);
 }
 
+// Below the brake threshold pieces decay extra fast, so turns end with a crisp
+// stop instead of a long low-speed glide (settling feels immediate).
+function applyLowSpeedBrake(state: GameState) {
+  for (const vel of [state.ball.vel, ...state.babbles.map(b => b.vel)]) {
+    const s = Math.hypot(vel.x, vel.y);
+    if (s > 0 && s < LOW_SPEED_BRAKE_THRESHOLD) {
+      vel.x *= LOW_SPEED_BRAKE_FACTOR;
+      vel.y *= LOW_SPEED_BRAKE_FACTOR;
+    }
+  }
+}
+
 export function bigBumpersActive(state: GameState) {
   return state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
 }
@@ -447,9 +467,9 @@ function resolveCornerBumpers(state: GameState, now: number) {
   const boost = big ? BUMPER_BOOST * BIG_BUMPER_BOOST_MULT : BUMPER_BOOST;
   for (const c of BUMPERS) {
     for (const b of state.babbles) {
-      if (staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, big ? 1.05 : 0.92, boost * 0.85)) pushBumperEvent(state, c, now);
+      if (staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, big ? 1.05 : 0.92, boost * 0.85, BUMPER_MIN_EXIT_BABBLE)) pushBumperEvent(state, c, now);
     }
-    if (staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, big ? BIG_BUMPER_RESTITUTION : 1.04, boost)) pushBumperEvent(state, c, now);
+    if (staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, big ? BIG_BUMPER_RESTITUTION : 1.04, boost, BUMPER_MIN_EXIT_BALL)) pushBumperEvent(state, c, now);
   }
   state.bumperEvents = state.bumperEvents.filter(e => now - e.at < BUMPER_EVENT_TTL_MS).slice(-12);
 }
@@ -460,7 +480,7 @@ function pushBumperEvent(state: GameState, pos: Vec, now: number) {
   state.bumperEvents.push({ pos: { ...pos }, at: now });
 }
 
-function staticCircleBounce(pos: Vec, vel: Vec, radius: number, center: Vec, bumperRadius: number, restitution: number, boost = 0) {
+function staticCircleBounce(pos: Vec, vel: Vec, radius: number, center: Vec, bumperRadius: number, restitution: number, boost = 0, minExitSpeed = 0) {
   const dx = pos.x - center.x, dy = pos.y - center.y;
   const d = Math.hypot(dx, dy) || 0.0001;
   const min = radius + bumperRadius;
@@ -474,6 +494,13 @@ function staticCircleBounce(pos: Vec, vel: Vec, radius: number, center: Vec, bum
     vel.y -= (1 + restitution) * into * ny;
     vel.x += nx * boost;
     vel.y += ny * boost;
+    // Min-exit speed: weak grazes still leave the bumper as a real hit, so
+    // every bumper contact reads as an intentional pinball moment.
+    const exit = Math.hypot(vel.x, vel.y);
+    if (exit > 0 && exit < minExitSpeed) {
+      vel.x *= minExitSpeed / exit;
+      vel.y *= minExitSpeed / exit;
+    }
     clampSpeed(vel);
     return true;
   }

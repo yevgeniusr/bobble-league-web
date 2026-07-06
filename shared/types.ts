@@ -173,9 +173,10 @@ export type ClientToServerEvents = {
   'player:fieldRotate': (payload: { id: string; angle?: number }) => void;
   'player:formation': (formation: FormationId) => void;
   'player:team': (team: TeamId) => void;
+  // Dev/test-only hooks (window.__babbleDev). Rejected by production servers
+  // unless ENABLE_CHEATS=true.
   'player:cheatBoxes': () => void;
   'player:cheatBox': (payload: { type: BoxType }) => void;
-  'player:cheatPanel': () => void;
   'room:leave': () => void;
   'game:start': () => void;
   'game:reset': (mode: GameMode) => void;

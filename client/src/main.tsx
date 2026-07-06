@@ -8,6 +8,29 @@ import './styles.css';
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
 const socket: Sock = io();
 
+// Developer console API (no cheat UI ships in the app). Available in dev
+// builds, with ?dev=1, or after localStorage.setItem('babble:devtools', '1').
+// Production servers reject these events unless ENABLE_CHEATS=true; every
+// successful grant publicly warns the whole room.
+const devtoolsEnabled =
+  import.meta.env.DEV ||
+  new URLSearchParams(location.search).has('dev') ||
+  localStorage.getItem('babble:devtools') === '1';
+if (devtoolsEnabled) {
+  (window as unknown as { __babbleDev?: unknown }).__babbleDev = {
+    listTypes: () => [...BOX_TYPE_IDS],
+    grantBox: (type: BoxType) => {
+      if (!BOX_TYPE_IDS.includes(type)) throw new Error(`Unknown box type "${type}". Try listTypes().`);
+      socket.emit('player:cheatBox', { type });
+      return `requested ${type} (server may reject; the whole room is warned)`;
+    },
+    grantAll: () => {
+      socket.emit('player:cheatBoxes');
+      return 'requested every box type (server may reject; the whole room is warned)';
+    }
+  };
+}
+
 function App() {
   const [state, setState] = React.useState<GameState | null>(null);
   const [you, setYou] = React.useState('');
@@ -136,20 +159,12 @@ function ArenaPreview() {
   </div>;
 }
 
-function RoomCodeBadge({ code }: { code: string }) {
-  const [copied, setCopied] = React.useState<'code' | 'invite' | null>(null);
-  const copy = (text: string, kind: 'code' | 'invite') => {
-    navigator.clipboard?.writeText(text).then(() => {
-      setCopied(kind);
-      setTimeout(() => setCopied(null), 1600);
-    }).catch(() => {});
-  };
-  return <div className="roomCode">
-    <span className="roomCodeLabel">Room</span>
-    <b className="roomCodeValue">{code}</b>
-    <button type="button" onClick={()=>copy(code, 'code')}>{copied === 'code' ? 'Copied!' : 'Copy code'}</button>
-    <button type="button" onClick={()=>copy(`Join my Babble League match! Room code: ${code} → ${location.origin}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
-  </div>;
+// Ability icon: generated art from public/assets/abilities with an emoji
+// fallback if the asset is missing or fails to load.
+function AbilityIcon({ type }: { type: BoxType }) {
+  const [failed, setFailed] = React.useState(false);
+  if (failed) return <span className="abilityEmoji" aria-hidden="true">{POWER_ICONS[type]}</span>;
+  return <img className="abilityImg" src={`/assets/abilities/${type}.png`} alt="" draggable={false} onError={() => setFailed(true)}/>;
 }
 
 const PLACEABLE: readonly BoxType[] = ['boost', 'stickyGoo', 'ramp', 'block'];
@@ -171,50 +186,102 @@ export function abilityMode(type: BoxType): 'place' | 'babble' | 'point' | 'inst
 function GameScreen({ state, you, mode, setMode, error, onDismissError, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; error: string; onDismissError: ()=>void; onLeave: ()=>void }) {
   const [placing, setPlacing] = React.useState<PlacingGhost | null>(null);
   const [aiming, setAiming] = React.useState<AbilityAim | null>(null);
-  const [showHud, setShowHud] = React.useState(true);
+  const [menuOpen, setMenuOpen] = React.useState(false);
   return <section className="gameShell">
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
-    <RoomCodeBadge code={state.roomCode}/>
-    <RoomPanel state={state} you={you}/>
-    {showHud && <HUD state={state} you={you} mode={mode} setMode={setMode} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming} onLeave={onLeave}/>}
-    <button className="hudToggle" type="button" onClick={()=>setShowHud(v=>!v)}>{showHud ? 'Hide panel ▾' : 'Show panel ▴'}</button>
+    <TopHud state={state} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>
+    {menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
+    <BottomActionBar state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
     {error && <section className="panel error" role="alert" title="Click to dismiss" onClick={onDismissError}>{error}<span className="errorClose"> ✕</span></section>}
   </section>;
 }
 
-function RoomPanel({ state, you }: { state: GameState; you: string }) {
+function TeamScorePill({ state, side }: { state: GameState; side: PlayerSide }) {
+  const team = TEAMS[state.sideTeams[side]];
+  return <div className={`scorePill ${side}`} style={{ borderColor: team.primary }}>
+    <span className="pillTeam" style={{ background: team.primary, color: team.secondary }}>{team.emoji}</span>
+    <b>{side === 'left' ? 'Left' : 'Right'}</b>
+    <span className="pillScore">{state.score[side]}</span>
+  </div>;
+}
+
+// Compact top HUD: score pills flanking the live match status. The status
+// string keeps the exact "turn X/Y · phase · Ns · aimed n/m" format that the
+// smoke checks and match tooling parse.
+function TopHud({ state, menuOpen, onToggleMenu }: { state: GameState; menuOpen: boolean; onToggleMenu: ()=>void }) {
+  const secs = Math.max(0, Math.ceil((state.turnDeadlineAt - Date.now()) / 1000));
+  return <header className="topHud">
+    <TeamScorePill state={state} side="left"/>
+    <div className="matchStatus">
+      <b>{state.config.length} · first to {state.config.goalTarget}</b>
+      <small>turn {state.turn}/{state.config.maxTurns} · {state.phase} · {secs}s · aimed {Object.keys(state.pendingIntents).length}/{state.babbles.length}</small>
+    </div>
+    <div className="topRight">
+      <TeamScorePill state={state} side="right"/>
+      <div className="roomChip"><span className="roomCodeLabel">Room</span><b className="roomCodeValue">{state.roomCode}</b></div>
+      <button type="button" className={menuOpen ? 'menuToggle selected' : 'menuToggle'} title="Room, teams & match settings" onClick={onToggleMenu}>⚙</button>
+    </div>
+  </header>;
+}
+
+// Everything app-like (room sharing, players/teams, match admin) lives behind
+// the ⚙ menu so the live match screen stays board-first.
+function SettingsMenu({ state, you, mode, setMode, onLeave, onClose }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; onLeave: ()=>void; onClose: ()=>void }) {
+  const [copied, setCopied] = React.useState<'code' | 'invite' | null>(null);
+  const copy = (text: string, kind: 'code' | 'invite') => {
+    navigator.clipboard?.writeText(text).then(() => { setCopied(kind); setTimeout(() => setCopied(null), 1600); }).catch(() => {});
+  };
   const me = state.players[you];
   const connected = Object.values(state.players).filter(p => p.connected);
-  const sides = ['left','right'] as const;
-  return <aside className="roomPanel">
-    <b>Room teams</b>
-    {sides.map(side => {
-      const team = TEAMS[state.sideTeams[side]];
-      const players = connected.filter(p => p.side === side);
-      const mine = me?.side === side;
-      const inv = state.powerPlayInventories[side] ?? [];
-      const boxCount = state.powerPlayCounts?.[side] ?? inv.length;
-      return <section key={side} className="sidePreview" style={{ borderColor: team.primary }}>
-      <div className="sideHeader"><span>{side.toUpperCase()}</span>{boxCount > 0 && <span className="boxBadge" title={mine ? 'Boxes held by your team' : 'Opponents hold hidden boxes'}>📦×{boxCount}</span>}<strong>{team.emoji} {team.label}</strong></div>
-      {mine && <div className="miniMascots">{TEAM_IDS.map(id => <button key={id} type="button" className={state.sideTeams[side]===id?'selected':''} title={TEAMS[id].label} style={{ background: TEAMS[id].primary, color: TEAMS[id].secondary }} onClick={()=>socket.emit('player:team', id)}>{TEAMS[id].emoji}</button>)}</div>}
-      <div className="playerPreview">{players.length ? players.map(p => {
-        // teammates see exactly who holds which box; opponents get nothing (server redacts)
-        const held = mine ? inv.find(i => i.holderId === p.id) : undefined;
-        return <span key={p.id} className={p.id===you?'you':''}>{p.name}{p.id===you?' (you)':''}{held ? ` 📦 ${BOX_TYPES[held.type].label}` : ''}</span>;
-      }) : <span>Waiting…</span>}</div>
-    </section>; })}
+  return <aside className="settingsMenu">
+    <div className="menuHead"><b>Match settings</b><button type="button" onClick={onClose}>✕</button></div>
+    <section className="menuSection">
+      <b>Room</b>
+      <div className="menuRoomRow">
+        <span className="menuRoomCode">{state.roomCode}</span>
+        <button type="button" onClick={()=>copy(state.roomCode, 'code')}>{copied === 'code' ? 'Copied!' : 'Copy code'}</button>
+        <button type="button" onClick={()=>copy(`Join my Babble League match! Room code: ${state.roomCode} → ${location.origin}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
+      </div>
+    </section>
+    <section className="menuSection">
+      <b>Teams</b>
+      {(['left','right'] as const).map(side => {
+        const team = TEAMS[state.sideTeams[side]];
+        const players = connected.filter(p => p.side === side);
+        const mine = me?.side === side;
+        const inv = state.powerPlayInventories[side] ?? [];
+        const boxCount = state.powerPlayCounts?.[side] ?? inv.length;
+        return <div key={side} className="sidePreview" style={{ borderColor: team.primary }}>
+          <div className="sideHeader"><span>{side.toUpperCase()}</span>{boxCount > 0 && <span className="boxBadge" title={mine ? 'Boxes held by your team' : 'Opponents hold hidden boxes'}>📦×{boxCount}</span>}<strong>{team.emoji} {team.label}</strong></div>
+          {mine && <div className="miniMascots">{TEAM_IDS.map(id => <button key={id} type="button" className={state.sideTeams[side]===id?'selected':''} title={TEAMS[id].label} style={{ background: TEAMS[id].primary, color: TEAMS[id].secondary }} onClick={()=>socket.emit('player:team', id)}>{TEAMS[id].emoji}</button>)}</div>}
+          <div className="playerPreview">{players.length ? players.map(p => {
+            // teammates see exactly who holds which box; opponents get nothing (server redacts)
+            const held = mine ? inv.find(i => i.holderId === p.id) : undefined;
+            return <span key={p.id} className={p.id===you?'you':''}>{p.name}{p.id===you?' (you)':''}{held ? ` 📦 ${BOX_TYPES[held.type].label}` : ''}</span>;
+          }) : <span>Waiting…</span>}</div>
+        </div>; })}
+    </section>
+    <section className="menuSection">
+      <b>Match</b>
+      <div className="menuActions">
+        <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select>
+        <button type="button" onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button>
+        <button type="button" onClick={()=>socket.emit('game:reset', mode)}>Reset</button>
+        <button type="button" onClick={onLeave} title="Leave the match and return to the main menu">Main menu</button>
+      </div>
+    </section>
   </aside>;
 }
 
-function HUD({ state, you, mode, setMode, placing, setPlacing, aiming, setAiming, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void; aiming: AbilityAim | null; setAiming: (a: AbilityAim | null)=>void; onLeave: ()=>void }) {
-  const [cheatOpen, setCheatOpen] = React.useState(false);
+// Bottom action bar: your chip on the left, ability buttons in the middle,
+// one contextual hint / cancel on the right. No match admin, no long copy.
+function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }: { state: GameState; you: string; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void; aiming: AbilityAim | null; setAiming: (a: AbilityAim | null)=>void }) {
   const me = state.players[you];
   const inventory = me ? state.powerPlayInventories[me.side] : [];
   const oppSide: PlayerSide = me?.side === 'left' ? 'right' : 'left';
   const oppCount = state.powerPlayCounts?.[oppSide] ?? 0;
-  const ownRotatable = me ? state.fieldObjects.filter(o => o.owner === me.side && o.untilTurn >= state.turn && ROTATABLE_FIELD_OBJECTS.includes(o.type)) : [];
-  const formationOpen = state.phase === 'lobby' || state.formationSelectionTurn === state.turn;
-  const toggleCheat = () => { const next = !cheatOpen; setCheatOpen(next); if (next) socket.emit('player:cheatPanel'); };
+  const myTeam = me ? TEAMS[me.team] : null;
+  const formationOpen = me && (state.phase === 'lobby' || state.formationSelectionTurn === state.turn);
   const onAbility = (type: BoxType) => {
     if (!me) return;
     const m = abilityMode(type);
@@ -223,23 +290,35 @@ function HUD({ state, you, mode, setMode, placing, setPlacing, aiming, setAiming
     setPlacing(null);
     setAiming(aiming?.type === type ? null : { type, mode: m });
   };
-  return <section className="panel gameHud">
-    <div className="domScore"><b>Left</b><span>{state.score.left}</span><small>{state.config.length}: first to {state.config.goalTarget}, turn {state.turn}/{state.config.maxTurns} · {state.phase} · {Math.max(0, Math.ceil((state.turnDeadlineAt - Date.now())/1000))}s · aimed {Object.keys(state.pendingIntents).length}/{state.babbles.length}</small><span>{state.score.right}</span><b>Right</b></div>
-    <div className="actions"><button onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button><select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select><button onClick={()=>socket.emit('game:reset', mode)}>Reset</button><button className={cheatOpen ? 'cheat selected' : 'cheat'} title="Testing only: opening this list warns all users" onClick={toggleCheat}>{cheatOpen ? 'Close cheats ⚠' : 'Cheat panel ⚠'}</button><button onClick={onLeave} title="Leave the match and return to the main menu">Main menu</button></div>
-    {cheatOpen && me && <div className="inventory cheatPanel"><b>⚠ Cheat boosters</b><small className="cheatWarn">Testing only — all players are warned on every grant. One copy each, single-use.</small>{BOX_TYPE_IDS.map(type => { const owned = inventory.some(i => i.type === type); return <button key={type} disabled={owned} title={BOX_TYPES[type].description} onClick={()=>socket.emit('player:cheatBox', { type })}>{POWER_ICONS[type]} {BOX_TYPES[type].label}{owned ? ' ✓' : ''}</button>; })}</div>}
-    {me && <div className="actions formations">{formationOpen ? FORMATION_IDS.map(id=><button key={id} className={state.formations[me.side]===id?'selected':''} onClick={()=>socket.emit('player:formation', id)} title={FORMATIONS[id].description}>{FORMATIONS[id].label}</button>) : <small>Position selection locked until the next goal.</small>}</div>}
-    {me && <div className="inventory"><b>Power Plays</b>{inventory.length ? inventory.map((item: InventoryItem, i: number) => {
-      const holder = item.holderId ? state.players[item.holderId] : undefined;
-      const mine = !item.holderId || item.holderId === you;
-      const locked = item.availableTurn > state.turn;
-      const active = (aiming?.type === item.type || placing?.type === item.type) && mine;
-      return <button key={`${item.type}-${i}`} className={active ? 'selected' : ''} disabled={locked || !mine} title={mine ? BOX_TYPES[item.type].description : `Held by teammate ${holder?.name ?? '?'} — only they can use it.`} onClick={()=>onAbility(item.type as BoxType)}>{POWER_ICONS[item.type as BoxType]} {BOX_TYPES[item.type].label}{holder ? ` 📦 ${mine ? 'you' : holder.name}` : ''}{locked ? ` (turn ${item.availableTurn})` : ''}</button>;
-    }) : <small>No Power Plays yet. Run a babblehead or the last-touched ball into the ? box. One box per player.</small>}
-    <small className="oppBoxes">Opponents hold {oppCount} hidden box{oppCount === 1 ? '' : 'es'}.</small></div>}
-    {aiming && <div className="inventory hint aimingHint"><b>{POWER_ICONS[aiming.type]} Targeting {BOX_TYPES[aiming.type].label}</b><small>{aiming.mode === 'babble' ? 'Click any babblehead on the field to apply it instantly' : 'Click any spot on the field to teleport the ball there'} · Esc cancels</small><button type="button" onClick={()=>setAiming(null)}>Cancel</button></div>}
-    {placing && <div className="inventory hint"><b>{POWER_ICONS[placing.type as BoxType]} Placing {BOX_TYPES[placing.type as BoxType].label}</b><small>Hold left mouse and drag to aim the facing · release to place · R rotates 45° · Esc cancels</small><button type="button" onClick={()=>setPlacing(null)}>Cancel</button></div>}
-    {!placing && !aiming && state.phase === 'planning' && <div className="inventory hint controlsHint"><small>Hold LMB on your babblehead and drag back to aim, release to launch{ownRotatable.length > 0 ? ' · hold & drag a ⟳ pad to rotate it toward the cursor' : ''}.</small></div>}
-  </section>;
+  return <footer className="actionBar">
+    {formationOpen && <div className="formationRow">{FORMATION_IDS.map(id=><button key={id} type="button" className={state.formations[me!.side]===id?'selected':''} onClick={()=>socket.emit('player:formation', id)} title={FORMATIONS[id].description}>{FORMATIONS[id].label}</button>)}</div>}
+    <div className="actionBarRow">
+      <div className="barLeft">
+        {me && myTeam
+          ? <span className="youChip" style={{ background: myTeam.primary, color: myTeam.secondary }}>{myTeam.emoji} {me.name}</span>
+          : <span className="youChip spectator">Spectating</span>}
+        {oppCount > 0 && <span className="oppChip" title={`Opponents hold ${oppCount} hidden box${oppCount === 1 ? '' : 'es'}`}>📦×{oppCount}</span>}
+      </div>
+      <div className="barCenter inventory">
+        {state.phase === 'lobby' && <button type="button" className="primary" onClick={()=>socket.emit('game:start')}>Start match</button>}
+        {me && state.phase !== 'lobby' && (inventory.length ? inventory.map((item: InventoryItem, i: number) => {
+          const holder = item.holderId ? state.players[item.holderId] : undefined;
+          const mine = !item.holderId || item.holderId === you;
+          const locked = item.availableTurn > state.turn;
+          const active = (aiming?.type === item.type || placing?.type === item.type) && mine;
+          return <button key={`${item.type}-${i}`} type="button" className={active ? 'abilityBtn selected' : 'abilityBtn'} disabled={locked || !mine} title={mine ? BOX_TYPES[item.type].description : `Held by teammate ${holder?.name ?? '?'} — only they can use it.`} onClick={()=>onAbility(item.type as BoxType)}>
+            <AbilityIcon type={item.type as BoxType}/>
+            <span>{BOX_TYPES[item.type].label}{locked ? ` (turn ${item.availableTurn})` : ''}</span>
+          </button>;
+        }) : <small className="noPlays">No Power Plays — grab a ? box</small>)}
+      </div>
+      <div className="barRight">
+        {aiming && <><small>{POWER_ICONS[aiming.type]} Targeting {BOX_TYPES[aiming.type].label} · {aiming.mode === 'babble' ? 'click a babblehead' : 'click a field spot'} · Esc cancels</small><button type="button" onClick={()=>setAiming(null)}>Cancel</button></>}
+        {placing && <><small>{POWER_ICONS[placing.type as BoxType]} Placing {BOX_TYPES[placing.type as BoxType].label} · drag to aim · R rotates · Esc cancels</small><button type="button" onClick={()=>setPlacing(null)}>Cancel</button></>}
+        {!placing && !aiming && state.phase === 'planning' && <small className="controlsHint">Hold a babblehead & drag back to aim, release to launch</small>}
+      </div>
+    </div>
+  </footer>;
 }
 
 type PointerMode =
@@ -281,13 +360,23 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
   frame.current = { state, you, drag, placing, rotatingPad };
   React.useEffect(() => {
     let raf = 0;
+    let timer = 0;
+    let stopped = false;
     const tick = () => {
       const f = frame.current;
+      const started = performance.now();
       rendererRef.current?.render({ state: f.state, you: f.you, drag: f.drag, placing: f.placing, rotatingPad: f.rotatingPad });
-      raf = requestAnimationFrame(tick);
+      const cost = performance.now() - started;
+      if (stopped) return;
+      // Adaptive pump: on weak/software WebGL a frame can take hundreds of ms.
+      // Back-to-back rAF would then starve React commits, socket events and
+      // pointer input (the HUD would never appear). After any slow frame,
+      // yield to the event loop at least as long as the frame took.
+      if (cost > 50) timer = window.setTimeout(() => { raf = requestAnimationFrame(tick); }, Math.min(1000, cost * 1.5));
+      else raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { stopped = true; cancelAnimationFrame(raf); clearTimeout(timer); };
   }, []);
 
   // if placement is cancelled from the HUD mid-drag, drop the stale place mode

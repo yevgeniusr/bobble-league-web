@@ -45,6 +45,42 @@ npm run build
 
 Open http://localhost:3000 in two browser windows and join the same room code.
 
+## Developer console (testing hooks)
+
+There is no cheat UI in the app. For testing, a developer console API is
+attached to the page as `window.__babbleDev` when any of these is true:
+
+- dev build (`import.meta.env.DEV`)
+- the page URL has `?dev=1`
+- `localStorage.setItem('babble:devtools', '1')`
+
+API (run in the browser devtools console while in a room):
+
+```js
+window.__babbleDev.listTypes();        // all Power Play box type ids
+window.__babbleDev.grantBox('boost');  // grant one testing copy of a type
+window.__babbleDev.grantAll();         // grant one of every type
+```
+
+These emit real socket events; every successful grant publicly announces
+`CHEAT MODE: …` to the whole room. The server **rejects** cheat events when
+`NODE_ENV=production` unless `ENABLE_CHEATS=true` is set, and rate limits them
+(one grant per ~0.8s, one grant-all per 5s). The Playwright box-control check
+(`scripts/box-control-check.mjs`) enables both gates for its own test server.
+
+## Assets
+
+Generated art lives in `public/assets` (served at `/assets/...`):
+
+- `/assets/abilities/<boxType>.png` — ability icons (`boost.png`, `ghosted.png`,
+  …, plus `mysteryBox.png` and `ability-spritesheet.png`). The bottom action
+  bar uses these for Power Play buttons and falls back to emoji/procedural
+  icons if an image is missing.
+- `/assets/sprites/ball-texture.png`, `goal-gates.png`, `field-props.png` —
+  texture/reference sheets for the renderer.
+- `/assets/models/*.obj` — placeholder meshes for future 3D models.
+- `/assets/manifest.json` — stable asset paths.
+
 ## Production
 
 ```bash

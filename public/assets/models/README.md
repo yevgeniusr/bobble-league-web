@@ -1,0 +1,1 @@
+Generated original OBJ placeholders for Meshy/GLB replacement or direct loader conversion: block_wall, boost_pad_base, ramp_wedge, goal_gate_hoop, corner_bumper_cylinder, game_ball_lowpoly. Meshy API key was not found automatically.

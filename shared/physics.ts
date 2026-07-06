@@ -32,21 +32,23 @@ export const PX_PER_METER = 50;
 // linear damping so the tabletop deceleration feel is preserved exactly.
 const LEGACY_TICK_HZ = 30;
 const dampingFromDrag = (dragPerTick: number) => -Math.log(dragPerTick) * LEGACY_TICK_HZ;
-const BABBLE_DAMPING = dampingFromDrag(0.952);
-const BALL_DAMPING = dampingFromDrag(0.968);
-const BEACH_BALL_DAMPING = dampingFromDrag(0.982);
+// Arcade tuning pass: slightly stronger damping cuts low-speed gliding so
+// turns end crisply, while higher restitution keeps rebounds lively.
+const BABBLE_DAMPING = dampingFromDrag(0.94);
+const BALL_DAMPING = dampingFromDrag(0.955);
+const BEACH_BALL_DAMPING = dampingFromDrag(0.972);
 
-// Restitutions reproduce the pre-Rapier bounce feel: the ball is lively (0.88
-// against walls/babbles via CombineRule.Max), babbles are heavier and duller.
-const BALL_RESTITUTION = 0.88;
-const BABBLE_RESTITUTION = 0.6;
+// Restitutions keep the arcade bounce feel: the ball is lively (0.92 against
+// walls/babbles via CombineRule.Max), babbles are heavier but not dead.
+const BALL_RESTITUTION = 0.92;
+const BABBLE_RESTITUTION = 0.68;
 const WALL_RESTITUTION = 0.9; // avg(0.9, 0.6) = 0.75 = legacy babble wall bounce
 const BLOCK_RESTITUTION = 0.6;
 
-// Densities set the momentum exchange: a babble outweighs the ball ~3.5x, so
-// flicked babbles send the ball flying (legacy BALL_MASS_FACTOR feel).
+// Densities set the momentum exchange: a babble outweighs the ball ~4.3x, so
+// flicked babbles visibly rocket the ball off every hit.
 const BABBLE_DENSITY = 1;
-const BALL_DENSITY_BASE = 0.84;
+const BALL_DENSITY_BASE = 0.68;
 
 // Collision groups (16-bit membership << 16 | 16-bit filter).
 const G_BALL = 0x0001;

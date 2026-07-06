@@ -1,0 +1,25 @@
+{
+  "abilities": {
+    "beachBall": "/assets/abilities/beachBall.png",
+    "moveBall": "/assets/abilities/moveBall.png",
+    "swapGoals": "/assets/abilities/swapGoals.png",
+    "bigBumpers": "/assets/abilities/bigBumpers.png",
+    "boost": "/assets/abilities/boost.png",
+    "stickyGoo": "/assets/abilities/stickyGoo.png",
+    "ramp": "/assets/abilities/ramp.png",
+    "block": "/assets/abilities/block.png",
+    "bigHead": "/assets/abilities/bigHead.png",
+    "ghosted": "/assets/abilities/ghosted.png",
+    "movePlayer": "/assets/abilities/movePlayer.png",
+    "mysteryBox": "/assets/abilities/mysteryBox.png",
+    "spritesheet": "/assets/abilities/ability-spritesheet.png"
+  },
+  "sprites": {
+    "ballTexture": "/assets/sprites/ball-texture.png",
+    "goalGates": "/assets/sprites/goal-gates.png",
+    "fieldProps": "/assets/sprites/field-props.png"
+  },
+  "models": {
+    "note": "Meshy API key not found under /Users/mac/projects/personal during automated search; generated procedural 2D assets and placeholder folder for future GLB models."
+  }
+}

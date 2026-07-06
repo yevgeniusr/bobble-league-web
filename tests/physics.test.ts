@@ -3,7 +3,7 @@
 // body collisions, ghosting, blocks, boxes, ramps/boosts, settling, and a
 // full 8-betabot scripted match completing by goal.
 import { describe, expect, it } from 'vitest';
-import { addPlayer, createInitialState, launchBabble, startGame, stepGame } from '../shared/game';
+import { addPlayer, createInitialState, launchBabble, MAX_SPEED, startGame, stepGame } from '../shared/game';
 import { FIELD, GameState, PlayerSide, Vec } from '../shared/types';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
@@ -65,9 +65,9 @@ describe('Rapier physics: goals and gates', () => {
       park(s);
       const angle = (k / 16) * Math.PI * 2;
       s.ball.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
-      s.ball.vel = { x: Math.cos(angle) * 1600, y: Math.sin(angle) * 1600 };
+      s.ball.vel = { x: Math.cos(angle) * MAX_SPEED, y: Math.sin(angle) * MAX_SPEED };
       // Transient bounds allow brief penetration into the thick (50px) walls
-      // while restitution resolves a 1600px/s impact; never past a wall.
+      // while restitution resolves a MAX_SPEED (1750px/s) impact; never past a wall.
       run(s, 320, 1000, () => {
         expect(s.ball.pos.x).toBeGreaterThan(-FIELD.goalDepth - s.ball.radius - 40);
         expect(s.ball.pos.x).toBeLessThan(FIELD.width + FIELD.goalDepth + s.ball.radius + 40);
@@ -99,7 +99,8 @@ describe('Rapier physics: walls and body collisions', () => {
   it('reflects the ball off the top wall', () => {
     const s = setup();
     park(s);
-    s.ball.pos = { x: 550, y: 60 };
+    // x=750 keeps the rising ball clear of the babbles parked along the top rail
+    s.ball.pos = { x: 750, y: 60 };
     s.ball.vel = { x: 0, y: -500 };
     run(s, 10);
     expect(s.ball.vel.y).toBeGreaterThan(150); // bounced downward, lively

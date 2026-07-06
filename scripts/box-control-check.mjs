@@ -27,8 +27,10 @@ function makeProjector(box) {
 }
 
 // long turns: headless WebGL is slow enough that the scripted flow cannot fit in
-// the normal 15s planning window, and a mid-flow turn resolve moves the babbles
-const server = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, PORT, NODE_ENV: 'production', BABBLE_TURN_MS: '120000' } });
+// the normal 15s planning window, and a mid-flow turn resolve moves the babbles.
+// ENABLE_CHEATS lets the window.__babbleDev test hook grant boxes against the
+// production server build (cheat events are otherwise rejected in production).
+const server = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, PORT, NODE_ENV: 'production', ENABLE_CHEATS: 'true', BABBLE_TURN_MS: '120000' } });
 const aimedCount = async (page, label = '') => {
   const t = await page.locator('body').innerText();
   const m = t.match(/aimed (\d+)\/(\d+)/);
@@ -43,6 +45,8 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.on('pageerror', e => errors.push('pageerror: ' + e));
   page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  // opt into the developer console hook (no cheat UI exists in the app)
+  await page.addInitScript(() => localStorage.setItem('babble:devtools', '1'));
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.locator('button', { hasText: /create room/i }).click({ force: true });
   await page.waitForSelector('.roomCodeValue', { timeout: 10000 });
@@ -66,15 +70,18 @@ try {
     await delay(500);
   };
 
-  // 0. grant both test boxes, then close the cheat panel so its buttons do not
-  //    legitimately cover the field during the control checks
-  await page.locator('button', { hasText: /cheat panel/i }).click({ force: true });
-  await page.locator('.cheatPanel button', { hasText: /Boost/ }).first().click({ force: true });
-  await delay(200);
-  await page.locator('.cheatPanel button', { hasText: /Ghosted/ }).first().click({ force: true });
-  await delay(200);
-  await page.locator('button', { hasText: /close cheats/i }).click({ force: true });
-  await delay(200);
+  // 0. grant both test boxes through the developer console hook
+  //    (window.__babbleDev, gated by localStorage babble:devtools=1 above).
+  //    Grants are spaced out to respect the server's cheat rate limit.
+  await page.waitForFunction(() => typeof window.__babbleDev?.grantBox === 'function', null, { timeout: 10000 });
+  await page.evaluate(() => window.__babbleDev.grantBox('boost'));
+  await delay(1000);
+  await page.evaluate(() => window.__babbleDev.grantBox('ghosted'));
+  // note: buttons render uppercase (CSS text-transform), so match case-insensitively
+  await page.waitForFunction(() => {
+    const t = document.body.innerText;
+    return /boost/i.test(t) && /ghosted/i.test(t);
+  }, null, { timeout: 10000 });
 
   // the whole sequence must land inside a single planning turn (BABBLE_TURN_MS
   // above) or the deadline resolves the turn and resets the aimed counter
@@ -89,7 +96,7 @@ try {
   const aimedBefore = await aimedCount(page, 'before');
 
   // 2. use the placeable box (Boost)
-  await page.locator('.inventory:not(.cheatPanel) button', { hasText: /Boost/ }).first().click({ force: true });
+  await page.locator('.inventory button', { hasText: /Boost/ }).first().click({ force: true });
   await delay(250);
   const padA = project(560, 250), padB = project(660, 250);
   await page.mouse.move(padA.x, padA.y);
@@ -104,7 +111,7 @@ try {
   const aimedAfterBoost = await aimedCount(page, 'afterBoost');
 
   // 4. apply the babble-target box (Ghosted) to an own babble
-  await page.locator('.inventory:not(.cheatPanel) button', { hasText: /Ghosted/ }).first().click({ force: true });
+  await page.locator('.inventory button', { hasText: /Ghosted/ }).first().click({ force: true });
   await delay(250);
   const ghostTarget = project(babbles[2].x, babbles[2].y);
   await page.mouse.click(ghostTarget.x, ghostTarget.y);
