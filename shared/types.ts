@@ -143,6 +143,7 @@ export type GameState = {
   turnDeadlineAt: number;
   resolvingStartedAt: number | null;
   allIntentsReadyAt: number | null;
+  readyPlayerIds: string[];
   nextBoxId: number;
   players: Record<string, PlayerState>;
   sideTeams: Record<PlayerSide, TeamId>;
@@ -172,6 +173,7 @@ export type ClientToServerEvents = {
   'player:input': (input: PlayerInput) => void;
   'player:launch': (intent: TurnIntent) => void;
   'player:power': (use: PowerPlayUse) => void;
+  'player:ready': () => void;
   'player:fieldRotate': (payload: { id: string; angle?: number }) => void;
   'player:formation': (formation: FormationId) => void;
   'player:team': (team: TeamId) => void;

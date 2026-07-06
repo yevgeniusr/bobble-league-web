@@ -45,6 +45,8 @@
 .barRight{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 .barRight small{color:#fff8cf;font-weight:700;max-width:300px;text-align:right}
 .barRight button{padding:6px 10px;font-size:.7rem;border-width:3px;box-shadow:0 3px 0 #9b5144}
+.readyBtn{opacity:.92;white-space:nowrap;background:#fffaf1}
+.readyBtn.selected{background:#55d9c4;color:#183346}
 @media(max-width:900px){.matchStatus small{white-space:normal}.actionBarRow{grid-template-columns:1fr;gap:6px}.barLeft,.barRight{justify-content:center}.topHud{grid-template-columns:1fr;justify-items:center}}
 
 /* 2026 anime/cat menu polish and single-source match HUD refinements. */

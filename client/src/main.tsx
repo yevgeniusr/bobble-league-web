@@ -306,6 +306,9 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
   const oppCount = state.powerPlayCounts?.[oppSide] ?? 0;
   const myTeam = me ? TEAMS[me.team] : null;
   const formationOpen = me && (state.phase === 'lobby' || state.formationSelectionTurn === state.turn);
+  const readyTotal = Object.values(state.players).filter(p => p.connected).length;
+  const readyCount = state.readyPlayerIds.filter(id => state.players[id]?.connected).length;
+  const ready = Boolean(me && state.readyPlayerIds.includes(me.id));
   const onAbility = (type: BoxType) => {
     if (!me) return;
     const m = abilityMode(type);
@@ -337,6 +340,9 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
         }) : <small className="noPlays">No Power Plays — grab a ? box</small>)}
       </div>
       <div className="barRight">
+        {me && state.phase === 'planning' && <button type="button" className={ready ? 'readyBtn selected' : 'readyBtn'} disabled={ready} title="Vote to finish planning now. Changing your aim or using a Power Play clears your vote." onClick={()=>socket.emit('player:ready')}>
+          {ready ? 'Ready' : 'Ready / Finish Turn'} {readyCount}/{readyTotal}
+        </button>}
         {aiming && <><small>{POWER_ICONS[aiming.type]} Targeting {BOX_TYPES[aiming.type].label} · {aiming.mode === 'babble' ? 'click a babblehead' : 'click a field spot'} · Esc cancels</small><button type="button" onClick={()=>setAiming(null)}>Cancel</button></>}
         {placing && <><small>{POWER_ICONS[placing.type as BoxType]} Placing {BOX_TYPES[placing.type as BoxType].label} · drag to aim · R rotates · Esc cancels</small><button type="button" onClick={()=>setPlacing(null)}>Cancel</button></>}
         {!placing && !aiming && state.phase === 'planning' && <small className="controlsHint">Hold a babblehead & drag back to aim, release to launch</small>}
