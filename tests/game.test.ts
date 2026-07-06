@@ -21,17 +21,61 @@ import {
   removePlayer,
   rotateFieldObject,
   setFieldObjectAngle,
+  setMap,
   setSideTeam,
   spawnBox,
   startGame,
   stepGame,
   usePowerPlay
 } from '../shared/game';
-import { BOX_TYPE_IDS, BUMPERS, FIELD } from '../shared/types';
+import { BOX_TYPE_IDS, BUMPERS, FIELD, MAPS, MAP_IDS, MapId } from '../shared/types';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
 describe('classic Babble League shared rules', () => {
+  it('defaults to stadium and snapshots the selected map config', () => {
+    const s = createInitialState('MAPS', 3);
+    expect(s.mapId).toBe('stadium');
+    expect(s.config.mapId).toBe('stadium');
+    expect(s.config.boxSpawnAnchors).toEqual(['topMid', 'bottomMid']);
+    expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano']);
+  });
+
+  it('allows map changes only in the lobby and preserves the selected map through kickoff', () => {
+    const s = createInitialState('MOON', 1);
+    expect(setMap(s, 'moon')).toBe(true);
+    expect(s.mapId).toBe('moon');
+    expect(s.config.mapId).toBe('moon');
+    expect(s.config.boxSpawnAnchors).toEqual(MAPS.moon.layout.boxSpawnAnchors);
+
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(s.phase).toBe('planning');
+    expect(s.mapId).toBe('moon');
+    expect(setMap(s, 'volcano')).toBe(false);
+    expect(s.mapId).toBe('moon');
+  });
+
+  it('runs a basic kickoff turn on every selectable map', () => {
+    for (const mapId of MAP_IDS) {
+      const s = createInitialState(`SMOKE-${mapId}`, 1, mapId as MapId);
+      addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+      addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+      startGame(s, seq([0.5]));
+      expect(s.mapId).toBe(mapId);
+      expect(s.babbles).toHaveLength(8);
+      for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 90 }, 1000);
+      for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: Math.PI, impulse: 90 }, 1000);
+      stepGame(s, {}, 1000, seq([0.2, 0.8]));
+      stepGame(s, {}, 1000 + s.config.allAimedResolveGraceMs, seq([0.2, 0.8]));
+      expect(s.phase).toBe('resolving');
+      for (let i = 0; i < 360 && s.phase === 'resolving'; i++) stepGame(s, {}, 1100 + i * 33, seq([0.2, 0.8]));
+      expect(['planning', 'finished']).toContain(s.phase);
+    }
+  });
+
   it('starts classic matches with four babbles per team in selected formations', () => {
     const s = createInitialState('TEST', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');

@@ -9,9 +9,9 @@ import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { buildGamePlayerEvent, drainAnalyticsEvents, GamePlayerLifecycle } from '../shared/analytics';
-import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { freePhysics } from '../shared/physics';
-import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
+import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadLocalEnv();
@@ -63,7 +63,12 @@ if (isProd) {
 const httpServer = createServer(app);
 const io: IOServer = new Server(httpServer, { cors: { origin: true, credentials: false } });
 
-const createSchema = z.object({ name: z.string().max(24), team: z.enum(TEAM_IDS as [string, ...string[]]).optional(), mode: z.union([z.literal(1), z.literal(3), z.literal(5)]) });
+const createSchema = z.object({
+  name: z.string().max(24),
+  team: z.enum(TEAM_IDS as [string, ...string[]]).optional(),
+  mode: z.union([z.literal(1), z.literal(3), z.literal(5)]),
+  mapId: z.enum(MAP_IDS as [string, ...string[]]).optional()
+});
 const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), team: z.enum(TEAM_IDS as [string, ...string[]]).optional() });
 
 io.on('connection', socket => {
@@ -71,7 +76,7 @@ io.on('connection', socket => {
     const parsed = createSchema.safeParse(payload);
     if (!parsed.success) return cb({ ok: false, error: 'Invalid room settings.' });
     const roomCode = uniqueRoomCode();
-    const state = createInitialState(roomCode, parsed.data.mode as GameMode);
+    const state = createInitialState(roomCode, parsed.data.mode as GameMode, parsed.data.mapId as MapId | undefined);
     const room: Room = { state, inputs: {}, lastActiveAt: Date.now() };
     rooms.set(roomCode, room);
     joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
@@ -132,6 +137,14 @@ io.on('connection', socket => {
   socket.on('player:team', team => {
     const room = currentRoom(socket); if (!room) return;
     if (TEAM_IDS.includes(team)) setSideTeam(room.state, socket.id, team);
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('room:map', mapId => {
+    const room = currentRoom(socket); if (!room) return;
+    if (!MAP_IDS.includes(mapId)) return;
+    if (!setMap(room.state, mapId)) socket.emit('room:error', 'Map selection is locked after kickoff. Reset or create a new room to change maps.');
+    else freePhysics(room.state);
     room.lastActiveAt = Date.now();
   });
 

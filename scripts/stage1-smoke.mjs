@@ -3,8 +3,9 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const PORT = process.env.SMOKE_PORT || '3117';
+const PORT = process.env.SMOKE_PORT || String(3300 + (process.pid % 500));
 const url = `http://127.0.0.1:${PORT}`;
+const mapId = process.env.BABBLE_MAP || 'stadium';
 
 function run(cmd, args, env = {}) {
   return new Promise((resolve, reject) => {
@@ -31,12 +32,12 @@ try {
     await delay(500);
   }
   if (!healthy) throw new Error('Server did not become healthy on ' + url);
-  console.log(`[stage1-smoke] server healthy at ${url}`);
+  console.log(`[stage1-smoke] server healthy at ${url} map=${mapId}`);
   if (!process.env.SKIP_BETABOTS) {
-    await run(process.execPath, ['scripts/betabots-match.mjs'], { BABBLE_URL: url });
+    await run(process.execPath, ['scripts/betabots-match.mjs'], { BABBLE_URL: url, BABBLE_MAP: mapId });
     console.log('[stage1-smoke] betabots gate passed');
   }
-  await run(process.execPath, ['scripts/multiplayer-smoke.mjs'], { BABBLE_URL: url });
+  await run(process.execPath, ['scripts/multiplayer-smoke.mjs'], { BABBLE_URL: url, BABBLE_MAP: mapId });
   console.log('[stage1-smoke] multiplayer smoke passed');
   if (!process.env.SKIP_RENDER_CHECK) {
     // These spawn their own servers on separate ports.
