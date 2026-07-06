@@ -22,6 +22,7 @@ import {
   rotateFieldObject,
   setFieldObjectAngle,
   setMap,
+  setPlayerReady,
   setSideTeam,
   spawnBox,
   startGame,
@@ -161,6 +162,86 @@ describe('classic Babble League shared rules', () => {
     stepGame(s, {}, 1200 + s.config.allAimedResolveGraceMs, seq([0.5]));
     expect(s.phase).toBe('resolving');
     expect(s.babbles.find(b => b.id === 'left-1')?.vel.y).toBeGreaterThan(0);
+  });
+
+  it('resolves the planning turn early only after every connected player is ready', () => {
+    const s = createInitialState('READY', 3);
+    addPlayer(s, 'l1', 'Left One', 'pigs', 'left');
+    addPlayer(s, 'l2', 'Left Two', 'pigs', 'left');
+    addPlayer(s, 'r1', 'Right One', 'tigers', 'right');
+    addPlayer(s, 'r2', 'Right Two', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(setPlayerReady(s, 'l1', 1000)).toBe(true);
+    expect(setPlayerReady(s, 'l2', 1001)).toBe(true);
+    expect(setPlayerReady(s, 'r1', 1002)).toBe(true);
+    expect(s.phase).toBe('planning');
+    expect(s.readyPlayerIds.sort()).toEqual(['l1', 'l2', 'r1']);
+
+    expect(setPlayerReady(s, 'r2', 1003)).toBe(true);
+
+    expect(s.phase).toBe('resolving');
+    expect(s.resolvingStartedAt).toBe(1003);
+    expect(s.readyPlayerIds).toEqual([]);
+  });
+
+  it('does not resolve on partial ready votes before the timer deadline', () => {
+    const s = createInitialState('PARTIAL', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(setPlayerReady(s, 'l', 1000)).toBe(true);
+    stepGame(s, {}, s.turnDeadlineAt - 1, seq([0.5]));
+
+    expect(s.phase).toBe('planning');
+    expect(s.readyPlayerIds).toEqual(['l']);
+  });
+
+  it('removes disconnected players from ready voting and resolves when the remaining players are unanimous', () => {
+    const s = createInitialState('DISCO', 3);
+    addPlayer(s, 'l1', 'Left One', 'pigs', 'left');
+    addPlayer(s, 'l2', 'Left Two', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(setPlayerReady(s, 'l1', 1000)).toBe(true);
+    expect(setPlayerReady(s, 'l2', 1001)).toBe(true);
+    removePlayer(s, 'l2');
+    expect(s.readyPlayerIds).toEqual([]);
+
+    expect(setPlayerReady(s, 'l1', 1002)).toBe(true);
+    expect(setPlayerReady(s, 'r', 1002)).toBe(true);
+
+    expect(s.phase).toBe('resolving');
+    expect(s.readyPlayerIds).toEqual([]);
+  });
+
+  it('clears a player ready vote when they re-aim before resolution', () => {
+    const s = createInitialState('CLEAR', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(setPlayerReady(s, 'l', 1000)).toBe(true);
+    expect(s.readyPlayerIds).toEqual(['l']);
+    expect(launchBabble(s, 'l', { babbleId: 'left-1', aimAngle: 0, impulse: 250 }, 1001)).toBe(true);
+
+    expect(s.phase).toBe('planning');
+    expect(s.readyPlayerIds).toEqual([]);
+  });
+
+  it('still falls back to the planning timer when ready votes are not unanimous', () => {
+    const s = createInitialState('TIMER', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(launchBabble(s, 'l', { babbleId: 'left-1', aimAngle: 0, impulse: 600 }, 999)).toBe(true);
+    expect(setPlayerReady(s, 'l', 1000)).toBe(true);
+    stepGame(s, {}, s.turnDeadlineAt, seq([0.5]));
+
+    expect(s.phase).toBe('resolving');
   });
 
   it('tracks scrimmage, qualifier, and champion turn limits', () => {

@@ -86,6 +86,7 @@ export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: 
     turnDeadlineAt: Date.now() + TURN_DURATION_MS,
     resolvingStartedAt: null,
     allIntentsReadyAt: null,
+    readyPlayerIds: [],
     nextBoxId: 1,
     players: {},
     sideTeams: { left: 'pigs', right: 'tigers' },
@@ -176,6 +177,7 @@ export function reclaimPlayer(state: GameState, oldId: string, newId: string): P
   delete state.players[oldId];
   const p: PlayerState = { ...old, id: newId, connected: true };
   state.players[newId] = p;
+  clearReadyVote(state, oldId);
   for (const side of ['left', 'right'] as const) {
     for (const item of state.powerPlayInventories[side]) if (item.holderId === oldId) item.holderId = newId;
   }
@@ -192,6 +194,7 @@ export function findDisconnectedSeat(state: GameState, name: string): PlayerStat
 export function removePlayer(state: GameState, id: string) {
   if (state.players[id]) {
     state.players[id].connected = false;
+    resetReadyVotes(state);
     pushEvent(state, `${state.players[id].name} disconnected.`);
   }
 }
@@ -224,6 +227,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.beachBallUntilTurn = null;
   state.pendingIntents = {};
   state.allIntentsReadyAt = null;
+  state.readyPlayerIds = [];
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
@@ -251,6 +255,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.beachBallUntilTurn = null;
   state.pendingIntents = {};
   state.allIntentsReadyAt = null;
+  state.readyPlayerIds = [];
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
@@ -270,9 +275,39 @@ export function launchBabble(state: GameState, playerId: string, intent: TurnInt
   const impulse = Math.max(1, Math.min(900, intent.impulse));
   const previous = state.pendingIntents[babble.id];
   state.pendingIntents[babble.id] = { babbleId: babble.id, aimAngle: intent.aimAngle, impulse };
+  clearReadyVote(state, playerId);
   if (previous && (previous.aimAngle !== intent.aimAngle || previous.impulse !== impulse)) state.allIntentsReadyAt = null;
   pushEvent(state, `${player.name} aimed ${babble.id}.`);
   return true;
+}
+
+export function setPlayerReady(state: GameState, playerId: string, now = Date.now()) {
+  if (state.phase !== 'planning') return false;
+  const player = state.players[playerId];
+  if (!player || !player.connected) return false;
+  if (!state.readyPlayerIds.includes(playerId)) {
+    state.readyPlayerIds.push(playerId);
+    pushEvent(state, `${player.name} is ready to finish the turn.`);
+  }
+  if (connectedReadyStatus(state).allReady) beginResolving(state, now);
+  return true;
+}
+
+export function clearReadyVote(state: GameState, playerId: string) {
+  const next = state.readyPlayerIds.filter(id => id !== playerId);
+  const changed = next.length !== state.readyPlayerIds.length;
+  state.readyPlayerIds = next;
+  return changed;
+}
+
+function resetReadyVotes(state: GameState) {
+  state.readyPlayerIds = [];
+}
+
+export function connectedReadyStatus(state: GameState) {
+  const connected = Object.values(state.players).filter(p => p.connected);
+  const ready = state.readyPlayerIds.filter(id => connected.some(p => p.id === id)).length;
+  return { ready, total: connected.length, allReady: connected.length > 0 && ready === connected.length };
 }
 
 export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> = {}, now = Date.now(), rng: Rng = Math.random, dtMs = TICK_MS) {
@@ -301,6 +336,7 @@ export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> 
 }
 
 function shouldResolveTurn(state: GameState, now: number) {
+  if (connectedReadyStatus(state).allReady) return true;
   const required = state.babbles.map(b => b.id);
   const allReady = required.every(id => Boolean(state.pendingIntents[id]));
   if (!allReady) {
@@ -325,6 +361,7 @@ function beginResolving(state: GameState, now: number) {
   state.phase = 'resolving';
   state.resolvingStartedAt = now;
   state.allIntentsReadyAt = null;
+  state.readyPlayerIds = [];
   pushEvent(state, `Turn ${state.turn} resolving with ${Object.keys(state.pendingIntents).length}/${state.babbles.length} babbleheads aimed.`);
 }
 
@@ -375,6 +412,7 @@ export function usePowerPlay(state: GameState, playerId: string, use: PowerPlayU
   inventory.splice(itemIndex, 1);
   applyPowerPlay(state, player.side, use, now);
   recordAnalyticsEvent(state, buildAbilityUsedEvent(state, playerId, use, now));
+  clearReadyVote(state, playerId);
   pushEvent(state, `${player.name} used ${BOX_TYPES[use.type].label}.`);
   return true;
 }
@@ -392,6 +430,7 @@ export function rotateFieldObject(state: GameState, playerId: string, id: string
   const obj = ownedRotatable(state, playerId, id);
   if (!obj) return false;
   obj.angle = (obj.angle + delta) % (Math.PI * 2);
+  clearReadyVote(state, playerId);
   pushEvent(state, `${state.players[playerId].name} rotated a ${obj.type} pad.`);
   return true;
 }
@@ -402,6 +441,7 @@ export function setFieldObjectAngle(state: GameState, playerId: string, id: stri
   const obj = ownedRotatable(state, playerId, id);
   if (!obj) return false;
   obj.angle = angle % (Math.PI * 2);
+  clearReadyVote(state, playerId);
   return true;
 }
 
@@ -736,6 +776,7 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
   const lastTouchedBy = state.ball.lastTouchedBy;
   const ballPosition = { ...state.ball.pos };
   state.score[scorer] += 1;
+  state.readyPlayerIds = [];
   for (const p of Object.values(state.players)) if (p.side === scorer) p.score = state.score[scorer];
   pushEvent(state, `${scorer === 'left' ? 'Left' : 'Right'} scores!`);
   if (state.score[scorer] >= state.mode) {
@@ -765,6 +806,7 @@ function endTurn(state: GameState, now: number, rng: Rng, unlockFormation = fals
   state.resolvingStartedAt = null;
   state.pendingIntents = {};
   state.allIntentsReadyAt = null;
+  state.readyPlayerIds = [];
   resetForPlanning(state, rng);
   expireTurnEffects(state);
   state.turnDeadlineAt = now + state.config.turnDurationMs;

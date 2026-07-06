@@ -9,7 +9,7 @@ import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { buildGamePlayerEvent, drainAnalyticsEvents, GamePlayerLifecycle } from '../shared/analytics';
-import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setPlayerReady, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { freePhysics } from '../shared/physics';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
@@ -112,6 +112,12 @@ io.on('connection', socket => {
     if (!use || !BOX_TYPE_IDS.includes(use.type as BoxType)) return;
     if (!usePowerPlay(room.state, socket.id, use)) socket.emit('room:error', 'That Power Play is not available to you right now.');
     flushAnalytics(room);
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('player:ready', () => {
+    const room = currentRoom(socket); if (!room) return;
+    if (!setPlayerReady(room.state, socket.id)) socket.emit('room:error', 'Ready is only available during planning.');
     room.lastActiveAt = Date.now();
   });
 
