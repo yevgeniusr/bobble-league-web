@@ -292,7 +292,7 @@ describe('classic Babble League shared rules', () => {
     expect(s.turn).toBe(2);
     expect(s.ball.vel).toEqual({ x: 0, y: 0 });
     for (const b of s.babbles) expect(b.vel).toEqual({ x: 0, y: 0 }); // no physics carryover
-  });
+  }, 20000); // ~300 Rapier ticks; parallel test workers pay WASM warmup
 
   it('placed blocks deflect the ball, goo slows it, and boost pads accelerate it', () => {
     const s = createInitialState('OBJ', 3);

@@ -6,7 +6,7 @@ Use a production TypeScript browser/game stack:
 
 - **Client:** Vite + React + PixiJS canvas renderer.
 - **Server:** Node.js + Fastify/Express + Socket.IO for WebSocket rooms.
-- **Simulation:** authoritative server-side fixed timestep physics. Prefer `planck-js`/Box2D-style simulation for deterministic server tests; clients render snapshots and may predict local input only.
+- **Simulation:** authoritative server-side fixed timestep physics. Rigid-body integration and collisions use Rapier 2D (`@dimforge/rapier2d-deterministic-compat`: WASM inlined for Node/test/Docker compatibility, deterministic build for reproducible server simulation) in `shared/physics.ts`; game-feel rules (bumpers, boosts, goo, ramps, boxes, goals, settling) remain plain TypeScript in `shared/game.ts`. Clients render snapshots only and never load the physics WASM.
 - **Shared code:** TypeScript message schemas, constants, room/game types, seeded RNG helpers.
 - **Tests:** Vitest for unit/integration, Playwright for browser flows, Artillery/k6 for WebSocket load.
 - **Deploy:** Docker image deployed by Coolify, with `/healthz`, HTTPS, WebSocket proxy support, and optional Redis when scaling beyond one instance.

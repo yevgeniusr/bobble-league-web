@@ -15,6 +15,20 @@ A production-oriented, web-based multiplayer babble soccer game inspired by Disc
 - Box effects: speed, slow, big, tiny, freeze, ghost, magnet, bomb, shield, swap.
 - Responsive web UI and Docker/Coolify-ready deployment.
 
+## Physics engine
+
+Rigid-body physics (ball/babble integration and damping, wall and goal-mouth
+collisions, placed block walls) runs on **Rapier 2D** via
+`@dimforge/rapier2d-deterministic-compat`: the `-compat` build inlines the WASM
+blob so it loads in plain Node (tsx, vitest, Docker) with no bundler wiring,
+and the `-deterministic` build keeps the authoritative server simulation
+reproducible across platforms. `shared/physics.ts` owns the Rapier world (one
+persistent world per `GameState`, `GameState` stays the source of truth);
+game-feel rules — corner bumpers, boost pads, sticky goo, ramps, box pickups,
+goal detection, settling — stay as explicit rule code in `shared/game.ts`. The
+browser client never imports the physics module; it renders server state only,
+so no WASM ships in the client bundle.
+
 ## Controls
 
 - Move: `WASD` or arrow keys

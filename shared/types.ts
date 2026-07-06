@@ -63,6 +63,12 @@ export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
 
 export type Vec = { x: number; y: number };
 
+// Ramp wedge footprint (also used by the client renderer). Kept in types.ts so
+// the browser bundle never has to import shared/game.ts (which pulls in the
+// Rapier WASM physics engine, server/test side only).
+export const RAMP_HALF_LEN = 60;
+export const RAMP_HALF_WIDTH = 34;
+
 export const BUMPER_RADIUS = 36;
 export const BIG_BUMPER_RADIUS = 52;
 export const BUMPERS: readonly Vec[] = [

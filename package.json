@@ -12,11 +12,14 @@
     "betabots": "node scripts/betabots-match.mjs",
     "multiplayer-smoke": "node scripts/multiplayer-smoke.mjs",
     "smoke": "node scripts/stage1-smoke.mjs",
+    "render-check": "node scripts/stage2-render-check.mjs",
+    "box-check": "node scripts/box-control-check.mjs",
     "test:watch": "vitest",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@dimforge/rapier2d-deterministic-compat": "^0.19.3",
     "@types/three": "^0.185.0",
     "@vitejs/plugin-react": "latest",
     "compression": "latest",

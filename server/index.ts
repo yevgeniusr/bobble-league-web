@@ -8,6 +8,7 @@ import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { freePhysics } from '../shared/physics';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -140,8 +141,10 @@ io.on('connection', socket => {
     room.lastActiveAt = Date.now();
   });
 
-  socket.on('game:start', () => { const room = currentRoom(socket); if (room) startGame(room.state); });
-  socket.on('game:reset', mode => { const room = currentRoom(socket); if (room && GAME_MODES.includes(mode)) resetGame(room.state, mode); });
+  // freePhysics at match boundaries: the next resolving tick rebuilds a
+  // pristine Rapier world, so no contact/solver state carries across matches.
+  socket.on('game:start', () => { const room = currentRoom(socket); if (room) { freePhysics(room.state); startGame(room.state); } });
+  socket.on('game:reset', mode => { const room = currentRoom(socket); if (room && GAME_MODES.includes(mode)) { freePhysics(room.state); resetGame(room.state, mode); } });
   socket.on('disconnect', () => { const room = currentRoom(socket); if (room) removePlayer(room.state, socket.id); });
 });
 
@@ -167,7 +170,10 @@ setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
     stepGame(room.state, room.inputs, now);
-    if (now - room.lastActiveAt > 1000 * 60 * 60 && Object.values(room.state.players).every(p => !p.connected)) rooms.delete(code);
+    if (now - room.lastActiveAt > 1000 * 60 * 60 && Object.values(room.state.players).every(p => !p.connected)) {
+      freePhysics(room.state); // release the room's Rapier world (WASM memory)
+      rooms.delete(code);
+    }
   }
   // per-socket emits so each viewer only ever receives their own team's
   // inventory details; opponents just get box counts

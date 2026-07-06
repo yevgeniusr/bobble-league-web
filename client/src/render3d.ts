@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from '../../shared/game';
-import { ActiveEffect, BIG_BUMPER_RADIUS, BOX_TYPES, BUMPER_RADIUS, BUMPERS, FIELD, FieldObjectType, GameState, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec } from '../../shared/types';
+import { ActiveEffect, BIG_BUMPER_RADIUS, BOX_TYPES, BUMPER_RADIUS, BUMPERS, FIELD, FieldObjectType, GameState, RAMP_HALF_LEN, RAMP_HALF_WIDTH, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec } from '../../shared/types';
 
 export type WorldXZ = { x: number; z: number };
 export type PlacingGhost = { type: FieldObjectType; pos: Vec; angle: number };

@@ -32,10 +32,19 @@ try {
   }
   if (!healthy) throw new Error('Server did not become healthy on ' + url);
   console.log(`[stage1-smoke] server healthy at ${url}`);
-  await run(process.execPath, ['scripts/betabots-match.mjs'], { BABBLE_URL: url });
-  console.log('[stage1-smoke] betabots gate passed');
+  if (!process.env.SKIP_BETABOTS) {
+    await run(process.execPath, ['scripts/betabots-match.mjs'], { BABBLE_URL: url });
+    console.log('[stage1-smoke] betabots gate passed');
+  }
   await run(process.execPath, ['scripts/multiplayer-smoke.mjs'], { BABBLE_URL: url });
   console.log('[stage1-smoke] multiplayer smoke passed');
+  if (!process.env.SKIP_RENDER_CHECK) {
+    // These spawn their own servers on separate ports.
+    await run(process.execPath, ['scripts/stage2-render-check.mjs']);
+    console.log('[stage1-smoke] stage2 render check passed');
+    await run(process.execPath, ['scripts/box-control-check.mjs']);
+    console.log('[stage1-smoke] box control check passed');
+  }
   console.log('[stage1-smoke] ALL SMOKES PASSED');
 } finally {
   server.kill('SIGTERM');
