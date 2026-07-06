@@ -26,6 +26,7 @@ import {
   TurnIntent,
   Vec
 } from './types';
+import { buildAbilityUsedEvent, buildBoxPickupEvent, buildGoalScoredEvent, recordAnalyticsEvent } from './analytics';
 import { stepPhysics } from './physics';
 import { PHYSICS_CONFIG } from './physicsConfig';
 
@@ -315,8 +316,10 @@ export function collectPowerBox(state: GameState, babble: BabbleState, now = Dat
   const holder = freeHolderFor(state, babble.side, babble.id);
   if (!holder) return false;
   const [box] = state.boxes.splice(index, 1);
+  const replaced = state.powerPlayInventories[babble.side].find(i => i.holderId === holder.id);
   const item: InventoryItem = { type: box.type, availableTurn: state.turn + 1, holderId: holder.id };
   replaceHeldBox(state, babble.side, holder.id, item);
+  recordAnalyticsEvent(state, buildBoxPickupEvent(state, { box, holderId: holder.id, holderSide: babble.side, collectorBabbleId: babble.id, pickupMethod: 'babble', replacedAbilityType: replaced?.type, now }));
   // never reveal the box type in the public event feed: it is team-private
   pushEvent(state, `${holder.name} grabbed a mystery box.`);
   return true;
@@ -331,6 +334,7 @@ export function usePowerPlay(state: GameState, playerId: string, use: PowerPlayU
   if (itemIndex < 0) return false;
   inventory.splice(itemIndex, 1);
   applyPowerPlay(state, player.side, use, now);
+  recordAnalyticsEvent(state, buildAbilityUsedEvent(state, playerId, use, now));
   pushEvent(state, `${player.name} used ${BOX_TYPES[use.type].label}.`);
   return true;
 }
@@ -593,13 +597,13 @@ function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: num
 
 function collectBoxesForBabbles(state: GameState, now: number) {
   for (const babble of [...state.babbles]) collectPowerBox(state, babble, now);
-  collectPowerBoxWithBall(state);
+  collectPowerBoxWithBall(state, now);
   // Boxes expire by turn count, never by wall-clock time, so they always
   // survive the planning phase and can be collected during resolution.
   state.boxes = state.boxes.filter(box => (box.untilTurn ?? state.turn) >= state.turn);
 }
 
-function collectPowerBoxWithBall(state: GameState) {
+function collectPowerBoxWithBall(state: GameState, now: number) {
   const side = state.ball.lastTouchedBy;
   if (!side) return;
   const index = state.boxes.findIndex(box => dist(box.pos, state.ball.pos) <= state.ball.radius + FIELD.boxSize / 2);
@@ -607,7 +611,9 @@ function collectPowerBoxWithBall(state: GameState) {
   const holder = freeHolderFor(state, side);
   if (!holder) return;
   const [box] = state.boxes.splice(index, 1);
+  const replaced = state.powerPlayInventories[side].find(i => i.holderId === holder.id);
   replaceHeldBox(state, side, holder.id, { type: box.type, availableTurn: state.turn + 1, holderId: holder.id });
+  recordAnalyticsEvent(state, buildBoxPickupEvent(state, { box, holderId: holder.id, holderSide: side, pickupMethod: 'ball', replacedAbilityType: replaced?.type, now }));
   pushEvent(state, `${holder.name} grabbed a mystery box with the ball.`);
 }
 
@@ -677,6 +683,8 @@ function detectGoal(state: GameState): PlayerSide | null {
 }
 
 function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rng: Rng) {
+  const lastTouchedBy = state.ball.lastTouchedBy;
+  const ballPosition = { ...state.ball.pos };
   state.score[scorer] += 1;
   for (const p of Object.values(state.players)) if (p.side === scorer) p.score = state.score[scorer];
   pushEvent(state, `${scorer === 'left' ? 'Left' : 'Right'} scores!`);
@@ -684,8 +692,10 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
     state.phase = 'finished';
     state.winner = scorer;
     pushEvent(state, `${scorer} wins first-to-${state.mode}!`);
+    recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, ballPosition, now }));
     return;
   }
+  recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, ballPosition, now }));
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
   placeFormation(state, 'left');
   placeFormation(state, 'right');

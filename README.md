@@ -76,6 +76,45 @@ npm run build
 
 Open http://localhost:3000 in two browser windows and join the same room code.
 
+## Xtremepush analytics
+
+Set the public Xtremepush web SDK key in the server environment:
+
+```bash
+XTREMEPUSH_SDK_KEY=your-public-web-sdk-key
+```
+
+Local development also reads this value from `.env` if it is not already set in
+the process environment. The server exposes only the public web SDK key at
+`GET /api/config`; it never logs the key or requires it for gameplay. If the key
+is missing, config loading fails, or the SDK script fails to load, analytics
+events become a resilient no-op.
+
+The browser loads the Xtremepush Web SDK asynchronously from the same-origin
+`/api/xtremepush/sdk.js` route. The server fetches the configured Xtremepush CDN
+SDK and serves a no-op command queue fallback if the upstream SDK is unavailable,
+so CDN failures do not surface as gameplay or smoke-test failures. Events are
+sent with the SDK queue as `xtremepush('event', eventName, payload)`.
+
+Tracked events:
+
+- `gamePlayer`: room create/join/reconnect/leave/disconnect, match start, and
+  match reset lifecycle. Payload includes lifecycle, room code, player socket
+  id, player side/team/name, babble ids, connected/total players, phase, turn,
+  score, match mode/length, winner, timestamp, and future-compatible `mapId`.
+- `abilityUsed`: emitted only after a Power Play successfully applies. Payload
+  includes room code, player/holder id, side/team, ability type, target babble,
+  target side/team/position, placement position/angle, field object id when
+  applicable, turn, phase, score, match mode/length, winner, timestamp, and
+  `mapId`.
+- `boxPickup`: emitted when a box is assigned or replaces a held box. Payload
+  includes holder id, holder side/team, collector babble id, pickup method,
+  box id/type/anchor/position, available turn, replaced ability type, turn,
+  phase, score, match mode/length, winner, timestamp, and `mapId`.
+- `goalScored`: emitted when a goal is scored. Payload includes scoring side,
+  scoring team, conceding side, last touched side/team, ball position, updated
+  score, turn, phase, match mode/length, winner, timestamp, and `mapId`.
+
 ## Developer console (testing hooks)
 
 There is no cheat UI in the app. For testing, a developer console API is

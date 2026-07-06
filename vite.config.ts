@@ -8,6 +8,6 @@ export default defineConfig({
   // vite copies it into dist/client so /assets/... resolves in dev and production.
   publicDir: '../public',
   build: { outDir: '../dist/client', emptyOutDir: true },
-  server: { port: 5173, proxy: { '/socket.io': 'http://localhost:3000', '/healthz': 'http://localhost:3000' } },
+  server: { port: 5173, proxy: { '/socket.io': 'http://localhost:3000', '/healthz': 'http://localhost:3000', '/api': 'http://localhost:3000' } },
   test: { include: ['../tests/**/*.test.ts'], environment: 'node' }
 });
