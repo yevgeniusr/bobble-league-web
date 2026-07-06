@@ -58,9 +58,9 @@ try {
   const project = makeProjector(box);
   // default 'forward' formation, left-side babble field positions
   const babbles = [{ x: 230, y: 190 }, { x: 310, y: 270 }, { x: 310, y: 350 }, { x: 230, y: 430 }];
-  const dragLaunch = async fieldPos => {
+  const dragLaunch = async (fieldPos, pull = { x: -90, y: 60 }) => {
     const from = project(fieldPos.x, fieldPos.y);
-    const to = project(fieldPos.x - 90, fieldPos.y + 60);
+    const to = project(fieldPos.x + pull.x, fieldPos.y + pull.y);
     const el = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.className ?? 'none', [from.x, from.y]);
     console.log('dragLaunch from', Math.round(from.x), Math.round(from.y), '->', el);
     await page.mouse.move(from.x, from.y);
@@ -94,6 +94,8 @@ try {
   // 1. baseline launch registers an intent
   await dragLaunch(babbles[0]);
   const aimedBefore = await aimedCount(page, 'before');
+  await dragLaunch(babbles[0], { x: -70, y: -80 });
+  const aimedAfterReaim = await aimedCount(page, 'afterReaim');
 
   // 2. use the placeable box (Boost)
   await page.locator('.inventory button', { hasText: /Boost/ }).first().click({ force: true });
@@ -123,8 +125,8 @@ try {
   const aimedAfterGhost = await aimedCount(page, 'afterGhost');
 
   const out = {
-    ok: aimedBefore >= 1 && placingHintCleared && aimedAfterBoost > aimedBefore && targetingCleared && aimedAfterGhost > aimedAfterBoost && errors.length === 0,
-    aimedBefore, aimedAfterBoost, aimedAfterGhost, placingHintCleared, targetingCleared,
+    ok: aimedBefore >= 1 && aimedAfterReaim === aimedBefore && placingHintCleared && aimedAfterBoost > aimedAfterReaim && targetingCleared && aimedAfterGhost > aimedAfterBoost && errors.length === 0,
+    aimedBefore, aimedAfterReaim, aimedAfterBoost, aimedAfterGhost, placingHintCleared, targetingCleared,
     errors: errors.slice(0, 5)
   };
   console.log(JSON.stringify(out, null, 2));

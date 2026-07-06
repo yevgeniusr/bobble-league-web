@@ -27,6 +27,7 @@ import {
   Vec
 } from './types';
 import { stepPhysics } from './physics';
+import { PHYSICS_CONFIG } from './physicsConfig';
 
 export type Rng = () => number;
 export const blankInput: PlayerInput = { up: false, down: false, left: false, right: false, kick: false };
@@ -35,34 +36,35 @@ const TICK_MS = 1000 / 30;
 // Body integration, damping, wall/block collisions and ball/babble impacts now
 // run in Rapier 2D (see shared/physics.ts). The rule layer below keeps the
 // tabletop feel knobs: strong pull impulse and lively bumpers/pads/ramps.
-export const BABBLE_IMPULSE_SCALE = 1.22;
+export const BABBLE_IMPULSE_SCALE = PHYSICS_CONFIG.babbleImpulseScale;
 export const BOX_LIFETIME_TURNS = 3;
-export const SETTLE_SPEED = 28;
+export const SETTLE_SPEED = PHYSICS_CONFIG.settleSpeed;
 export const MAX_RESOLVE_MS = 8000;
 // BABBLE_TURN_MS is a server-side test hook (used by scripts/box-control-check.mjs,
 // where headless WebGL is too slow to finish a scripted turn in 15s). Browsers have
 // no `process`, so players always get the standard 15s turn.
 const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 15000;
-export const MAX_SPEED = 1750;
-export const BUMPER_BOOST = 340;
+const ALL_AIMED_RESOLVE_GRACE_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_ALL_AIMED_GRACE_MS)) || 3000;
+export const MAX_SPEED = PHYSICS_CONFIG.maxSpeed;
+export const BUMPER_BOOST = PHYSICS_CONFIG.bumperBoost;
 // Bumper hits are event moments: even a graze exits at a strong minimum speed.
-export const BUMPER_MIN_EXIT_BALL = 620;
-export const BUMPER_MIN_EXIT_BABBLE = 460;
+export const BUMPER_MIN_EXIT_BALL = PHYSICS_CONFIG.bumperMinExitBall;
+export const BUMPER_MIN_EXIT_BABBLE = PHYSICS_CONFIG.bumperMinExitBabble;
 // Low-speed brake: extra per-tick decay below this speed so pieces stop
 // crisply instead of gliding for seconds at a visible crawl.
-export const LOW_SPEED_BRAKE_THRESHOLD = 120;
-const LOW_SPEED_BRAKE_FACTOR = 0.88;
+export const LOW_SPEED_BRAKE_THRESHOLD = PHYSICS_CONFIG.lowSpeedBrakeThreshold;
+const LOW_SPEED_BRAKE_FACTOR = PHYSICS_CONFIG.lowSpeedBrakeFactor;
 // Big Bumpers power play: noticeably stronger corner hits plus higher restitution.
-export const BIG_BUMPER_BOOST_MULT = 2.6;
-export const BIG_BUMPER_RESTITUTION = 1.22;
+export const BIG_BUMPER_BOOST_MULT = PHYSICS_CONFIG.bigBumperBoostMult;
+export const BIG_BUMPER_RESTITUTION = PHYSICS_CONFIG.bigBumperRestitution;
 const BUMPER_EVENT_TTL_MS = 1500;
 const RAMP_EVENT_TTL_MS = 1500;
 // Boost pad acceleration (units/s^2) applied while a mover sits on the pad.
 // Tuned strong enough that crossing the pad visibly slingshots the mover.
-export const BOOST_PAD_ACCEL = 5600;
+export const BOOST_PAD_ACCEL = PHYSICS_CONFIG.boostPadAccel;
 // Ramp wedge: movers riding up the slope get redirected along the ramp
 // direction and launched off the lip at a minimum exit speed.
-export const RAMP_LAUNCH_SPEED = 940;
+export const RAMP_LAUNCH_SPEED = PHYSICS_CONFIG.rampLaunchSpeed;
 export { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from './types';
 
 export function createInitialState(roomCode: string, mode: GameMode = 3): GameState {
@@ -71,12 +73,13 @@ export function createInitialState(roomCode: string, mode: GameMode = 3): GameSt
     roomCode,
     phase: 'lobby',
     mode,
-    config: { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] },
+    config: { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, allAimedResolveGraceMs: ALL_AIMED_RESOLVE_GRACE_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] },
     winner: null,
     turn: 1,
     kickoffAt: Date.now(),
     turnDeadlineAt: Date.now() + TURN_DURATION_MS,
     resolvingStartedAt: null,
+    allIntentsReadyAt: null,
     nextBoxId: 1,
     players: {},
     sideTeams: { left: 'pigs', right: 'tigers' },
@@ -181,6 +184,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.bigBumpersUntilTurn = null;
   state.beachBallUntilTurn = null;
   state.pendingIntents = {};
+  state.allIntentsReadyAt = null;
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
@@ -193,7 +197,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
 export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.random) {
   const length = GAME_LENGTHS[mode];
   state.mode = mode;
-  state.config = { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] };
+  state.config = { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, allAimedResolveGraceMs: ALL_AIMED_RESOLVE_GRACE_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] };
   state.phase = 'lobby';
   state.formationSelectionTurn = null;
   state.winner = null;
@@ -206,6 +210,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.bigBumpersUntilTurn = null;
   state.beachBallUntilTurn = null;
   state.pendingIntents = {};
+  state.allIntentsReadyAt = null;
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
@@ -221,10 +226,11 @@ export function launchBabble(state: GameState, playerId: string, intent: TurnInt
   const player = state.players[playerId];
   if (!player || !player.connected || !player.controlledBabbleIds.includes(intent.babbleId)) return false;
   const babble = state.babbles.find(b => b.id === intent.babbleId);
-  if (!babble || babble.lastLaunchedTurn === state.turn) return false;
+  if (!babble) return false;
   const impulse = Math.max(1, Math.min(900, intent.impulse));
+  const previous = state.pendingIntents[babble.id];
   state.pendingIntents[babble.id] = { babbleId: babble.id, aimAngle: intent.aimAngle, impulse };
-  babble.lastLaunchedTurn = state.turn;
+  if (previous && (previous.aimAngle !== intent.aimAngle || previous.impulse !== impulse)) state.allIntentsReadyAt = null;
   pushEvent(state, `${player.name} aimed ${babble.id}.`);
   return true;
 }
@@ -256,7 +262,13 @@ export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> 
 
 function shouldResolveTurn(state: GameState, now: number) {
   const required = state.babbles.map(b => b.id);
-  return now >= state.turnDeadlineAt || required.every(id => Boolean(state.pendingIntents[id]));
+  const allReady = required.every(id => Boolean(state.pendingIntents[id]));
+  if (!allReady) {
+    state.allIntentsReadyAt = null;
+    return now >= state.turnDeadlineAt;
+  }
+  if (state.allIntentsReadyAt === null) state.allIntentsReadyAt = now;
+  return now >= state.turnDeadlineAt || now - state.allIntentsReadyAt >= state.config.allAimedResolveGraceMs;
 }
 
 function beginResolving(state: GameState, now: number) {
@@ -267,14 +279,16 @@ function beginResolving(state: GameState, now: number) {
     const bigHead = babble.effects.some(e => e.type === 'bigHead' && e.untilTurn >= state.turn) ? 1.3 : 1;
     babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * BABBLE_IMPULSE_SCALE;
     babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * BABBLE_IMPULSE_SCALE;
+    babble.lastLaunchedTurn = state.turn;
   }
   state.phase = 'resolving';
   state.resolvingStartedAt = now;
+  state.allIntentsReadyAt = null;
   pushEvent(state, `Turn ${state.turn} resolving with ${Object.keys(state.pendingIntents).length}/${state.babbles.length} babbleheads aimed.`);
 }
 
-// One-box-per-player rule: every box is carried by a specific player. A pickup
-// is rejected (box stays on the field) when the would-be holder is already full.
+// Every box is carried by a specific player. Picking up a new one replaces that
+// holder's previous box so control is never blocked by stale inventory.
 export function playerHoldsBox(state: GameState, playerId: string) {
   const side = state.players[playerId]?.side;
   if (!side) return false;
@@ -284,18 +298,25 @@ export function playerHoldsBox(state: GameState, playerId: string) {
 function freeHolderFor(state: GameState, side: PlayerSide, collectingBabbleId?: string): PlayerState | null {
   const teammates = Object.values(state.players).filter(p => p.side === side && p.connected);
   const controller = collectingBabbleId ? teammates.find(p => p.controlledBabbleIds.includes(collectingBabbleId)) : undefined;
-  if (controller) return playerHoldsBox(state, controller.id) ? null : controller;
-  return teammates.find(p => !playerHoldsBox(state, p.id)) ?? null;
+  if (controller) return controller;
+  return teammates.find(p => !playerHoldsBox(state, p.id)) ?? teammates[0] ?? null;
+}
+
+function replaceHeldBox(state: GameState, side: PlayerSide, holderId: string, item: InventoryItem) {
+  const inventory = state.powerPlayInventories[side];
+  const existing = inventory.findIndex(i => i.holderId === holderId);
+  if (existing >= 0) inventory.splice(existing, 1, item);
+  else inventory.push(item);
 }
 
 export function collectPowerBox(state: GameState, babble: BabbleState, now = Date.now()) {
   const index = state.boxes.findIndex(box => dist(box.pos, babble.pos) <= babble.radius + FIELD.boxSize / 2);
   if (index < 0) return false;
   const holder = freeHolderFor(state, babble.side, babble.id);
-  if (!holder) return false; // holder already carries a box: it stays on the field
+  if (!holder) return false;
   const [box] = state.boxes.splice(index, 1);
   const item: InventoryItem = { type: box.type, availableTurn: state.turn + 1, holderId: holder.id };
-  state.powerPlayInventories[babble.side].push(item);
+  replaceHeldBox(state, babble.side, holder.id, item);
   // never reveal the box type in the public event feed: it is team-private
   pushEvent(state, `${holder.name} grabbed a mystery box.`);
   return true;
@@ -584,9 +605,9 @@ function collectPowerBoxWithBall(state: GameState) {
   const index = state.boxes.findIndex(box => dist(box.pos, state.ball.pos) <= state.ball.radius + FIELD.boxSize / 2);
   if (index < 0) return;
   const holder = freeHolderFor(state, side);
-  if (!holder) return; // everyone on that side already holds a box
+  if (!holder) return;
   const [box] = state.boxes.splice(index, 1);
-  state.powerPlayInventories[side].push({ type: box.type, availableTurn: state.turn + 1, holderId: holder.id });
+  replaceHeldBox(state, side, holder.id, { type: box.type, availableTurn: state.turn + 1, holderId: holder.id });
   pushEvent(state, `${holder.name} grabbed a mystery box with the ball.`);
 }
 
@@ -683,6 +704,7 @@ function endTurn(state: GameState, now: number, rng: Rng, unlockFormation = fals
   state.formationSelectionTurn = unlockFormation ? state.turn : null;
   state.resolvingStartedAt = null;
   state.pendingIntents = {};
+  state.allIntentsReadyAt = null;
   resetForPlanning(state, rng);
   expireTurnEffects(state);
   state.turnDeadlineAt = now + state.config.turnDurationMs;

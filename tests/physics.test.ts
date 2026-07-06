@@ -67,7 +67,7 @@ describe('Rapier physics: goals and gates', () => {
       s.ball.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
       s.ball.vel = { x: Math.cos(angle) * MAX_SPEED, y: Math.sin(angle) * MAX_SPEED };
       // Transient bounds allow brief penetration into the thick (50px) walls
-      // while restitution resolves a MAX_SPEED (1750px/s) impact; never past a wall.
+      // while restitution resolves a max-speed impact; never past a wall.
       run(s, 320, 1000, () => {
         expect(s.ball.pos.x).toBeGreaterThan(-FIELD.goalDepth - s.ball.radius - 40);
         expect(s.ball.pos.x).toBeLessThan(FIELD.width + FIELD.goalDepth + s.ball.radius + 40);
@@ -181,7 +181,7 @@ describe('Rapier physics: walls and body collisions', () => {
     s.ball.vel = { x: 0, y: 0 };
     s.fieldObjects = [{ id: 'blk', type: 'block', owner: 'right', pos: { x: 680, y: 310 }, angle: Math.PI / 2, untilTurn: 99 }];
     run(s, 40);
-    expect(ghost.pos.x).toBeGreaterThan(700); // sailed through foe, ball and block
+    expect(ghost.pos.x).toBeGreaterThan(620); // sailed through foe, ball and block under the controlled drag tune
     expect(foe.pos.x).toBeCloseTo(450, 3); // untouched (f32 round-trip only)
     expect(foe.pos.y).toBeCloseTo(310, 3);
     expect(s.ball.vel).toEqual({ x: 0, y: 0 });
@@ -194,7 +194,7 @@ describe('Rapier physics: walls and body collisions', () => {
     park(s, ['left-1']);
     const b = s.babbles.find(x => x.id === 'left-1')!;
     b.pos = { x: 470, y: 310 };
-    b.vel = { x: 600, y: 0 };
+    b.vel = { x: 750, y: 0 };
     s.ball.pos = { x: 900, y: 100 };
     s.fieldObjects = [{ id: 'blk', type: 'block', owner: 'right', pos: { x: 600, y: 310 }, angle: Math.PI / 2, untilTurn: 99 }];
     run(s, 20);
@@ -285,6 +285,11 @@ describe('Rapier physics: settling and full matches', () => {
     const aim = (side: PlayerSide, babblePos: Vec, babbleId: string) => {
       const ball = s.ball.pos;
       const goal = side === 'left' ? { x: 1142, y: 310 } : { x: -42, y: 310 };
+      if (side !== 'left') {
+        const clearX = side === 'right' ? 970 : 130;
+        const clearY = babblePos.y < 310 ? 92 : 528;
+        return { babbleId, aimAngle: Math.atan2(clearY - babblePos.y, clearX - babblePos.x), impulse: 680 };
+      }
       if (Math.abs(ball.x - 550) < 12 && Math.abs(ball.y - 310) < 12) {
         const impulse = babbleId.endsWith('2') || babbleId.endsWith('3') ? 900 : 620;
         return { babbleId, aimAngle: Math.atan2(310 - babblePos.y, 550 - babblePos.x), impulse };

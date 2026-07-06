@@ -272,33 +272,72 @@ export class BabbleLeague3DRenderer {
     // dedicated tintable materials so Swap Goals can visibly recolor the gates
     const frameTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.32, metalness: 0.06 });
     const mouthTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.55, metalness: 0.03, transparent: true, opacity: 0.5 });
-    const panelTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.62, metalness: 0.03 });
+    const panelTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.62, metalness: 0.03, transparent: true, opacity: 0.82 });
     this.goalTint[key].push(frameTint, mouthTint, panelTint);
     this.matCache.set(`goalFrame:${key}`, frameTint);
     this.matCache.set(`goalMouth:${key}`, mouthTint);
     this.matCache.set(`goalPanel:${key}`, panelTint);
     const cream = this.mat(0xfff3be, 0.35);
-    // chunky posts with cream collars and finials
+    // Curved vertical hoop in the goal-mouth plane. It reads as the red/pink
+    // arcade goal loop from the reference without copying any asset.
+    const hoop = new THREE.Mesh(
+      this.geo('goalHoop', () => new THREE.TorusGeometry(1, 0.095, 12, 72)),
+      frameTint
+    );
+    hoop.position.set(x, 1.95, 0);
+    hoop.rotation.y = Math.PI / 2;
+    hoop.scale.set(halfGoal, 1.02, 1);
+    hoop.castShadow = true;
+    g.add(hoop);
+    // Extra front lip gives the hoop a rounded plastic-tube look.
+    const innerGlow = new THREE.Mesh(
+      this.geo('goalHoopGlow', () => new THREE.TorusGeometry(1, 0.035, 8, 72)),
+      new THREE.MeshBasicMaterial({ color: 0xfff3be, transparent: true, opacity: 0.55 })
+    );
+    innerGlow.position.set(x - side * 0.04, 1.95, 0);
+    innerGlow.rotation.y = Math.PI / 2;
+    innerGlow.scale.set(halfGoal * 0.96, 0.98, 1);
+    g.add(innerGlow);
+    // chunky posts with cream collars and finials aligned to the hoop edges
     for (const s of [-1, 1] as const) {
       this.mesh(g, new THREE.CylinderGeometry(0.17, 0.23, 1.9, 20), frameTint, x, 1.78, s * halfGoal, true);
       this.mesh(g, new THREE.CylinderGeometry(0.3, 0.34, 0.2, 20), cream, x, 0.98, s * halfGoal, true);
       this.mesh(g, new THREE.SphereGeometry(0.24, 20, 12), cream, x, 2.82, s * halfGoal, true);
     }
-    // crossbar
+    // crossbar and rear support hoop make a visible net pocket.
     const bar = new THREE.Mesh(this.geo(`goalBar${halfGoal.toFixed(2)}`, () => new THREE.CylinderGeometry(0.14, 0.14, halfGoal * 2, 16)), frameTint);
     bar.position.set(x, 2.62, 0); bar.rotation.x = Math.PI / 2; bar.castShadow = true; g.add(bar);
-    // solid coloured back wall + side cheeks close the pocket so the gate reads as a real box
-    this.mesh(g, new THREE.BoxGeometry(0.18, 1.7, halfGoal * 2 + 0.34), panelTint, x + side * 0.95, 1.6, 0, true);
-    for (const s of [-1, 1] as const) this.mesh(g, new THREE.BoxGeometry(1.0, 1.15, 0.15), panelTint, x + side * 0.5, 1.42, s * (halfGoal + 0.09), true);
-    // sloped canopy roof in the gate colour
-    const roof = this.mesh(g, new THREE.BoxGeometry(1.2, 0.12, halfGoal * 2 + 0.34), panelTint, x + side * 0.52, 2.52, 0, true);
-    roof.rotation.z = side * 0.32;
-    // net: translucent wireframe box sunk into the goal mouth
-    const net = new THREE.Mesh(
-      this.geo(`net${halfGoal.toFixed(2)}`, () => new THREE.BoxGeometry(0.8, 1.35, halfGoal * 2 - 0.2, 3, 4, 8)),
-      new THREE.MeshBasicMaterial({ color: 0xfff8e6, wireframe: true, transparent: true, opacity: 0.45 })
-    );
-    net.position.set(x + side * 0.55, 1.7, 0); g.add(net);
+    const rearHoop = new THREE.Mesh(this.geo('goalRearHoop', () => new THREE.TorusGeometry(1, 0.055, 8, 56)), panelTint);
+    rearHoop.position.set(x + side * 0.92, 1.78, 0);
+    rearHoop.rotation.y = Math.PI / 2;
+    rearHoop.scale.set(halfGoal * 0.9, 0.78, 1);
+    rearHoop.castShadow = true;
+    g.add(rearHoop);
+    for (const s of [-1, 1] as const) {
+      const rail = new THREE.Mesh(this.geo('goalSideRail', () => new THREE.CylinderGeometry(0.065, 0.065, 1.05, 12)), frameTint);
+      rail.position.set(x + side * 0.45, 2.45, s * (halfGoal * 0.88));
+      rail.rotation.z = Math.PI / 2;
+      rail.castShadow = true;
+      g.add(rail);
+    }
+    // translucent net ribs behind the hoop; all render-only and safely outside
+    // the physics mouth strips/back wall.
+    for (let i = -3; i <= 3; i++) {
+      const z = (i / 3) * halfGoal * 0.82;
+      const rib = new THREE.Mesh(this.geo('goalNetRib', () => new THREE.CylinderGeometry(0.025, 0.025, 1.25, 8)), cream);
+      rib.position.set(x + side * 0.55, 1.76, z);
+      rib.rotation.z = Math.PI / 2;
+      rib.scale.y = 0.9 + (1 - Math.abs(i) / 3) * 0.18;
+      rib.castShadow = false;
+      g.add(rib);
+    }
+    for (const y of [1.25, 1.62, 1.99, 2.36]) {
+      const cord = new THREE.Mesh(this.geo('goalNetCord', () => new THREE.CylinderGeometry(0.022, 0.022, halfGoal * 1.7, 8)), cream);
+      cord.position.set(x + side * 0.68, y, 0);
+      cord.rotation.x = Math.PI / 2;
+      cord.castShadow = false;
+      g.add(cord);
+    }
     // glowing goal mouth strip on the turf plus inward chevrons marking the trigger line
     const mouth = this.mesh(g, new THREE.BoxGeometry(1.0, 0.04, halfGoal * 2), mouthTint, x - side * 0.15, TURF_Y + 0.02, 0);
     mouth.receiveShadow = false;
@@ -337,9 +376,17 @@ export class BabbleLeague3DRenderer {
 
   private addBumper(x: number, z: number) {
     const g = this.board;
-    this.mesh(g, new THREE.CylinderGeometry(0.74, 0.82, 0.28, 40), this.mat(0x8f3644, 0.5), x, 1.16, z, true);
-    this.mesh(g, new THREE.CylinderGeometry(0.66, 0.7, 0.42, 40), this.mat(0xc94d5b, 0.4), x, 1.48, z, true);
-    this.mesh(g, new THREE.CylinderGeometry(0.7, 0.7, 0.1, 40), this.mat(0xf4d3b0, 0.35), x, 1.72, z, true);
+    const sx = Math.sign(x) || 1;
+    const sz = Math.sign(z) || 1;
+    // Corner socket integrated into the raised rim, so the bumper reads as
+    // part of the board corner rather than a loose cylinder on turf.
+    this.mesh(g, new THREE.BoxGeometry(1.55, 0.2, 1.0), this.mat(0xffe08a, 0.42), x + sx * 0.28, 1.09, z, true);
+    this.mesh(g, new THREE.BoxGeometry(1.0, 0.2, 1.55), this.mat(0xffe08a, 0.42), x, 1.09, z + sz * 0.28, true);
+    const socket = this.mesh(g, new THREE.CylinderGeometry(0.98, 1.1, 0.18, 44), this.mat(0x9b5144, 0.55), x, 1.12, z, true);
+    socket.scale.set(1.06, 1, 1.06);
+    this.mesh(g, new THREE.CylinderGeometry(0.74, 0.82, 0.28, 44), this.mat(0x8f3644, 0.5), x, 1.24, z, true);
+    this.mesh(g, new THREE.CylinderGeometry(0.66, 0.7, 0.42, 44), this.mat(0xc94d5b, 0.4), x, 1.56, z, true);
+    this.mesh(g, new THREE.CylinderGeometry(0.7, 0.7, 0.1, 44), this.mat(0xf4d3b0, 0.35), x, 1.8, z, true);
     this.mesh(g, new THREE.SphereGeometry(0.34, 28, 16), this.mat(0xffe08a, 0.3, { emissive: 0x694312 }), x, 1.9, z, true);
   }
 
@@ -777,59 +824,12 @@ export class BabbleLeague3DRenderer {
 
   // -- HUD ---------------------------------------------------------------
   private buildHud(state: GameState) {
-    const left = Object.values(state.players).find(p => p.side === 'left');
-    const right = Object.values(state.players).find(p => p.side === 'right');
-    const board = this.scorePanel(state.score.left, state.score.right, state.turn, state.config.maxTurns, TEAMS[left?.team ?? 'pigs'].emoji, TEAMS[right?.team ?? 'snow'].emoji);
-    board.position.set(0, 4.6, -FIELD_Z / 2 - 1.4);
-    this.dynamic.add(board);
-    const logo = this.text('BABBLE\nLEAGUE', 52, '#ffd94f');
-    logo.position.set(FIELD_X / 2 - 1.3, 4.4, -FIELD_Z / 2 - 1.2);
-    logo.scale.multiplyScalar(0.85);
-    this.dynamic.add(logo);
+    // The live score/turn HUD is DOM-only so it remains sharp, accessible and
+    // never competes with a second in-scene TURN panel.
     if (state.phase === 'finished' && state.winner) {
       const banner = this.text(`${state.winner === 'left' ? 'LEFT' : 'RIGHT'} WINS!`, 58, '#ffe86a');
       banner.position.set(0, 3.2, 0); banner.scale.multiplyScalar(1.6); this.dynamic.add(banner);
     }
-  }
-
-  private scorePanel(l: number, r: number, turn: number, maxTurns: number, le: string, re: string) {
-    const key = `panel:${l}:${r}:${turn}:${maxTurns}:${le}${re}`;
-    let tex = this.textCache.get(key);
-    if (!tex) {
-      const c = document.createElement('canvas'); c.width = 640; c.height = 224;
-      const g = c.getContext('2d')!;
-      // chunky rounded slab
-      g.fillStyle = 'rgba(60,26,22,.92)';
-      this.roundRect(g, 10, 14, 620, 150, 34); g.fill();
-      g.strokeStyle = '#ffd94f'; g.lineWidth = 8;
-      this.roundRect(g, 10, 14, 620, 150, 34); g.stroke();
-      g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = '900 64px Fredoka, Arial';
-      g.fillStyle = '#fff8cf';
-      g.fillText(le, 110, 88);
-      g.fillText(re, 530, 88);
-      g.font = '900 84px Fredoka, Arial';
-      g.strokeStyle = 'rgba(20,8,6,.8)'; g.lineWidth = 8;
-      g.strokeText(`${l}`, 220, 90); g.fillText(`${l}`, 220, 90);
-      g.strokeText(`${r}`, 420, 90); g.fillText(`${r}`, 420, 90);
-      g.fillStyle = '#ffd94f'; g.font = '900 44px Fredoka, Arial';
-      g.fillText('–', 320, 84);
-      g.font = '800 34px Fredoka, Arial'; g.fillStyle = '#ffe9a8';
-      g.fillText(`TURN ${turn} / ${maxTurns}`, 320, 196);
-      tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
-      this.textCache.set(key, tex);
-    }
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
-    sp.scale.set(6.4, 2.24, 1);
-    return sp;
-  }
-
-  private roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-    g.beginPath();
-    g.moveTo(x + r, y);
-    g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
-    g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r);
-    g.closePath();
   }
 
   private turfTexture() {

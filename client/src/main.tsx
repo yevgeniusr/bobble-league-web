@@ -83,15 +83,22 @@ function App() {
 
   return <main>
     {!state && <section className="panel hero">
+      <div className="heroGlow one" aria-hidden="true"/>
+      <div className="heroGlow two" aria-hidden="true"/>
+      <div className="starSprinkle" aria-hidden="true"><span/><span/><span/><span/><span/></div>
       <div className="heroLeft">
         <p className="eyebrow">arcade tabletop soccer</p>
         <h1>Babble<br/>League</h1>
-        <p className="sub">Drag-launch your babbleheads, smash corner bumpers, and grab mystery Power Plays in turn-based arcade soccer.</p>
-        <ArenaPreview/>
+        <p className="sub">Drag-launch cute babbleheads through a candy-bright arena, bank off corner bumpers, and steal the match with mystery Power Plays.</p>
+        <div className="showcase">
+          <AnimeCatMascot/>
+          <ArenaPreview/>
+        </div>
         <div className="powerTiles">{POWER_PREVIEW.map(t=><div key={t} className="powerTile" style={{background: BOX_TYPES[t].color}} title={BOX_TYPES[t].description}><span className="powerIcon">{POWER_ICONS[t] ?? '★'}</span>{BOX_TYPES[t].label}</div>)}</div>
       </div>
       <div className="heroRight">
         <section className="lobbyCard">
+          <div className="cardRibbon">meow match desk</div>
           <h2>Create or join</h2>
           <label>Your name <input value={name} onChange={e=>setName(e.target.value)} maxLength={18}/></label>
           <p className="fieldLabel">Pick mascots after joining the room with your team</p>
@@ -116,6 +123,23 @@ function App() {
     {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} error={error} onDismissError={()=>setError('')} onLeave={()=>{ socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
   </main>;
+}
+
+function AnimeCatMascot() {
+  return <div className="catMascot" aria-hidden="true">
+    <div className="catTail"/>
+    <div className="catBody">
+      <div className="catScarf"/>
+      <div className="catFace">
+        <div className="catEar left"/><div className="catEar right"/>
+        <div className="catEye left"/><div className="catEye right"/>
+        <div className="catBlush left"/><div className="catBlush right"/>
+        <div className="catMouth"/>
+      </div>
+      <div className="catPaw left"/><div className="catPaw right"/>
+    </div>
+    <div className="catBall"/>
+  </div>;
 }
 
 const POWER_PREVIEW: readonly BoxType[] = ['beachBall', 'bigBumpers', 'boost', 'stickyGoo', 'ghosted', 'swapGoals'];

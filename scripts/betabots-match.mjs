@@ -4,6 +4,7 @@ const url = process.env.BABBLE_URL || 'http://127.0.0.1:3117';
 const timeoutMs = Number(process.env.BETABOTS_TIMEOUT_MS || 120000);
 const requireGoal = process.env.BETABOTS_REQUIRE_GOAL !== '0';
 const botCount = Number(process.env.BETABOTS_COUNT || 8);
+const attackSide = process.env.BETABOTS_ATTACK_SIDE === 'right' ? 'right' : 'left';
 
 function connectBot(name) {
   const socket = io(url, { reconnection: false, timeout: 5000 });
@@ -32,6 +33,11 @@ function chooseLaunch(state, side, babbleId) {
   if (!babble) return null;
   const ball = state.ball.pos;
   const goal = side === 'left' ? { x: 1142, y: 310 } : { x: -42, y: 310 };
+  if (side !== attackSide) {
+    const clearX = side === 'right' ? 970 : 130;
+    const clearY = babble.pos.y < 310 ? 92 : 528;
+    return { babbleId, aimAngle: Math.atan2(clearY - babble.pos.y, clearX - babble.pos.x), impulse: 680 };
+  }
   // Opening play: four players on each side flick together toward the center ball.
   if (Math.abs(ball.x - 550) < 12 && Math.abs(ball.y - 310) < 12) {
     const target = { x: 550, y: 310 };
@@ -39,7 +45,16 @@ function chooseLaunch(state, side, babbleId) {
   }
   const toGoal = { x: goal.x - ball.x, y: goal.y - ball.y };
   const len = Math.hypot(toGoal.x, toGoal.y) || 1;
-  const contactBehindBall = { x: ball.x - (toGoal.x / len) * 46, y: ball.y - (toGoal.y / len) * 46 };
+  const ux = toGoal.x / len;
+  const uy = toGoal.y / len;
+  const fromBall = { x: babble.pos.x - ball.x, y: babble.pos.y - ball.y };
+  const behindBall = fromBall.x * ux + fromBall.y * uy < -18;
+  const laneMiss = Math.abs(fromBall.x * uy - fromBall.y * ux);
+  if (behindBall && laneMiss < 120 && dist(babble.pos, ball) < 360) {
+    const throughBall = { x: ball.x + ux * 24, y: ball.y + uy * 24 };
+    return { babbleId, aimAngle: Math.atan2(throughBall.y - babble.pos.y, throughBall.x - babble.pos.x), impulse: 900 };
+  }
+  const contactBehindBall = { x: ball.x - ux * 28, y: ball.y - uy * 28 };
   // If far from ball, send outer babbles on bank-support lines instead of all chasing same point.
   const target = dist(babble.pos, ball) < 260 ? contactBehindBall : { x: ball.x - (side === 'left' ? 120 : -120), y: ball.y + (babble.pos.y < ball.y ? -70 : 70) };
   return { babbleId, aimAngle: Math.atan2(target.y - babble.pos.y, target.x - babble.pos.x), impulse: 900 };

@@ -127,6 +127,7 @@ export type MatchConfig = {
   length: GameLength;
   maxTurns: 30 | 90 | 150;
   turnDurationMs: number;
+  allAimedResolveGraceMs: number;
   boxSpawnEveryTurns: 2;
   boxSpawnAnchors: BoxAnchor[];
 };
@@ -141,6 +142,7 @@ export type GameState = {
   kickoffAt: number;
   turnDeadlineAt: number;
   resolvingStartedAt: number | null;
+  allIntentsReadyAt: number | null;
   nextBoxId: number;
   players: Record<string, PlayerState>;
   sideTeams: Record<PlayerSide, TeamId>;

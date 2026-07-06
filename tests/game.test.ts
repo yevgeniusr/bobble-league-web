@@ -60,15 +60,63 @@ describe('classic Babble League shared rules', () => {
     for (const id of ['left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 1 }, 1000);
     for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
     stepGame(s, {}, 1000, seq([0.1, 0.2, 0.3]));
+    expect(s.phase).toBe('planning');
+    expect(s.allIntentsReadyAt).toBe(1000);
+    stepGame(s, {}, 1000 + s.config.allAimedResolveGraceMs - 1, seq([0.1, 0.2, 0.3]));
+    expect(s.phase).toBe('planning');
+    stepGame(s, {}, 1000 + s.config.allAimedResolveGraceMs, seq([0.1, 0.2, 0.3]));
     expect(s.phase).toBe('resolving');
 
-    for (let i = 0; i < 400 && s.phase === 'resolving'; i++) stepGame(s, {}, 1000 + i * 33, seq([0.1, 0.2, 0.3]));
+    for (let i = 0; i < 400 && s.phase === 'resolving'; i++) stepGame(s, {}, 1000 + s.config.allAimedResolveGraceMs + i * 33, seq([0.1, 0.2, 0.3]));
 
     expect(s.phase).toBe('planning');
     expect(s.turn).toBe(2);
     expect(Object.keys(s.pendingIntents)).toHaveLength(0);
     expect(s.boxes).toHaveLength(1);
     expect(['topMid', 'bottomMid']).toContain(s.boxes[0].anchor);
+  });
+
+  it('lets players replace a pending aim intent before resolution', () => {
+    const s = createInitialState('REAIM', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(launchBabble(s, 'l', { babbleId: 'left-1', aimAngle: 0, impulse: 250 }, 1000)).toBe(true);
+    expect(launchBabble(s, 'l', { babbleId: 'left-1', aimAngle: Math.PI / 2, impulse: 700 }, 1200)).toBe(true);
+
+    expect(Object.keys(s.pendingIntents)).toEqual(['left-1']);
+    expect(s.pendingIntents['left-1']).toMatchObject({ aimAngle: Math.PI / 2, impulse: 700 });
+    expect(s.babbles.find(b => b.id === 'left-1')?.lastLaunchedTurn).toBe(0);
+  });
+
+  it('keeps planning open during all-aimed grace and launches the replacement aim', () => {
+    const s = createInitialState('REAIM-GRACE', 1);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 100 }, 1000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: Math.PI, impulse: 100 }, 1000);
+    stepGame(s, {}, 1000, seq([0.5]));
+
+    expect(s.phase).toBe('planning');
+    expect(s.allIntentsReadyAt).toBe(1000);
+    expect(Object.keys(s.pendingIntents)).toHaveLength(8);
+
+    expect(launchBabble(s, 'l', { babbleId: 'left-1', aimAngle: Math.PI / 2, impulse: 700 }, 1200)).toBe(true);
+    expect(Object.keys(s.pendingIntents)).toHaveLength(8);
+    expect(s.pendingIntents['left-1']).toMatchObject({ aimAngle: Math.PI / 2, impulse: 700 });
+    expect(s.allIntentsReadyAt).toBeNull();
+
+    stepGame(s, {}, 1200, seq([0.5]));
+    expect(s.phase).toBe('planning');
+    expect(s.allIntentsReadyAt).toBe(1200);
+    stepGame(s, {}, 1200 + s.config.allAimedResolveGraceMs - 1, seq([0.5]));
+    expect(s.phase).toBe('planning');
+    stepGame(s, {}, 1200 + s.config.allAimedResolveGraceMs, seq([0.5]));
+    expect(s.phase).toBe('resolving');
+    expect(s.babbles.find(b => b.id === 'left-1')?.vel.y).toBeGreaterThan(0);
   });
 
   it('tracks scrimmage, qualifier, and champion turn limits', () => {
@@ -225,8 +273,10 @@ describe('classic Babble League shared rules', () => {
     for (let i = 1; i <= 4; i++) launchBabble(s, `l${i - 1}`, { babbleId: `left-${i}`, aimAngle: 0, impulse: 50 }, 1000);
     for (let i = 1; i <= 4; i++) launchBabble(s, `r${i - 1}`, { babbleId: `right-${i}`, aimAngle: Math.PI, impulse: 50 }, 1000);
     stepGame(s, {}, 1000, seq([0.5]));
-    expect(s.phase).toBe('resolving');
+    expect(s.phase).toBe('planning');
     expect(Object.keys(s.pendingIntents)).toHaveLength(8);
+    stepGame(s, {}, 1000 + s.config.allAimedResolveGraceMs, seq([0.5]));
+    expect(s.phase).toBe('resolving');
   });
 
   it('resets ball and formations to kickoff after a non-winning goal', () => {
@@ -277,8 +327,8 @@ describe('classic Babble League shared rules', () => {
   });
 
   it('bumpers guarantee a strong minimum exit speed even on weak grazes', () => {
-    expect(BUMPER_MIN_EXIT_BALL).toBeGreaterThanOrEqual(600);
-    expect(BUMPER_MIN_EXIT_BABBLE).toBeGreaterThanOrEqual(400);
+    expect(BUMPER_MIN_EXIT_BALL).toBeGreaterThanOrEqual(400);
+    expect(BUMPER_MIN_EXIT_BABBLE).toBeGreaterThanOrEqual(300);
     const s = createInitialState('MINEXIT', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
@@ -425,8 +475,8 @@ describe('classic Babble League shared rules', () => {
     expect(s.ball.pos.x).toBeGreaterThan(610); // pushed out past the lip
   });
 
-  it('boost pads give a strong, noticeable acceleration', () => {
-    expect(BOOST_PAD_ACCEL).toBeGreaterThanOrEqual(2000);
+  it('boost pads give a controlled but noticeable acceleration', () => {
+    expect(BOOST_PAD_ACCEL).toBeGreaterThanOrEqual(2800);
     const s = createInitialState('BOOSTP', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
@@ -437,11 +487,11 @@ describe('classic Babble League shared rules', () => {
     s.ball.pos = { x: 470, y: 310 };
     s.ball.vel = { x: 50, y: 0 };
     stepGame(s, {}, 1033, seq([0.5]));
-    expect(s.ball.vel.x).toBeGreaterThan(110); // more than doubled in one tick
+    expect(s.ball.vel.x).toBeGreaterThan(80); // visibly accelerated in one tick
   });
 
   it('big bumpers hit far harder than normal bumpers', () => {
-    expect(BIG_BUMPER_BOOST_MULT).toBeGreaterThanOrEqual(2.5);
+    expect(BIG_BUMPER_BOOST_MULT).toBeGreaterThanOrEqual(2);
     const run = (big: boolean) => {
       const s = createInitialState('BIGHIT', 3);
       addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
@@ -458,7 +508,7 @@ describe('classic Babble League shared rules', () => {
     const normal = run(false);
     const big = run(true);
     expect(normal).toBeGreaterThan(0);
-    expect(big).toBeGreaterThan(normal + 150);
+    expect(big).toBeGreaterThan(normal + 80);
   });
 
   it('accumulates authoritative ball spin matching travelled distance over radius', () => {
@@ -590,21 +640,21 @@ describe('goal mouth scoring is airtight', () => {
 });
 
 describe('one box per player (server-enforced)', () => {
-  it('rejects a pickup when the controlling player already holds a box, leaving it on the field', () => {
-    const s = createInitialState('ONEBOX', 3);
+  it('replaces the controlling player held box on pickup', () => {
+    const s = createInitialState('REBOX', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
     s.powerPlayInventories.left.push({ type: 'boost', availableTurn: 1, holderId: 'l' });
     s.boxes = [{ id: 'box-1', type: 'bigHead', anchor: 'topMid', pos: { ...s.babbles[0].pos }, spawnedAt: 1000 }];
 
-    expect(collectPowerBox(s, s.babbles[0], 1000)).toBe(false);
+    expect(collectPowerBox(s, s.babbles[0], 1000)).toBe(true);
 
-    expect(s.boxes).toHaveLength(1);
-    expect(s.powerPlayInventories.left).toHaveLength(1);
+    expect(s.boxes).toHaveLength(0);
+    expect(s.powerPlayInventories.left).toEqual([{ type: 'bigHead', availableTurn: 2, holderId: 'l' }]);
   });
 
-  it('lets each teammate hold exactly one box', () => {
+  it('keeps one visible box per teammate by replacing an existing holder item', () => {
     const s = createInitialState('ONEBOX2', 3);
     addPlayer(s, 'l1', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'l2', 'Left Two', 'pigs', 'left');
@@ -621,8 +671,12 @@ describe('one box per player (server-enforced)', () => {
     expect(s.powerPlayInventories.left).toHaveLength(2);
 
     s.boxes = [{ id: 'box-3', type: 'swapGoals', anchor: 'topMid', pos: { ...babbleOf('l1').pos }, spawnedAt: 1200 }];
-    expect(collectPowerBox(s, babbleOf('l1'), 1200)).toBe(false); // l1 is already full
-    expect(s.boxes).toHaveLength(1);
+    expect(collectPowerBox(s, babbleOf('l1'), 1200)).toBe(true);
+    expect(s.boxes).toHaveLength(0);
+    expect(s.powerPlayInventories.left).toEqual([
+      { type: 'swapGoals', availableTurn: 2, holderId: 'l1' },
+      { type: 'ghosted', availableTurn: 2, holderId: 'l2' }
+    ]);
   });
 
   it('assigns ball pickups to a teammate with a free slot and never reveals the type publicly', () => {
@@ -644,6 +698,33 @@ describe('one box per player (server-enforced)', () => {
     expect(s.powerPlayInventories.left).toContainEqual({ type: 'bigHead', availableTurn: 2, holderId: 'l2' });
     expect(s.events.some(e => /grabbed a mystery box/.test(e.message))).toBe(true);
     expect(s.events.some(e => /Big Head/.test(e.message))).toBe(false); // type stays team-private
+  });
+
+  it('ball pickups replace a held box when no teammate has a free slot', () => {
+    const s = createInitialState('BALLREPLACE', 3);
+    addPlayer(s, 'l1', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'l2', 'Left Two', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.turn = 2; // avoid the automatic even-turn spawn obscuring pickup assertions
+    s.powerPlayInventories.left.push(
+      { type: 'boost', availableTurn: 1, holderId: 'l1' },
+      { type: 'ghosted', availableTurn: 1, holderId: 'l2' }
+    );
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.ball.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
+    s.ball.vel = { x: 0, y: 0 };
+    s.ball.lastTouchedBy = 'left';
+    s.boxes = [{ id: 'ball-box', type: 'bigHead', anchor: 'topMid', pos: { ...s.ball.pos }, spawnedAt: 1000, untilTurn: s.turn + 2 }];
+
+    stepGame(s, {}, 1033, seq([0.5]));
+
+    expect(s.boxes).toHaveLength(0);
+    expect(s.powerPlayInventories.left).toEqual([
+      { type: 'bigHead', availableTurn: 3, holderId: 'l1' },
+      { type: 'ghosted', availableTurn: 1, holderId: 'l2' }
+    ]);
   });
 
   it('only the holding player can spend a held power play', () => {
@@ -720,8 +801,8 @@ describe('ramp launch events', () => {
   });
 
   it('boost pads are launch-day strong', () => {
-    expect(BOOST_PAD_ACCEL).toBeGreaterThanOrEqual(4000);
-    expect(RAMP_LAUNCH_SPEED).toBeGreaterThanOrEqual(700);
+    expect(BOOST_PAD_ACCEL).toBeGreaterThanOrEqual(2800);
+    expect(RAMP_LAUNCH_SPEED).toBeGreaterThanOrEqual(550);
   });
 });
 

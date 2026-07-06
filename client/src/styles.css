@@ -46,3 +46,65 @@
 .barRight small{color:#fff8cf;font-weight:700;max-width:300px;text-align:right}
 .barRight button{padding:6px 10px;font-size:.7rem;border-width:3px;box-shadow:0 3px 0 #9b5144}
 @media(max-width:900px){.matchStatus small{white-space:normal}.actionBarRow{grid-template-columns:1fr;gap:6px}.barLeft,.barRight{justify-content:center}.topHud{grid-template-columns:1fr;justify-items:center}}
+
+/* 2026 anime/cat menu polish and single-source match HUD refinements. */
+body{background:linear-gradient(135deg,#ffe2cf 0%,#ffd6ea 28%,#bceffd 64%,#fff7c6 100%)}
+.hero{isolation:isolate;background:linear-gradient(135deg,#ffe4c8 0%,#ffd0dc 38%,#bdefff 78%,#fff2a8 100%);grid-template-columns:minmax(420px,.96fr) minmax(500px,1.04fr);gap:34px}
+.hero:before{inset:8% 48% auto -8%;height:54%;background:linear-gradient(135deg,#fff9d8,#ffb6ce 58%,#8be9ef);border:0;border-radius:38% 62% 54% 46%;filter:blur(4px);transform:rotate(-10deg);opacity:.7}
+.hero:after{inset:auto -8% -24% 36%;height:58%;background:linear-gradient(135deg,#56d8b6,#55b6ef 54%,#ff8eb6);border-radius:46% 54% 0 0;filter:blur(1px);opacity:.35}
+.heroGlow{position:absolute;z-index:0;border-radius:999px;filter:blur(22px);opacity:.68;pointer-events:none}
+.heroGlow.one{width:300px;height:300px;left:8%;top:8%;background:#ff8aaa}
+.heroGlow.two{width:360px;height:360px;right:8%;bottom:7%;background:#67e7d0}
+.starSprinkle{position:absolute;inset:0;z-index:1;pointer-events:none}
+.starSprinkle span{position:absolute;width:18px;height:18px;background:#fff8cf;clip-path:polygon(50% 0,62% 35%,100% 50%,62% 65%,50% 100%,38% 65%,0 50%,38% 35%);filter:drop-shadow(0 3px 0 rgba(120,65,75,.22))}
+.starSprinkle span:nth-child(1){left:7%;top:18%}.starSprinkle span:nth-child(2){left:43%;top:10%;transform:scale(.65)}.starSprinkle span:nth-child(3){right:9%;top:18%;transform:scale(1.25)}.starSprinkle span:nth-child(4){left:36%;bottom:14%;transform:scale(.8)}.starSprinkle span:nth-child(5){right:32%;bottom:9%}
+.heroLeft,.heroRight{z-index:2}
+.eyebrow{color:#0f8a8f;text-shadow:0 2px 0 rgba(255,255,255,.8)}
+h1{color:#ffffff;text-shadow:0 4px 0 #ff8aaa,0 9px 0 #c95870,0 16px 28px rgba(113,54,79,.25);letter-spacing:0}
+.sub{color:#60445b;background:rgba(255,255,255,.5);border:3px solid rgba(255,255,255,.68);border-radius:18px;padding:10px 14px;box-shadow:0 8px 18px rgba(164,83,105,.18)}
+.showcase{display:grid;grid-template-columns:minmax(150px,210px) minmax(290px,1fr);gap:18px;align-items:end;width:min(720px,100%)}
+.arenaWrap{width:100%;filter:drop-shadow(0 24px 24px rgba(69,43,80,.24))}
+.arenaPreview{border:5px solid rgba(255,255,255,.65);box-shadow:0 16px 0 rgba(255,138,170,.32)}
+.catMascot{position:relative;height:268px;min-width:150px;filter:drop-shadow(0 20px 16px rgba(100,55,80,.24));animation:catFloat 3.8s ease-in-out infinite}
+.catBody{position:absolute;left:16px;right:8px;bottom:18px;height:166px;background:linear-gradient(#fff7ec,#ffe2b9);border:6px solid #74415d;border-radius:46% 46% 38% 38%;box-shadow:inset 0 -16px 0 rgba(255,164,143,.35)}
+.catFace{position:absolute;left:50%;top:-74px;width:146px;height:132px;transform:translateX(-50%);background:linear-gradient(#fff7ec,#ffd8bc);border:6px solid #74415d;border-radius:48% 48% 44% 44%;box-shadow:inset 0 -10px 0 rgba(255,143,170,.2)}
+.catEar{position:absolute;top:-35px;width:48px;height:56px;background:#fff7ec;border:6px solid #74415d;border-radius:8px 80% 10px 80%;z-index:-1}
+.catEar.left{left:13px;transform:rotate(-25deg)}.catEar.right{right:13px;transform:scaleX(-1) rotate(-25deg)}
+.catEar:after{content:"";position:absolute;inset:12px 11px 13px;background:#ff9abc;border-radius:8px 80% 10px 80%}
+.catEye{position:absolute;top:48px;width:22px;height:31px;background:#433249;border-radius:999px;box-shadow:inset 5px 6px 0 #84e6ff}
+.catEye.left{left:38px}.catEye.right{right:38px}
+.catBlush{position:absolute;top:78px;width:26px;height:11px;background:#ff94ac;border-radius:999px;opacity:.72}
+.catBlush.left{left:22px}.catBlush.right{right:22px}
+.catMouth{position:absolute;left:50%;top:73px;width:30px;height:18px;transform:translateX(-50%);border-bottom:5px solid #74415d;border-radius:0 0 999px 999px}
+.catScarf{position:absolute;left:25px;right:24px;top:28px;height:28px;background:linear-gradient(90deg,#47c7c0,#3d9cf2);border:5px solid #74415d;border-radius:999px;z-index:2}
+.catPaw{position:absolute;bottom:24px;width:38px;height:46px;background:#fff7ec;border:5px solid #74415d;border-radius:999px}
+.catPaw.left{left:24px;transform:rotate(8deg)}.catPaw.right{right:24px;transform:rotate(-8deg)}
+.catTail{position:absolute;right:-4px;bottom:62px;width:76px;height:116px;border:18px solid #74415d;border-left:0;border-bottom:0;border-radius:0 80px 0 0;transform:rotate(12deg)}
+.catTail:after{content:"";position:absolute;inset:8px 8px auto auto;width:44px;height:86px;border:12px solid #ffe2b9;border-left:0;border-bottom:0;border-radius:0 60px 0 0}
+.catBall{position:absolute;left:2px;bottom:0;width:58px;height:58px;background:radial-gradient(circle at 35% 30%,#fff,#dce7f4 58%,#272039 59%);border:5px solid #74415d;border-radius:999px}
+@keyframes catFloat{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-8px) rotate(1.5deg)}}
+.powerTiles{gap:11px}
+.powerTile{border-color:#fff;border-radius:16px;color:#3d2741;box-shadow:0 5px 0 rgba(116,65,93,.28),0 10px 18px rgba(116,65,93,.15);letter-spacing:0;text-transform:none}
+.lobbyCard{background:rgba(255,255,255,.74);backdrop-filter:blur(14px);border-color:#ffffff;color:#5a3650;border-radius:22px;box-shadow:0 10px 0 #ff9abc,0 22px 38px rgba(116,65,93,.24)}
+.cardRibbon{position:absolute;right:22px;top:-18px;background:#55d9c4;color:#24394b;border:4px solid #fff;border-radius:999px;padding:5px 14px;font-size:.75rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;box-shadow:0 5px 0 rgba(116,65,93,.22)}
+.lobbyCard h2{color:#74415d;text-shadow:0 2px 0 #fff}
+.fieldLabel{color:#0f8a8f}
+.teamPreviewCard{border-color:#fff;border-radius:14px;box-shadow:0 5px 0 rgba(116,65,93,.2)}
+.lobbyDivider:before{background:#ffc1d1}.lobbyDivider span{background:rgba(255,255,255,.78);color:#0f8a8f}
+button,select,input{border-color:#ffffff;background:#fffaf1;color:#5a3650;box-shadow:0 4px 0 #ff9abc}
+button.primary,.selected{background:linear-gradient(135deg,#ff7ea8,#ff9b60);color:#fff}
+.lobbyCol button{background:linear-gradient(135deg,#55d9c4,#4db4f6);color:#183346}
+.lobbyCol button.primary{background:linear-gradient(135deg,#ff7ea8,#ff9b60);color:#fff}
+.codeInput{background:#ffffff;color:#0f6171;border-color:#80e2e1}
+.lobbyError{background:#e4496a;color:#fff;border:3px solid #fff}
+.topHud{grid-template-columns:minmax(130px,1fr) minmax(250px,auto) minmax(260px,1fr);gap:8px;align-items:start}
+.scorePill,.matchStatus,.roomChip{border-width:3px;box-shadow:0 4px 0 rgba(60,20,10,.32)}
+.scorePill{min-height:42px;padding:3px 12px 3px 3px}
+.pillTeam{width:32px;height:32px}
+.matchStatus{min-width:250px;padding:5px 14px}
+.matchStatus b{font-size:.76rem}.matchStatus small{font-size:.76rem}
+.topRight{min-width:0;flex-wrap:wrap;justify-content:flex-end}
+.roomChip{padding:5px 8px}
+.roomChip .roomCodeValue{font-size:.86rem}
+@media(max-width:1100px){.hero{grid-template-columns:1fr;align-items:start}.showcase{grid-template-columns:170px minmax(280px,1fr)}.heroRight{justify-items:start}.topHud{grid-template-columns:auto auto;grid-template-areas:"left right" "status status"}.scorePill.left{grid-area:left}.matchStatus{grid-area:status;justify-self:center}.topRight{grid-area:right}}
+@media(max-width:760px){.showcase{grid-template-columns:1fr}.catMascot{height:210px;width:170px}.hero{padding:22px}.topHud{width:calc(100vw - 14px);top:7px;grid-template-columns:1fr;grid-template-areas:none}.scorePill.left,.matchStatus,.topRight{grid-area:auto}.topRight{justify-content:center}.scorePill{justify-self:center}.matchStatus{min-width:0;width:100%}.roomChip{display:none}}

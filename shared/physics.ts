@@ -24,6 +24,7 @@
 // memory promptly.
 import RAPIER from '@dimforge/rapier2d-deterministic-compat';
 import { FIELD, GameState, PlayerSide } from './types';
+import { PHYSICS_CONFIG } from './physicsConfig';
 
 // Rapier is tuned for meter-scale numbers; the field is 1100x620 px.
 export const PX_PER_METER = 50;
@@ -32,23 +33,22 @@ export const PX_PER_METER = 50;
 // linear damping so the tabletop deceleration feel is preserved exactly.
 const LEGACY_TICK_HZ = 30;
 const dampingFromDrag = (dragPerTick: number) => -Math.log(dragPerTick) * LEGACY_TICK_HZ;
-// Arcade tuning pass: slightly stronger damping cuts low-speed gliding so
-// turns end crisply, while higher restitution keeps rebounds lively.
-const BABBLE_DAMPING = dampingFromDrag(0.94);
-const BALL_DAMPING = dampingFromDrag(0.955);
-const BEACH_BALL_DAMPING = dampingFromDrag(0.972);
+// Controlled local tuning: stronger damping cuts high-speed chaos and gliding.
+const BABBLE_DAMPING = dampingFromDrag(PHYSICS_CONFIG.babbleDragPerTick);
+const BALL_DAMPING = dampingFromDrag(PHYSICS_CONFIG.ballDragPerTick);
+const BEACH_BALL_DAMPING = dampingFromDrag(PHYSICS_CONFIG.beachBallDragPerTick);
 
 // Restitutions keep the arcade bounce feel: the ball is lively (0.92 against
 // walls/babbles via CombineRule.Max), babbles are heavier but not dead.
-const BALL_RESTITUTION = 0.92;
-const BABBLE_RESTITUTION = 0.68;
-const WALL_RESTITUTION = 0.9; // avg(0.9, 0.6) = 0.75 = legacy babble wall bounce
-const BLOCK_RESTITUTION = 0.6;
+const BALL_RESTITUTION = PHYSICS_CONFIG.ballRestitution;
+const BABBLE_RESTITUTION = PHYSICS_CONFIG.babbleRestitution;
+const WALL_RESTITUTION = PHYSICS_CONFIG.wallRestitution;
+const BLOCK_RESTITUTION = PHYSICS_CONFIG.blockRestitution;
 
 // Densities set the momentum exchange: a babble outweighs the ball ~4.3x, so
 // flicked babbles visibly rocket the ball off every hit.
-const BABBLE_DENSITY = 1;
-const BALL_DENSITY_BASE = 0.68;
+const BABBLE_DENSITY = PHYSICS_CONFIG.babbleDensity;
+const BALL_DENSITY_BASE = PHYSICS_CONFIG.ballDensityBase;
 
 // Collision groups (16-bit membership << 16 | 16-bit filter).
 const G_BALL = 0x0001;

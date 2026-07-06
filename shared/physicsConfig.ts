@@ -1,0 +1,47 @@
+// Local physics tuning knobs for the authoritative server/test simulation.
+//
+// Units are field pixels and seconds unless noted. Defaults are intentionally
+// controlled and a little heavier than the launch-day arcade tune: babbles and
+// the ball move slower, corner hits are less explosive, and the ball has enough
+// carry for clean shots to finish before the turn limit.
+//
+// Server/test override examples:
+//   BABBLE_MAX_SPEED=1450 npm test
+//   BABBLE_BALL_DENSITY=0.86 npm run smoke
+//
+// Browser clients render server state only and do not import this module.
+const envNumber = (name: string, fallback: number) => {
+  const raw = typeof process !== 'undefined' ? process.env?.[name] : undefined;
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+export const PHYSICS_CONFIG = {
+  babbleImpulseScale: envNumber('BABBLE_IMPULSE_SCALE', 1.08),
+  maxSpeed: envNumber('BABBLE_MAX_SPEED', 1520),
+  settleSpeed: envNumber('BABBLE_SETTLE_SPEED', 24),
+  lowSpeedBrakeThreshold: envNumber('BABBLE_LOW_SPEED_BRAKE_THRESHOLD', 128),
+  lowSpeedBrakeFactor: envNumber('BABBLE_LOW_SPEED_BRAKE_FACTOR', 0.86),
+
+  bumperBoost: envNumber('BABBLE_BUMPER_BOOST', 290),
+  bumperMinExitBall: envNumber('BABBLE_BUMPER_MIN_EXIT_BALL', 560),
+  bumperMinExitBabble: envNumber('BABBLE_BUMPER_MIN_EXIT_BABBLE', 410),
+  bigBumperBoostMult: envNumber('BABBLE_BIG_BUMPER_MULT', 2.35),
+  bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1.14),
+
+  boostPadAccel: envNumber('BABBLE_BOOST_PAD_ACCEL', 4300),
+  rampLaunchSpeed: envNumber('BABBLE_RAMP_LAUNCH_SPEED', 780),
+
+  // Rapier material tuning. Drag values are the legacy per-30Hz-tick decay
+  // converted to continuous damping in shared/physics.ts.
+  babbleDragPerTick: envNumber('BABBLE_DRAG_PER_TICK', 0.935),
+  ballDragPerTick: envNumber('BABBLE_BALL_DRAG_PER_TICK', 0.952),
+  beachBallDragPerTick: envNumber('BABBLE_BEACH_BALL_DRAG_PER_TICK', 0.97),
+  babbleRestitution: envNumber('BABBLE_RESTITUTION', 0.66),
+  ballRestitution: envNumber('BABBLE_BALL_RESTITUTION', 0.9),
+  wallRestitution: envNumber('BABBLE_WALL_RESTITUTION', 0.87),
+  blockRestitution: envNumber('BABBLE_BLOCK_RESTITUTION', 0.58),
+  babbleDensity: envNumber('BABBLE_DENSITY', 1),
+  ballDensityBase: envNumber('BABBLE_BALL_DENSITY', 0.78)
+} as const;

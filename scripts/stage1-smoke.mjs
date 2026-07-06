@@ -16,7 +16,7 @@ function run(cmd, args, env = {}) {
 
 const server = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
   stdio: 'inherit',
-  env: { ...process.env, PORT, NODE_ENV: 'production' }
+  env: { ...process.env, PORT, NODE_ENV: 'production', BABBLE_ALL_AIMED_GRACE_MS: process.env.BABBLE_ALL_AIMED_GRACE_MS || '500' }
 });
 let serverExited = false;
 server.on('exit', () => { serverExited = true; });

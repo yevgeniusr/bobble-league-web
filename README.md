@@ -29,6 +29,37 @@ goal detection, settling — stay as explicit rule code in `shared/game.ts`. The
 browser client never imports the physics module; it renders server state only,
 so no WASM ships in the client bundle.
 
+### Local physics tuning
+
+All tunable physics constants live in `shared/physicsConfig.ts`. Edit that file
+for durable local defaults, then run:
+
+```bash
+npm test
+npm run build
+npm run smoke
+```
+
+For quick server/test experiments, set environment overrides without editing
+source. Examples:
+
+```bash
+BABBLE_MAX_SPEED=1450 npm test
+BABBLE_IMPULSE_SCALE=1.0 BABBLE_BALL_DENSITY=0.86 npm run smoke
+BABBLE_BUMPER_BOOST=270 BABBLE_RAMP_LAUNCH_SPEED=740 npm run render-check
+```
+
+Common knobs:
+
+- `BABBLE_IMPULSE_SCALE`: babble launch force multiplier.
+- `BABBLE_MAX_SPEED`: clamp for ball and babble velocity.
+- `BABBLE_BALL_DENSITY`: ball weight in Rapier collisions.
+- `BABBLE_BOOST_PAD_ACCEL`: boost pad acceleration.
+- `BABBLE_BUMPER_BOOST`, `BABBLE_BUMPER_MIN_EXIT_BALL`,
+  `BABBLE_BIG_BUMPER_MULT`: corner bumper strength.
+- `BABBLE_RAMP_LAUNCH_SPEED`: minimum ramp exit speed.
+- `BABBLE_BALL_DRAG_PER_TICK`, `BABBLE_DRAG_PER_TICK`: damping feel.
+
 ## Controls
 
 - Move: `WASD` or arrow keys
