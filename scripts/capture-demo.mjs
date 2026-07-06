@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 import { writeFile } from 'node:fs/promises';
-const url = process.env.BOBBLE_URL || 'http://127.0.0.1:3117';
+const url = process.env.BABBLE_URL || 'http://127.0.0.1:3117';
 const out = process.env.OUT || 'tmp/our-gameplay.png';
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });

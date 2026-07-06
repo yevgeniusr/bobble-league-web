@@ -4,7 +4,7 @@ import {
   BOX_TYPES,
   BUMPER_RADIUS,
   BUMPERS,
-  BobbleState,
+  BabbleState,
   BoxState,
   BoxType,
   FIELD,
@@ -31,10 +31,10 @@ export const blankInput: PlayerInput = { up: false, down: false, left: false, ri
 const TICK_MS = 1000 / 30;
 // Tuned for a heavy tabletop feel: strong pull impulse, visible inertia,
 // and enough rolling friction to avoid ice-like endless sliding.
-const BOBBLE_DRAG = 0.952;
+const BABBLE_DRAG = 0.952;
 const BALL_DRAG = 0.968;
 const BEACH_BALL_DRAG = 0.982;
-export const BOBBLE_IMPULSE_SCALE = 1.12;
+export const BABBLE_IMPULSE_SCALE = 1.12;
 export const BALL_MASS_FACTOR = 0.78;
 export const BOX_LIFETIME_TURNS = 3;
 const SETTLE_SPEED = 18;
@@ -46,11 +46,13 @@ export const BUMPER_BOOST = 220;
 export const BIG_BUMPER_BOOST_MULT = 2.6;
 export const BIG_BUMPER_RESTITUTION = 1.22;
 const BUMPER_EVENT_TTL_MS = 1500;
+const RAMP_EVENT_TTL_MS = 1500;
 // Boost pad acceleration (units/s^2) applied while a mover sits on the pad.
-export const BOOST_PAD_ACCEL = 2400;
+// Tuned strong enough that crossing the pad visibly slingshots the mover.
+export const BOOST_PAD_ACCEL = 4200;
 // Ramp wedge: movers riding up the slope get redirected along the ramp
 // direction and launched off the lip at a minimum exit speed.
-export const RAMP_LAUNCH_SPEED = 540;
+export const RAMP_LAUNCH_SPEED = 760;
 export const RAMP_HALF_LEN = 60;
 export const RAMP_HALF_WIDTH = 34;
 
@@ -71,11 +73,12 @@ export function createInitialState(roomCode: string, mode: GameMode = 3): GameSt
     sideTeams: { left: 'pigs', right: 'tigers' },
     formationSelectionTurn: null,
     formations: { left: 'forward', right: 'forward' },
-    bobbles: [],
+    babbles: [],
     ball: { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } },
     boxes: [],
     fieldObjects: [],
     bumperEvents: [],
+    rampEvents: [],
     bigBumpersUntilTurn: null,
     beachBallUntilTurn: null,
     pendingIntents: {},
@@ -96,7 +99,7 @@ export function addPlayer(state: GameState, id: string, name: string, team: Team
     team: chosenTeam,
     score: state.score[chosenSide],
     connected: true,
-    controlledBobbleIds: []
+    controlledBabbleIds: []
   };
   state.players[id] = p;
   pushEvent(state, `${p.name} joined ${chosenSide} as ${team}.`);
@@ -116,6 +119,27 @@ export function setSideTeam(state: GameState, id: string, team: TeamId) {
   return true;
 }
 
+// Reconnect support: a returning player takes over their old disconnected seat,
+// keeping side, team, mascot, controlled babbleheads and any held Power Play box.
+export function reclaimPlayer(state: GameState, oldId: string, newId: string): PlayerState | null {
+  const old = state.players[oldId];
+  if (!old || old.connected || state.players[newId]) return null;
+  delete state.players[oldId];
+  const p: PlayerState = { ...old, id: newId, connected: true };
+  state.players[newId] = p;
+  for (const side of ['left', 'right'] as const) {
+    for (const item of state.powerPlayInventories[side]) if (item.holderId === oldId) item.holderId = newId;
+  }
+  pushEvent(state, `${p.name} reconnected.`);
+  return p;
+}
+
+// Find a disconnected seat matching this display name (used to auto-reclaim on rejoin).
+export function findDisconnectedSeat(state: GameState, name: string): PlayerState | null {
+  const clean = sanitizeName(name);
+  return Object.values(state.players).find(p => !p.connected && p.name === clean) ?? null;
+}
+
 export function removePlayer(state: GameState, id: string) {
   if (state.players[id]) {
     state.players[id].connected = false;
@@ -130,7 +154,7 @@ export function canSelectFormation(state: GameState) {
 export function applyFormation(state: GameState, side: PlayerSide, formation: FormationId) {
   if (!FORMATION_IDS.includes(formation) || !canSelectFormation(state)) return false;
   state.formations[side] = formation;
-  if (state.bobbles.some(b => b.side === side)) placeFormation(state, side);
+  if (state.babbles.some(b => b.side === side)) placeFormation(state, side);
   pushEvent(state, `${side} selected ${formation} formation.`);
   return true;
 }
@@ -144,13 +168,14 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.boxes = [];
   state.fieldObjects = [];
   state.bumperEvents = [];
+  state.rampEvents = [];
   state.bigBumpersUntilTurn = null;
   state.beachBallUntilTurn = null;
   state.pendingIntents = {};
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
   state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
-  buildBobbles(state);
+  buildBabbles(state);
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   pushEvent(state, `Kickoff! First to ${state.mode}.`);
@@ -168,6 +193,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.boxes = [];
   state.fieldObjects = [];
   state.bumperEvents = [];
+  state.rampEvents = [];
   state.bigBumpersUntilTurn = null;
   state.beachBallUntilTurn = null;
   state.pendingIntents = {};
@@ -177,20 +203,20 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   for (const p of Object.values(state.players)) p.score = 0;
-  buildBobbles(state);
+  buildBabbles(state);
   pushEvent(state, `Reset to ${length.length} first-to-${mode}.`);
 }
 
-export function launchBobble(state: GameState, playerId: string, intent: TurnIntent, _now = Date.now()) {
+export function launchBabble(state: GameState, playerId: string, intent: TurnIntent, _now = Date.now()) {
   if (state.phase !== 'planning') return false;
   const player = state.players[playerId];
-  if (!player || !player.connected || !player.controlledBobbleIds.includes(intent.bobbleId)) return false;
-  const bobble = state.bobbles.find(b => b.id === intent.bobbleId);
-  if (!bobble || bobble.lastLaunchedTurn === state.turn) return false;
+  if (!player || !player.connected || !player.controlledBabbleIds.includes(intent.babbleId)) return false;
+  const babble = state.babbles.find(b => b.id === intent.babbleId);
+  if (!babble || babble.lastLaunchedTurn === state.turn) return false;
   const impulse = Math.max(1, Math.min(900, intent.impulse));
-  state.pendingIntents[bobble.id] = { bobbleId: bobble.id, aimAngle: intent.aimAngle, impulse };
-  bobble.lastLaunchedTurn = state.turn;
-  pushEvent(state, `${player.name} aimed ${bobble.id}.`);
+  state.pendingIntents[babble.id] = { babbleId: babble.id, aimAngle: intent.aimAngle, impulse };
+  babble.lastLaunchedTurn = state.turn;
+  pushEvent(state, `${player.name} aimed ${babble.id}.`);
   return true;
 }
 
@@ -202,12 +228,12 @@ export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> 
   if (state.phase !== 'resolving') return;
   const dt = dtMs / 1000;
   expireTurnEffects(state);
-  for (const b of state.bobbles) integrateCircle(b.pos, b.vel, b.radius, dt, BOBBLE_DRAG);
+  for (const b of state.babbles) integrateCircle(b.pos, b.vel, b.radius, dt, BABBLE_DRAG);
   integrateBall(state, dt);
-  resolveFieldObjects(state, dt);
+  resolveFieldObjects(state, dt, now);
   resolveCornerBumpers(state, now);
-  resolveBobbleCollisions(state);
-  collectBoxesForBobbles(state, now);
+  resolveBabbleCollisions(state);
+  collectBoxesForBabbles(state, now);
   const goal = detectGoal(state);
   if (goal) return handleClassicGoal(state, goal, now, rng);
   const started = state.resolvingStartedAt ?? now;
@@ -215,31 +241,49 @@ export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> 
 }
 
 function shouldResolveTurn(state: GameState, now: number) {
-  const required = state.bobbles.map(b => b.id);
+  const required = state.babbles.map(b => b.id);
   return now >= state.turnDeadlineAt || required.every(id => Boolean(state.pendingIntents[id]));
 }
 
 function beginResolving(state: GameState, now: number) {
   for (const intent of Object.values(state.pendingIntents)) {
-    const bobble = state.bobbles.find(b => b.id === intent.bobbleId);
-    if (!bobble) continue;
-    const boost = bobble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
-    const bigHead = bobble.effects.some(e => e.type === 'bigHead' && e.untilTurn >= state.turn) ? 1.3 : 1;
-    bobble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * BOBBLE_IMPULSE_SCALE;
-    bobble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * BOBBLE_IMPULSE_SCALE;
+    const babble = state.babbles.find(b => b.id === intent.babbleId);
+    if (!babble) continue;
+    const boost = babble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
+    const bigHead = babble.effects.some(e => e.type === 'bigHead' && e.untilTurn >= state.turn) ? 1.3 : 1;
+    babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * BABBLE_IMPULSE_SCALE;
+    babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * BABBLE_IMPULSE_SCALE;
   }
   state.phase = 'resolving';
   state.resolvingStartedAt = now;
-  pushEvent(state, `Turn ${state.turn} resolving with ${Object.keys(state.pendingIntents).length}/${state.bobbles.length} bobbles aimed.`);
+  pushEvent(state, `Turn ${state.turn} resolving with ${Object.keys(state.pendingIntents).length}/${state.babbles.length} babbleheads aimed.`);
 }
 
-export function collectPowerBox(state: GameState, bobble: BobbleState, now = Date.now()) {
-  const index = state.boxes.findIndex(box => dist(box.pos, bobble.pos) <= bobble.radius + FIELD.boxSize / 2);
+// One-box-per-player rule: every box is carried by a specific player. A pickup
+// is rejected (box stays on the field) when the would-be holder is already full.
+export function playerHoldsBox(state: GameState, playerId: string) {
+  const side = state.players[playerId]?.side;
+  if (!side) return false;
+  return state.powerPlayInventories[side].some(i => i.holderId === playerId);
+}
+
+function freeHolderFor(state: GameState, side: PlayerSide, collectingBabbleId?: string): PlayerState | null {
+  const teammates = Object.values(state.players).filter(p => p.side === side && p.connected);
+  const controller = collectingBabbleId ? teammates.find(p => p.controlledBabbleIds.includes(collectingBabbleId)) : undefined;
+  if (controller) return playerHoldsBox(state, controller.id) ? null : controller;
+  return teammates.find(p => !playerHoldsBox(state, p.id)) ?? null;
+}
+
+export function collectPowerBox(state: GameState, babble: BabbleState, now = Date.now()) {
+  const index = state.boxes.findIndex(box => dist(box.pos, babble.pos) <= babble.radius + FIELD.boxSize / 2);
   if (index < 0) return false;
+  const holder = freeHolderFor(state, babble.side, babble.id);
+  if (!holder) return false; // holder already carries a box: it stays on the field
   const [box] = state.boxes.splice(index, 1);
-  const item: InventoryItem = { type: box.type, availableTurn: state.turn + 1 };
-  state.powerPlayInventories[bobble.side].push(item);
-  pushEvent(state, `${bobble.side} collected ${BOX_TYPES[box.type].label}.`);
+  const item: InventoryItem = { type: box.type, availableTurn: state.turn + 1, holderId: holder.id };
+  state.powerPlayInventories[babble.side].push(item);
+  // never reveal the box type in the public event feed: it is team-private
+  pushEvent(state, `${holder.name} grabbed a mystery box.`);
   return true;
 }
 
@@ -247,7 +291,8 @@ export function usePowerPlay(state: GameState, playerId: string, use: PowerPlayU
   const player = state.players[playerId];
   if (!player || !player.connected) return false;
   const inventory = state.powerPlayInventories[player.side];
-  const itemIndex = inventory.findIndex(item => item.type === use.type && item.availableTurn <= state.turn);
+  // players may only spend the box they personally hold (legacy holder-less items stay usable)
+  const itemIndex = inventory.findIndex(item => item.type === use.type && item.availableTurn <= state.turn && (!item.holderId || item.holderId === playerId));
   if (itemIndex < 0) return false;
   inventory.splice(itemIndex, 1);
   applyPowerPlay(state, player.side, use, now);
@@ -258,7 +303,8 @@ export function usePowerPlay(state: GameState, playerId: string, use: PowerPlayU
 export function addCheatBoxes(state: GameState, playerIdOrSide: string | PlayerSide) {
   const side = playerIdOrSide === 'left' || playerIdOrSide === 'right' ? playerIdOrSide : state.players[playerIdOrSide]?.side;
   if (!side) return false;
-  state.powerPlayInventories[side].push(...BOX_TYPE_IDS.map(type => ({ type, availableTurn: state.turn })));
+  const holderId = playerIdOrSide === 'left' || playerIdOrSide === 'right' ? undefined : playerIdOrSide;
+  state.powerPlayInventories[side].push(...BOX_TYPE_IDS.map(type => ({ type, availableTurn: state.turn, holderId })));
   pushEvent(state, `CHEAT MODE: ${side} received every Power Play box for testing. All users are warned.`);
   return true;
 }
@@ -295,14 +341,27 @@ export function grantCheatBox(state: GameState, playerIdOrSide: string | PlayerS
   const side = playerIdOrSide === 'left' || playerIdOrSide === 'right' ? playerIdOrSide : state.players[playerIdOrSide]?.side;
   if (!side || !BOX_TYPE_IDS.includes(type)) return false;
   if (state.powerPlayInventories[side].some(item => item.type === type)) return false;
-  state.powerPlayInventories[side].push({ type, availableTurn: state.turn });
+  const holderId = playerIdOrSide === 'left' || playerIdOrSide === 'right' ? undefined : playerIdOrSide;
+  state.powerPlayInventories[side].push({ type, availableTurn: state.turn, holderId });
   pushEvent(state, `CHEAT MODE: ${side} granted one ${BOX_TYPES[type].label} for testing. All users are warned.`);
   return true;
 }
 
-export function applyBox(state: GameState, picker: PlayerState, type: BoxType, now = Date.now()) {
-  state.powerPlayInventories[picker.side].push({ type, availableTurn: state.turn + 1 });
-  pushEvent(state, `${picker.name} picked up ${BOX_TYPES[type].label}.`);
+// Redact team-private inventory details for a specific viewer: only your own
+// team's box types/holders are visible; opponents just see how many are held.
+export function redactStateFor(state: GameState, viewerId: string): GameState {
+  const side = state.players[viewerId]?.side;
+  return {
+    ...state,
+    powerPlayInventories: {
+      left: side === 'left' ? state.powerPlayInventories.left : [],
+      right: side === 'right' ? state.powerPlayInventories.right : []
+    },
+    powerPlayCounts: {
+      left: state.powerPlayInventories.left.length,
+      right: state.powerPlayInventories.right.length
+    }
+  };
 }
 
 export function spawnBox(state: GameState, now = Date.now(), rng: Rng = Math.random): BoxState {
@@ -321,17 +380,17 @@ export function spawnBox(state: GameState, now = Date.now(), rng: Rng = Math.ran
   return box;
 }
 
-function buildBobbles(state: GameState) {
-  state.bobbles = [];
+function buildBabbles(state: GameState) {
+  state.babbles = [];
   for (const side of ['left', 'right'] as const) {
     const playerIds = Object.values(state.players).filter(p => p.side === side).map(p => p.id);
     const ids = Array.from({ length: 4 }, (_, i) => `${side}-${i + 1}`);
-    for (const playerId of playerIds) state.players[playerId].controlledBobbleIds = [];
-    ids.forEach((bobbleId, i) => {
+    for (const playerId of playerIds) state.players[playerId].controlledBabbleIds = [];
+    ids.forEach((babbleId, i) => {
       if (playerIds.length === 0) return;
-      state.players[playerIds[i % playerIds.length]].controlledBobbleIds.push(bobbleId);
+      state.players[playerIds[i % playerIds.length]].controlledBabbleIds.push(babbleId);
     });
-    for (let i = 0; i < 4; i++) state.bobbles.push({ id: ids[i], side, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, radius: FIELD.bobbleRadius, effects: [], lastLaunchedTurn: 0 });
+    for (let i = 0; i < 4; i++) state.babbles.push({ id: ids[i], side, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, radius: FIELD.babbleRadius, effects: [], lastLaunchedTurn: 0 });
     placeFormation(state, side);
   }
 }
@@ -349,13 +408,13 @@ function placeFormation(state: GameState, side: PlayerSide) {
     box: [{ x: 35, y: -95 }, { x: 105, y: -95 }, { x: 35, y: 95 }, { x: 105, y: 95 }],
     rush: [{ x: 110, y: -80 }, { x: 110, y: 80 }, { x: -5, y: -80 }, { x: -5, y: 80 }]
   };
-  const bobbles = state.bobbles.filter(b => b.side === side).sort((a, b) => a.id.localeCompare(b.id));
+  const babbles = state.babbles.filter(b => b.side === side).sort((a, b) => a.id.localeCompare(b.id));
   layouts[formation].forEach((offset, i) => {
-    const bobble = bobbles[i];
-    if (!bobble) return;
-    bobble.pos = { x: baseX + offset.x * sign, y: FIELD.height / 2 + offset.y };
-    bobble.vel = { x: 0, y: 0 };
-    bobble.radius = FIELD.bobbleRadius;
+    const babble = babbles[i];
+    if (!babble) return;
+    babble.pos = { x: baseX + offset.x * sign, y: FIELD.height / 2 + offset.y };
+    babble.vel = { x: 0, y: 0 };
+    babble.radius = FIELD.babbleRadius;
   });
 }
 
@@ -399,7 +458,7 @@ function resolveCornerBumpers(state: GameState, now: number) {
   const bumperRadius = big ? BIG_BUMPER_RADIUS : BUMPER_RADIUS;
   const boost = big ? BUMPER_BOOST * BIG_BUMPER_BOOST_MULT : BUMPER_BOOST;
   for (const c of BUMPERS) {
-    for (const b of state.bobbles) {
+    for (const b of state.babbles) {
       if (staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, big ? 1.05 : 0.92, boost * 0.85)) pushBumperEvent(state, c, now);
     }
     if (staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, big ? BIG_BUMPER_RESTITUTION : 1.04, boost)) pushBumperEvent(state, c, now);
@@ -438,10 +497,10 @@ function clampSpeed(vel: Vec, max = MAX_SPEED) {
   if (s > max) { vel.x *= max / s; vel.y *= max / s; }
 }
 
-function resolveFieldObjects(state: GameState, dt: number) {
-  const movers: { pos: Vec; vel: Vec; radius: number; ghosted: boolean }[] = [
-    { pos: state.ball.pos, vel: state.ball.vel, radius: state.ball.radius, ghosted: false },
-    ...state.bobbles.map(b => ({ pos: b.pos, vel: b.vel, radius: b.radius, ghosted: b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn) }))
+function resolveFieldObjects(state: GameState, dt: number, now = Date.now()) {
+  const movers: { pos: Vec; vel: Vec; radius: number; ghosted: boolean; mover: 'ball' | 'babble'; moverId?: string }[] = [
+    { pos: state.ball.pos, vel: state.ball.vel, radius: state.ball.radius, ghosted: false, mover: 'ball' },
+    ...state.babbles.map(b => ({ pos: b.pos, vel: b.vel, radius: b.radius, ghosted: b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn), mover: 'babble' as const, moverId: b.id }))
   ];
   for (const o of state.fieldObjects) {
     if (o.untilTurn < state.turn) continue;
@@ -457,16 +516,24 @@ function resolveFieldObjects(state: GameState, dt: number) {
       } else if (o.type === 'block') {
         if (!m.ghosted) segmentBounce(m.pos, m.vel, m.radius, o.pos, o.angle, 60, 14, 0.75);
       } else if (o.type === 'ramp') {
-        if (!m.ghosted) resolveRamp(m.pos, m.vel, m.radius, o.pos, o.angle);
+        if (!m.ghosted && resolveRamp(m.pos, m.vel, m.radius, o.pos, o.angle) === 'launch') pushRampEvent(state, o.pos, m.mover, m.moverId, now);
       }
     }
   }
+  state.rampEvents = state.rampEvents.filter(e => now - e.at < RAMP_EVENT_TTL_MS).slice(-8);
+}
+
+// Debounced ramp launch events drive the client-side launch hop animation.
+function pushRampEvent(state: GameState, pos: Vec, mover: 'ball' | 'babble', moverId: string | undefined, now: number) {
+  const last = [...state.rampEvents].reverse().find(e => e.mover === mover && e.moverId === moverId);
+  if (last && now - last.at < 450) return;
+  state.rampEvents.push({ pos: { ...pos }, at: now, mover, moverId });
 }
 
 // Ramp wedge physics: movers travelling with the ramp direction ride up the
 // slope, get aligned to the ramp's facing and launched off the lip; movers
 // hitting the tall back face bounce off like a wall.
-function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: number) {
+function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: number): 'launch' | 'wall' | false {
   const dirX = Math.cos(angle), dirY = Math.sin(angle);
   const relX = pos.x - center.x, relY = pos.y - center.y;
   const along = relX * dirX + relY * dirY;
@@ -480,14 +547,14 @@ function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: num
     vel.x = dirX * exit;
     vel.y = dirY * exit;
     clampSpeed(vel);
-    return true;
+    return 'launch';
   }
   // hitting the tall back of the wedge: push out and reflect
   pos.x = center.x + dirX * (RAMP_HALF_LEN + radius) - dirY * lateral;
   pos.y = center.y + dirY * (RAMP_HALF_LEN + radius) + dirX * lateral;
   vel.x -= 1.8 * into * dirX;
   vel.y -= 1.8 * into * dirY;
-  return true;
+  return 'wall';
 }
 
 function segmentBounce(pos: Vec, vel: Vec, radius: number, center: Vec, angle: number, halfLen: number, thickness: number, restitution: number) {
@@ -510,13 +577,13 @@ function segmentBounce(pos: Vec, vel: Vec, radius: number, center: Vec, angle: n
   return true;
 }
 
-function resolveBobbleCollisions(state: GameState) {
-  for (const b of state.bobbles) {
+function resolveBabbleCollisions(state: GameState) {
+  for (const b of state.babbles) {
     if (b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn)) continue;
     if (circleBounce(b.pos, b.vel, b.radius, state.ball.pos, state.ball.vel, state.ball.radius, 0.95)) state.ball.lastTouchedBy = b.side;
   }
-  for (let i = 0; i < state.bobbles.length; i++) for (let j = i + 1; j < state.bobbles.length; j++) {
-    const a = state.bobbles[i], b = state.bobbles[j];
+  for (let i = 0; i < state.babbles.length; i++) for (let j = i + 1; j < state.babbles.length; j++) {
+    const a = state.babbles[i], b = state.babbles[j];
     if (a.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn) || b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn)) continue;
     circleBounce(a.pos, a.vel, a.radius, b.pos, b.vel, b.radius, 0.55);
   }
@@ -533,8 +600,8 @@ function circleBounce(a: Vec, av: Vec, ar: number, b: Vec, bv: Vec, br: number, 
   return true;
 }
 
-function collectBoxesForBobbles(state: GameState, now: number) {
-  for (const bobble of [...state.bobbles]) collectPowerBox(state, bobble, now);
+function collectBoxesForBabbles(state: GameState, now: number) {
+  for (const babble of [...state.babbles]) collectPowerBox(state, babble, now);
   collectPowerBoxWithBall(state);
   // Boxes expire by turn count, never by wall-clock time, so they always
   // survive the planning phase and can be collected during resolution.
@@ -546,37 +613,50 @@ function collectPowerBoxWithBall(state: GameState) {
   if (!side) return;
   const index = state.boxes.findIndex(box => dist(box.pos, state.ball.pos) <= state.ball.radius + FIELD.boxSize / 2);
   if (index < 0) return;
+  const holder = freeHolderFor(state, side);
+  if (!holder) return; // everyone on that side already holds a box
   const [box] = state.boxes.splice(index, 1);
-  state.powerPlayInventories[side].push({ type: box.type, availableTurn: state.turn + 1 });
-  pushEvent(state, `${side} collected ${BOX_TYPES[box.type].label} with the ball.`);
+  state.powerPlayInventories[side].push({ type: box.type, availableTurn: state.turn + 1, holderId: holder.id });
+  pushEvent(state, `${holder.name} grabbed a mystery box with the ball.`);
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+// Client positions are untrusted: reject non-finite vectors and keep teleports inside the field.
+function safeFieldPos(p: Vec | undefined, fallback: Vec, margin: number): Vec {
+  const src = p && Number.isFinite(p.x) && Number.isFinite(p.y) ? p : fallback;
+  return { x: clamp(src.x, margin, FIELD.width - margin), y: clamp(src.y, margin, FIELD.height - margin) };
 }
 
 function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, now: number) {
-  const target = (use.targetBobbleId && state.bobbles.find(b => b.id === use.targetBobbleId)) || state.bobbles.find(b => b.side === side);
+  const target = (use.targetBabbleId && state.babbles.find(b => b.id === use.targetBabbleId)) || state.babbles.find(b => b.side === side);
   switch (use.type) {
     case 'beachBall': state.ball.radius = FIELD.ballRadius * 1.6; state.beachBallUntilTurn = state.turn; state.ball.vel.x *= 1.25; state.ball.vel.y *= 1.25; break;
-    case 'moveBall': state.ball.pos = use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }; state.ball.vel = { x: 0, y: 0 }; break;
+    case 'moveBall':
+      state.ball.pos = safeFieldPos(use.position, { x: FIELD.width / 2, y: FIELD.height / 2 }, state.ball.radius);
+      state.ball.vel = { x: 0, y: 0 };
+      state.ball.lastTouchedBy = null;
+      break;
     case 'swapGoals': state.swappedGoalsUntilTurn = state.turn + 1; break;
     case 'bigBumpers': state.bigBumpersUntilTurn = state.turn; break;
-    case 'boost': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'boost', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); if (target) addBobbleEffect(target, 'boost', state.turn + 1); break;
+    case 'boost': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'boost', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); if (target) addBabbleEffect(target, 'boost', state.turn + 1); break;
     case 'stickyGoo': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'stickyGoo', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: 0, untilTurn: state.turn + 1 }); break;
     case 'ramp': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'ramp', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? -Math.PI / 4, untilTurn: state.turn + 1 }); break;
     case 'block': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'block', owner: side, pos: use.position ?? { x: side === 'left' ? 85 : FIELD.width - 85, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
-    case 'bigHead': if (target) { target.radius = FIELD.bobbleRadius * 1.45; addBobbleEffect(target, 'bigHead', state.turn + 1); } break;
-    case 'ghosted': if (target) addBobbleEffect(target, 'ghosted', state.turn + 1); break;
-    case 'movePlayer': if (target) { target.pos = use.position ?? { x: side === 'left' ? FIELD.width * 0.42 : FIELD.width * 0.58, y: FIELD.height / 2 }; target.vel = { x: 0, y: 0 }; } break;
+    case 'bigHead': if (target) { target.radius = FIELD.babbleRadius * 1.45; addBabbleEffect(target, 'bigHead', state.turn + 1); } break;
+    case 'ghosted': if (target) addBabbleEffect(target, 'ghosted', state.turn + 1); break;
+    case 'movePlayer': if (target) { target.pos = safeFieldPos(use.position, { x: side === 'left' ? FIELD.width * 0.42 : FIELD.width * 0.58, y: FIELD.height / 2 }, target.radius); target.vel = { x: 0, y: 0 }; } break;
   }
 }
 
-function addBobbleEffect(bobble: BobbleState, type: BoxType, untilTurn: number) {
-  bobble.effects = bobble.effects.filter(e => e.type !== type);
-  bobble.effects.push({ type, untilTurn });
+function addBabbleEffect(babble: BabbleState, type: BoxType, untilTurn: number) {
+  babble.effects = babble.effects.filter(e => e.type !== type);
+  babble.effects.push({ type, untilTurn });
 }
 
 function expireTurnEffects(state: GameState) {
-  for (const b of state.bobbles) {
+  for (const b of state.babbles) {
     b.effects = b.effects.filter(e => e.untilTurn >= state.turn);
-    if (!b.effects.some(e => e.type === 'bigHead')) b.radius = FIELD.bobbleRadius;
+    if (!b.effects.some(e => e.type === 'bigHead')) b.radius = FIELD.babbleRadius;
   }
   state.fieldObjects = state.fieldObjects.filter(o => o.untilTurn >= state.turn);
   if (state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn < state.turn) state.swappedGoalsUntilTurn = null;
@@ -587,13 +667,21 @@ function expireTurnEffects(state: GameState) {
   }
 }
 
+// Goal trigger tolerance: any penetration of the goal-line plane deeper than
+// this scores. Outside the mouth the walls clamp the ball at exactly pos.x ==
+// radius, so the epsilon keeps wall-contact jitter from ever counting.
+export const GOAL_TRIGGER_EPS = 0.5;
+
 function detectGoal(state: GameState): PlayerSide | null {
   const b = state.ball;
   if (b.pos.y < FIELD.goalY || b.pos.y > FIELD.goalY + FIELD.goalHeight) return null;
-  const leftGoalScorer: PlayerSide = state.swappedGoalsUntilTurn && state.swappedGoalsUntilTurn >= state.turn ? 'left' : 'right';
-  const rightGoalScorer: PlayerSide = state.swappedGoalsUntilTurn && state.swappedGoalsUntilTurn >= state.turn ? 'right' : 'left';
-  if (b.pos.x < -FIELD.goalDepth + b.radius) return leftGoalScorer;
-  if (b.pos.x > FIELD.width + FIELD.goalDepth - b.radius) return rightGoalScorer;
+  const swapped = state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn >= state.turn;
+  const leftGoalScorer: PlayerSide = swapped ? 'left' : 'right';
+  const rightGoalScorer: PlayerSide = swapped ? 'right' : 'left';
+  // Score as soon as the ball overlaps the goal mouth plane. There is no dead
+  // pocket: the ball can never rest inside a gate without the goal counting.
+  if (b.pos.x < b.radius - GOAL_TRIGGER_EPS) return leftGoalScorer;
+  if (b.pos.x > FIELD.width - b.radius + GOAL_TRIGGER_EPS) return rightGoalScorer;
   return null;
 }
 
@@ -632,17 +720,18 @@ function endTurn(state: GameState, now: number, rng: Rng, unlockFormation = fals
 }
 
 function resetForPlanning(state: GameState, _rng: Rng) {
-  // Bobble League turns are tabletop turns: pieces stay where physics resolved,
+  // Babble League turns are tabletop turns: pieces stay where physics resolved,
   // but no momentum carries into the next planning turn.
   state.ball.vel = { x: 0, y: 0 };
   state.ball.lastTouchedBy = null;
-  for (const b of state.bobbles) b.vel = { x: 0, y: 0 };
+  for (const b of state.babbles) b.vel = { x: 0, y: 0 };
   state.bumperEvents = [];
+  state.rampEvents = [];
   state.kickoffAt = Date.now();
 }
 
 function allSettled(state: GameState) {
-  const speeds = [Math.hypot(state.ball.vel.x, state.ball.vel.y), ...state.bobbles.map(b => Math.hypot(b.vel.x, b.vel.y))];
+  const speeds = [Math.hypot(state.ball.vel.x, state.ball.vel.y), ...state.babbles.map(b => Math.hypot(b.vel.x, b.vel.y))];
   return speeds.every(s => s < SETTLE_SPEED);
 }
 

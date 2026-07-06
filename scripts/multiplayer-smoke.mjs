@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 
-const url = process.env.BOBBLE_URL || 'http://127.0.0.1:3117';
+const url = process.env.BABBLE_URL || 'http://127.0.0.1:3117';
 const browser = await chromium.launch({ headless: true });
 const errors = [];
 try {

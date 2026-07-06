@@ -1,4 +1,4 @@
-# Bobble League Web Architecture
+# Babble League Web Architecture
 
 ## Recommended stack
 

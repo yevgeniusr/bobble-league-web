@@ -1,8 +1,10 @@
-# Bobble League Web Implementation Plan
+# Babble League Web Implementation Plan
+
+> Historical plan. The project directory/repo, deploy domain, and package name predate the Babble rename and are kept for deploy compatibility.
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Build a production-ready web multiplayer bobble soccer game with Bobble League-style mechanics, original assets, and Coolify deployment.
+**Goal:** Build a production-ready web multiplayer babble soccer game with mechanics matching the original reference game, original assets, and Coolify deployment.
 
 **Architecture:** React/Vite canvas client connects to an authoritative Node/Express/Socket.IO server. Shared TypeScript rules define physics, scoring, teams, game modes, and box effects. Docker deploys a single web process exposing `/healthz` and static assets.
 

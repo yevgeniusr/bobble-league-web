@@ -1,4 +1,4 @@
-# Bobble League Web Production Architecture
+# Babble League Web Production Architecture
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
@@ -94,7 +94,7 @@ Rules:
 ### Physics entities
 - Arena: static boundaries, goals, top/bottom spawn lanes.
 - Ball: dynamic circle body.
-- Player bobbles: dynamic bodies with movement constraints and kick impulse.
+- Player babbleheads: dynamic bodies with movement constraints and kick impulse.
 - Power-up boxes: sensor fixtures or simple AABB trigger zones.
 
 ### Power-up and box spawning
@@ -357,7 +357,7 @@ Run from a local machine or CI runner:
 
 ```bash
 curl -fsS https://<domain>/healthz
-pnpm --filter @bobble/e2e test -- --project=chromium --grep @smoke
+pnpm --filter @babble/e2e test -- --project=chromium --grep @smoke
 ```
 
 Manual production smoke:

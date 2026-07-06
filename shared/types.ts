@@ -5,7 +5,7 @@ export const FIELD = {
   goalY: 205,
   goalHeight: 210,
   playerRadius: 24,
-  bobbleRadius: 24,
+  babbleRadius: 24,
   ballRadius: 14,
   boxSize: 34
 } as const;
@@ -47,16 +47,16 @@ export const FORMATION_IDS = Object.keys(FORMATIONS) as FormationId[];
 
 export const BOX_TYPES = {
   beachBall: { label: 'Beach Ball', color: '#facc15', category: 'instant', durationTurns: 1, description: 'Enlarge and lighten the ball for this turn.' },
-  moveBall: { label: 'Move Ball', color: '#fb923c', category: 'instant', durationTurns: 0, description: 'Move the ball back to center.' },
+  moveBall: { label: 'Move Ball', color: '#fb923c', category: 'instant', durationTurns: 0, description: 'Teleport the ball to any spot you click.' },
   swapGoals: { label: 'Swap Goals', color: '#e879f9', category: 'instant', durationTurns: 1, description: 'Flip scoring direction for one turn.' },
   bigBumpers: { label: 'Big Bumpers', color: '#f97316', category: 'instant', durationTurns: 1, description: 'Corner bumpers grow stronger for one turn.' },
   boost: { label: 'Boost', color: '#38bdf8', category: 'field', durationTurns: 1, description: 'Place a directional boost pad.' },
   stickyGoo: { label: 'Sticky Goo', color: '#84cc16', category: 'field', durationTurns: 1, description: 'Place a sticky slow zone.' },
   ramp: { label: 'Ramp', color: '#a78bfa', category: 'field', durationTurns: 1, description: 'Place a ramp deflector.' },
   block: { label: 'Block', color: '#94a3b8', category: 'field', durationTurns: 1, description: 'Place a temporary wall.' },
-  bigHead: { label: 'Big Head', color: '#ef4444', category: 'bobble', durationTurns: 1, description: 'Target bobble grows and kicks harder.' },
-  ghosted: { label: 'Ghosted', color: '#d8b4fe', category: 'bobble', durationTurns: 1, description: 'Target bobble passes through bobbles and boxes.' },
-  movePlayer: { label: 'Move Player', color: '#fde047', category: 'bobble', durationTurns: 0, description: 'Move a target bobble to center field.' }
+  bigHead: { label: 'Big Head', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead grows and kicks harder.' },
+  ghosted: { label: 'Ghosted', color: '#d8b4fe', category: 'babble', durationTurns: 1, description: 'Target babblehead passes through babbleheads and boxes.' },
+  movePlayer: { label: 'Move Player', color: '#fde047', category: 'babble', durationTurns: 0, description: 'Move a target babblehead back toward center field.' }
 } as const;
 export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
@@ -84,10 +84,10 @@ export type PlayerState = {
   team: TeamId;
   score: number;
   connected: boolean;
-  controlledBobbleIds: string[];
+  controlledBabbleIds: string[];
 };
 
-export type BobbleState = {
+export type BabbleState = {
   id: string;
   side: PlayerSide;
   pos: Vec;
@@ -106,11 +106,16 @@ export const FIELD_OBJECT_TYPES: readonly FieldObjectType[] = ['boost', 'stickyG
 export const ROTATABLE_FIELD_OBJECTS: readonly FieldObjectType[] = ['boost', 'ramp', 'block'] as const;
 export type FieldObject = { id: string; type: FieldObjectType; owner: PlayerSide; pos: Vec; angle: number; untilTurn: number };
 export type BumperEvent = { pos: Vec; at: number };
+// Ramp launch feedback: which mover flew off which ramp lip, so the client can
+// animate a visible hop/launch arc for exactly that mover.
+export type RampEvent = { pos: Vec; at: number; mover: 'ball' | 'babble'; moverId?: string };
 export type RoomPhase = 'lobby' | 'formationSelect' | 'planning' | 'resolving' | 'goal' | 'finished';
 export type ChatEvent = { at: number; message: string };
-export type TurnIntent = { bobbleId: string; aimAngle: number; impulse: number };
-export type PowerPlayUse = { type: BoxType; targetBobbleId?: string; position?: Vec; angle?: number };
-export type InventoryItem = { type: BoxType; availableTurn: number };
+export type TurnIntent = { babbleId: string; aimAngle: number; impulse: number };
+export type PowerPlayUse = { type: BoxType; targetBabbleId?: string; position?: Vec; angle?: number };
+// holderId: the specific player carrying this box. Each player may hold at most
+// one box (server-enforced); teammates can see holders, opponents cannot.
+export type InventoryItem = { type: BoxType; availableTurn: number; holderId?: string };
 export type MatchConfig = {
   goalTarget: GameMode;
   length: GameLength;
@@ -135,15 +140,19 @@ export type GameState = {
   sideTeams: Record<PlayerSide, TeamId>;
   formationSelectionTurn: number | null;
   formations: Record<PlayerSide, FormationId>;
-  bobbles: BobbleState[];
+  babbles: BabbleState[];
   ball: BallState;
   boxes: BoxState[];
   fieldObjects: FieldObject[];
   bumperEvents: BumperEvent[];
+  rampEvents: RampEvent[];
   bigBumpersUntilTurn: number | null;
   beachBallUntilTurn: number | null;
   pendingIntents: Record<string, TurnIntent>;
   powerPlayInventories: Record<PlayerSide, InventoryItem[]>;
+  // Redacted box counts per side: opponents only ever learn how many boxes a
+  // team holds, never the types or holders (set on server before emitting).
+  powerPlayCounts?: Record<PlayerSide, number>;
   score: Record<PlayerSide, number>;
   swappedGoalsUntilTurn: number | null;
   events: ChatEvent[];

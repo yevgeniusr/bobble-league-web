@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "Web-based multiplayer bobble soccer game inspired by Discord party sports games.",
+  "description": "Babble League: web-based multiplayer babble soccer game inspired by Discord party sports games.",
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
@@ -11,6 +11,7 @@
     "test": "vitest run",
     "betabots": "node scripts/betabots-match.mjs",
     "multiplayer-smoke": "node scripts/multiplayer-smoke.mjs",
+    "smoke": "node scripts/stage1-smoke.mjs",
     "test:watch": "vitest",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit"

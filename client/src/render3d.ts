@@ -1,10 +1,18 @@
 import * as THREE from 'three';
 import { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from '../../shared/game';
-import { BIG_BUMPER_RADIUS, BOX_TYPES, BUMPER_RADIUS, BUMPERS, FIELD, FieldObjectType, GameState, TEAMS, Vec } from '../../shared/types';
+import { BIG_BUMPER_RADIUS, BOX_TYPES, BUMPER_RADIUS, BUMPERS, FIELD, FieldObjectType, GameState, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec } from '../../shared/types';
 
 export type WorldXZ = { x: number; z: number };
 export type PlacingGhost = { type: FieldObjectType; pos: Vec; angle: number };
-export type RenderInput = { state: GameState; you: string; drag: { bobbleId: string; start: Vec; current: Vec } | null; placing?: PlacingGhost | null; selectedBobbleId?: string | null };
+export type RenderInput = {
+  state: GameState;
+  you: string;
+  drag: { babbleId: string; start: Vec; current: Vec } | null;
+  placing?: PlacingGhost | null;
+  selectedBabbleId?: string | null;
+  // optimistic hold-LMB rotation: pad follows the cursor before the server echoes
+  rotatingPad?: { id: string; angle: number } | null;
+};
 
 export function fieldToWorld(p: Vec): WorldXZ { return { x: (p.x - FIELD.width / 2) / 50, z: (p.y - FIELD.height / 2) / 50 }; }
 export function worldToField(p: WorldXZ): Vec { return { x: p.x * 50 + FIELD.width / 2, y: p.z * 50 + FIELD.height / 2 }; }
@@ -15,6 +23,37 @@ export const BUMPER_WORLD_POSITIONS: WorldXZ[] = BUMPERS.map(fieldToWorld);
 // roll always matches travel direction (field x -> world x, field y -> world z).
 export function ballSpinToRotation(spin: Vec): { x: number; z: number } {
   return { x: spin.y, z: -spin.x };
+}
+
+// True rolling: incremental rotation about the axis perpendicular to travel.
+// Given the field-space delta the ball moved and its world radius, returns the
+// normalized world-space roll axis and the angle (distance / radius).
+export function rollDelta(deltaField: Vec, radiusWorld: number): { axis: { x: number; y: number; z: number }; angle: number } {
+  const dx = deltaField.x / 50, dz = deltaField.y / 50;
+  const distW = Math.hypot(dx, dz);
+  if (distW < 1e-6 || radiusWorld <= 0) return { axis: { x: 1, y: 0, z: 0 }, angle: 0 };
+  // rolling axis = up × direction = (0,1,0) × (dx,0,dz)/dist = (dz, 0, -dx)/dist
+  return { axis: { x: dz / distW, y: 0, z: -dx / distW }, angle: distW / radiusWorld };
+}
+
+// Teleports (goal reset, Move Ball) larger than this skip the roll animation.
+export const ROLL_TELEPORT_FIELD_DIST = 180;
+
+// Ramp launch hop: parabolic vertical offset (world units) for a mover that
+// just flew off a ramp lip. age is seconds since the launch event.
+export const RAMP_HOP_SECONDS = 0.7;
+export function rampHopOffset(ageSeconds: number): number {
+  if (ageSeconds < 0 || ageSeconds > RAMP_HOP_SECONDS) return 0;
+  const t = ageSeconds / RAMP_HOP_SECONDS;
+  return Math.sin(Math.PI * t) * 1.15;
+}
+export function latestRampEvent(events: readonly RampEvent[] | undefined, mover: 'ball' | 'babble', moverId: string | undefined, now: number): RampEvent | null {
+  if (!events) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.mover === mover && e.moverId === moverId && (now - e.at) / 1000 <= RAMP_HOP_SECONDS) return e;
+  }
+  return null;
 }
 
 export const GOAL_COLORS = { left: 0x4a5ad6, right: 0xf05d48 } as const;
@@ -28,7 +67,7 @@ const TURF_Y = 1.02;
 const toV3 = (p: Vec, y = 0) => { const w = fieldToWorld(p); return new THREE.Vector3(w.x, y, w.z); };
 const hashId = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return (h >>> 0) / 4294967295; };
 
-export class BobbleLeague3DRenderer {
+export class BabbleLeague3DRenderer {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
@@ -40,6 +79,9 @@ export class BobbleLeague3DRenderer {
   private board = new THREE.Group();
   private dynamic = new THREE.Group();
   private goalTint: Record<'left' | 'right', THREE.MeshStandardMaterial[]> = { left: [], right: [] };
+  // persistent rolling state so the ball markings physically roll with travel
+  private ballQuat = new THREE.Quaternion();
+  private lastBallPos: Vec | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
@@ -87,16 +129,26 @@ export class BobbleLeague3DRenderer {
     return this.raycaster.ray.intersectPlane(this.plane, hit) ? worldToField({ x: hit.x, z: hit.z }) : null;
   }
 
-  render({ state, you, drag, placing, selectedBobbleId }: RenderInput) {
+  render({ state, you, drag, placing, selectedBabbleId, rotatingPad }: RenderInput) {
     this.clearDynamic();
     this.buildHud(state);
     this.applyGoalSwap(state);
-    for (const obj of state.fieldObjects) if (obj.untilTurn >= state.turn) this.addFieldObject(obj.type, obj.pos, obj.angle);
+    const mySide = state.players[you]?.side;
+    for (const obj of state.fieldObjects) {
+      if (obj.untilTurn < state.turn) continue;
+      const angle = rotatingPad?.id === obj.id ? rotatingPad.angle : obj.angle;
+      this.addFieldObject(obj.type, obj.pos, angle);
+      // hold-LMB rotation affordance on your own live pads during planning
+      if (state.phase === 'planning' && obj.owner === mySide && ROTATABLE_FIELD_OBJECTS.includes(obj.type)) {
+        this.addRotateAffordance(obj.pos, rotatingPad?.id === obj.id);
+      }
+    }
     for (const box of state.boxes) this.addPowerBox(box.pos, BOX_TYPES[box.type].color);
-    for (const b of state.bobbles) this.addBobble(b, state, you, selectedBobbleId);
-    this.addBall(state.ball.pos, state.ball.radius, state.ball.spin);
+    for (const b of state.babbles) this.addBabble(b, state, you, selectedBabbleId);
+    this.addBall(state);
     this.addBumperFx(state);
-    if (state.phase === 'planning') this.addCommittedIntents(state, you, drag?.bobbleId);
+    this.addRampFx(state);
+    if (state.phase === 'planning') this.addCommittedIntents(state, you, drag?.babbleId);
     if (drag) this.addAimAffordance(state, drag);
     if (placing) this.addFieldObject(placing.type, placing.pos, placing.angle, true);
     this.renderer.render(this.scene, this.camera);
@@ -118,6 +170,12 @@ export class BobbleLeague3DRenderer {
       this.matCache.set(key, m);
     }
     return m as THREE.MeshStandardMaterial;
+  }
+  // cached textured materials (created once, reused every frame, disposed on teardown)
+  private texturedMat(key: string, make: () => THREE.Material) {
+    let m = this.matCache.get(key);
+    if (!m) { m = make(); this.matCache.set(key, m); }
+    return m;
   }
   private clearDynamic() {
     this.dynamic.traverse(o => {
@@ -180,28 +238,45 @@ export class BobbleLeague3DRenderer {
     const col = GOAL_COLORS[key];
     const halfGoal = fieldRadiusToWorld(FIELD.goalHeight) / 2;
     // dedicated tintable materials so Swap Goals can visibly recolor the gates
-    const frameTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.35, metalness: 0.03 });
-    const mouthTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.6, metalness: 0.03, transparent: true, opacity: 0.35 });
-    this.goalTint[key].push(frameTint, mouthTint);
+    const frameTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.32, metalness: 0.06 });
+    const mouthTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.55, metalness: 0.03, transparent: true, opacity: 0.5 });
+    const panelTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.62, metalness: 0.03 });
+    this.goalTint[key].push(frameTint, mouthTint, panelTint);
     this.matCache.set(`goalFrame:${key}`, frameTint);
     this.matCache.set(`goalMouth:${key}`, mouthTint);
-    // posts
+    this.matCache.set(`goalPanel:${key}`, panelTint);
+    const cream = this.mat(0xfff3be, 0.35);
+    // chunky posts with cream collars and finials
     for (const s of [-1, 1] as const) {
-      this.mesh(g, new THREE.CylinderGeometry(0.16, 0.2, 1.5, 20), frameTint, x, 1.6, s * halfGoal, true);
-      this.mesh(g, new THREE.SphereGeometry(0.22, 20, 12), this.mat(0xfff3be, 0.35), x, 2.36, s * halfGoal, true);
+      this.mesh(g, new THREE.CylinderGeometry(0.17, 0.23, 1.9, 20), frameTint, x, 1.78, s * halfGoal, true);
+      this.mesh(g, new THREE.CylinderGeometry(0.3, 0.34, 0.2, 20), cream, x, 0.98, s * halfGoal, true);
+      this.mesh(g, new THREE.SphereGeometry(0.24, 20, 12), cream, x, 2.82, s * halfGoal, true);
     }
-    // crossbar hoop
-    const bar = new THREE.Mesh(this.geo(`goalBar${halfGoal.toFixed(2)}`, () => new THREE.CylinderGeometry(0.13, 0.13, halfGoal * 2, 16)), frameTint);
-    bar.position.set(x, 2.32, 0); bar.rotation.x = Math.PI / 2; bar.castShadow = true; g.add(bar);
+    // crossbar
+    const bar = new THREE.Mesh(this.geo(`goalBar${halfGoal.toFixed(2)}`, () => new THREE.CylinderGeometry(0.14, 0.14, halfGoal * 2, 16)), frameTint);
+    bar.position.set(x, 2.62, 0); bar.rotation.x = Math.PI / 2; bar.castShadow = true; g.add(bar);
+    // solid coloured back wall + side cheeks close the pocket so the gate reads as a real box
+    this.mesh(g, new THREE.BoxGeometry(0.18, 1.7, halfGoal * 2 + 0.34), panelTint, x + side * 0.95, 1.6, 0, true);
+    for (const s of [-1, 1] as const) this.mesh(g, new THREE.BoxGeometry(1.0, 1.15, 0.15), panelTint, x + side * 0.5, 1.42, s * (halfGoal + 0.09), true);
+    // sloped canopy roof in the gate colour
+    const roof = this.mesh(g, new THREE.BoxGeometry(1.2, 0.12, halfGoal * 2 + 0.34), panelTint, x + side * 0.52, 2.52, 0, true);
+    roof.rotation.z = side * 0.32;
     // net: translucent wireframe box sunk into the goal mouth
     const net = new THREE.Mesh(
-      this.geo(`net${halfGoal.toFixed(2)}`, () => new THREE.BoxGeometry(0.8, 1.25, halfGoal * 2 - 0.2, 3, 4, 8)),
-      new THREE.MeshBasicMaterial({ color: 0xfff8e6, wireframe: true, transparent: true, opacity: 0.4 })
+      this.geo(`net${halfGoal.toFixed(2)}`, () => new THREE.BoxGeometry(0.8, 1.35, halfGoal * 2 - 0.2, 3, 4, 8)),
+      new THREE.MeshBasicMaterial({ color: 0xfff8e6, wireframe: true, transparent: true, opacity: 0.45 })
     );
-    net.position.set(x + side * 0.55, 1.68, 0); g.add(net);
-    // glowing goal mouth strip on the turf
-    const mouth = this.mesh(g, new THREE.BoxGeometry(0.9, 0.03, halfGoal * 2), mouthTint, x - side * 0.2, TURF_Y + 0.015, 0);
+    net.position.set(x + side * 0.55, 1.7, 0); g.add(net);
+    // glowing goal mouth strip on the turf plus inward chevrons marking the trigger line
+    const mouth = this.mesh(g, new THREE.BoxGeometry(1.0, 0.04, halfGoal * 2), mouthTint, x - side * 0.15, TURF_Y + 0.02, 0);
     mouth.receiveShadow = false;
+    for (const zOff of [-halfGoal * 0.55, 0, halfGoal * 0.55]) {
+      const chev = new THREE.Mesh(this.geo('goalChevron', () => new THREE.ConeGeometry(0.22, 0.5, 4)), frameTint);
+      chev.position.set(x - side * 0.95, TURF_Y + 0.07, zOff);
+      chev.rotation.set(0, Math.PI / 4, side * -Math.PI / 2);
+      chev.castShadow = false;
+      g.add(chev);
+    }
   }
 
   // Swap Goals power play: recolor the gates while active so everyone can see
@@ -243,8 +318,8 @@ export class BobbleLeague3DRenderer {
     m.position.set(x, TURF_Y + 0.03, z); m.rotation.x = -Math.PI / 2; m.scale.setScalar(r); m.receiveShadow = false; this.dynamic.add(m);
   }
 
-  private addBobble(b: GameState['bobbles'][number], state: GameState, you: string, selectedBobbleId?: string | null) {
-    const player = Object.values(state.players).find(p => p.side === b.side && p.controlledBobbleIds.includes(b.id)) ?? Object.values(state.players).find(p => p.side === b.side);
+  private addBabble(b: GameState['babbles'][number], state: GameState, you: string, selectedBabbleId?: string | null) {
+    const player = Object.values(state.players).find(p => p.side === b.side && p.controlledBabbleIds.includes(b.id)) ?? Object.values(state.players).find(p => p.side === b.side);
     const team = TEAMS[player?.team ?? 'pigs'];
     const w = fieldToWorld(b.pos);
     const r = fieldRadiusToWorld(b.radius);
@@ -253,7 +328,8 @@ export class BobbleLeague3DRenderer {
     const wobble = Math.sin(t * 2.4) * 0.09;
     this.blobShadow(w.x, w.z, r * 1.5);
 
-    const grp = new THREE.Group(); grp.position.set(w.x, 0, w.z); this.dynamic.add(grp);
+    const hop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'babble', b.id, Date.now())?.at ?? -1e12)) / 1000);
+    const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
     const sideCol = b.side === 'left' ? 0xe25a4c : 0x5147a8;
     // pedestal base
     this.mesh(grp, new THREE.CylinderGeometry(r * 1.05, r * 1.3, 0.22, 36), this.mat(sideCol, 0.45), 0, TURF_Y + 0.12, 0, true);
@@ -262,7 +338,7 @@ export class BobbleLeague3DRenderer {
     const torso = this.mesh(grp, new THREE.SphereGeometry(r * 0.62, 28, 18), this.mat(team.primary, 0.4), 0, TURF_Y + 0.6, 0, true);
     torso.scale.set(1, 1.15, 0.9);
     this.mesh(grp, new THREE.SphereGeometry(r * 0.4, 22, 14), this.mat(team.secondary, 0.45), 0, TURF_Y + 0.56, r * 0.32, true);
-    // oversized wobbling bobble head
+    // oversized wobbling babble head
     const head = new THREE.Group(); head.position.set(0, TURF_Y + 1.18 + bobY, 0); head.rotation.z = wobble; head.rotation.x = wobble * 0.5; grp.add(head);
     const skull = this.mesh(head, new THREE.SphereGeometry(r * 0.98, 40, 26), this.mat(team.primary, 0.32), 0, 0, 0, true);
     skull.scale.set(1, 1.08, 0.96);
@@ -280,13 +356,13 @@ export class BobbleLeague3DRenderer {
     badge.scale.setScalar(0.9);
     badge.position.set(w.x, TURF_Y + 0.66, w.z + r * 0.66);
     this.dynamic.add(badge);
-    // control ring for your bobbles
-    if (state.players[you]?.controlledBobbleIds.includes(b.id)) {
+    // control ring for your babbles
+    if (state.players[you]?.controlledBabbleIds.includes(b.id)) {
       const ring = new THREE.Mesh(this.geo('ctrlRing', () => new THREE.TorusGeometry(1, 0.06, 8, 48)), this.mat(0xffe86a, 0.4, { emissive: 0x6b5410 }));
       ring.position.set(w.x, TURF_Y + 0.04, w.z); ring.rotation.x = Math.PI / 2; ring.scale.setScalar(r * 1.55); this.dynamic.add(ring);
     }
     // click-to-select box target: pulsing cyan ring plus TARGET label
-    if (selectedBobbleId === b.id) {
+    if (selectedBabbleId === b.id) {
       const pulse = 1.8 + Math.sin(performance.now() / 180) * 0.12;
       const sel = new THREE.Mesh(this.geo('targetRing', () => new THREE.TorusGeometry(1, 0.09, 8, 48)),
         new THREE.MeshBasicMaterial({ color: 0x38f0e6, transparent: true, opacity: 0.9 }));
@@ -297,13 +373,26 @@ export class BobbleLeague3DRenderer {
     }
   }
 
-  private addBall(p: Vec, radius: number, spin?: Vec) {
+  private addBall(state: GameState) {
+    const p = state.ball.pos;
+    const radius = state.ball.radius;
     const w = fieldToWorld(p); const r = fieldRadiusToWorld(radius);
+    // physically-correct rolling: rotate about the axis perpendicular to the
+    // actual travel delta, by distance/radius, accumulated in a quaternion
+    if (this.lastBallPos) {
+      const delta = { x: p.x - this.lastBallPos.x, y: p.y - this.lastBallPos.y };
+      const distField = Math.hypot(delta.x, delta.y);
+      if (distField > 0 && distField < ROLL_TELEPORT_FIELD_DIST) {
+        const { axis, angle } = rollDelta(delta, r);
+        this.ballQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(axis.x, axis.y, axis.z), angle));
+      }
+    }
+    this.lastBallPos = { x: p.x, y: p.y };
     this.blobShadow(w.x, w.z, r * 1.5);
-    const grp = new THREE.Group(); grp.position.set(w.x, TURF_Y + r + 0.06, w.z);
-    // authoritative rolling spin: rotation axis always matches travel direction
-    const rot = ballSpinToRotation(spin ?? { x: 0, y: 0 });
-    grp.rotation.set(rot.x, 0, rot.z);
+    // ramp launch hop: the ball visibly pops off the wedge lip
+    const hop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'ball', undefined, Date.now())?.at ?? -1e12)) / 1000);
+    const grp = new THREE.Group(); grp.position.set(w.x, TURF_Y + r + 0.06 + hop, w.z);
+    grp.quaternion.copy(this.ballQuat);
     this.dynamic.add(grp);
     const ball = this.mesh(grp, new THREE.SphereGeometry(r, 36, 24), this.mat(0xfdfdfa, 0.3), 0, 0, 0, true);
     ball.castShadow = true;
@@ -318,15 +407,70 @@ export class BobbleLeague3DRenderer {
       spot.scale.setScalar(r);
       grp.add(spot);
     }
+    // thin seam rings so the roll reads clearly even from far away
+    for (const rx of [0, Math.PI / 2]) {
+      const seam = new THREE.Mesh(this.geo('ballSeam', () => new THREE.TorusGeometry(1, 0.035, 8, 40)), this.mat(0xd8d5cf, 0.5));
+      seam.scale.setScalar(r * 0.998); seam.rotation.x = rx; seam.castShadow = false; grp.add(seam);
+    }
   }
 
   private addPowerBox(p: Vec, color: string) {
     const w = fieldToWorld(p);
     const t = performance.now() / 1000;
-    this.blobShadow(w.x, w.z, 0.5);
-    const cube = this.mesh(this.dynamic, new THREE.BoxGeometry(0.72, 0.72, 0.72), this.mat(color, 0.25, { emissive: 0x1c1206 }), w.x, TURF_Y + 0.62 + Math.sin(t * 2.4 + w.x) * 0.07, w.z, true);
-    cube.rotation.y = t * 0.9 + w.x;
-    const q = this.text('?', 46); q.position.set(w.x, TURF_Y + 1.35, w.z); this.dynamic.add(q);
+    this.blobShadow(w.x, w.z, 0.6);
+    const bobY = Math.sin(t * 2.4 + w.x) * 0.07;
+    const grp = new THREE.Group();
+    grp.position.set(w.x, TURF_Y + 0.66 + bobY, w.z);
+    grp.rotation.y = t * 0.9 + w.x;
+    this.dynamic.add(grp);
+    // wooden crate body with a big stencilled ? on every side face
+    const cube = this.mesh(grp, this.geo('crateBody', () => new THREE.BoxGeometry(0.8, 0.8, 0.8)), this.texturedMat('crateSurface', () => new THREE.MeshStandardMaterial({ map: this.crateTexture(), roughness: 0.6, metalness: 0.02 })), 0, 0, 0, true);
+    cube.castShadow = true;
+    // coloured straps hint at the power category without revealing the type
+    const strap = this.mat(color, 0.35, { emissive: 0x221304 });
+    this.mesh(grp, this.geo('crateStrapX', () => new THREE.BoxGeometry(0.86, 0.18, 0.86)), strap, 0, 0, 0, true);
+    this.mesh(grp, this.geo('crateStrapY', () => new THREE.BoxGeometry(0.18, 0.86, 0.86)), strap, 0, 0, 0, true);
+    // golden corner caps
+    const cap = this.geo('crateCap', () => new THREE.SphereGeometry(0.09, 12, 8));
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) this.mesh(grp, cap, this.mat(0xffd166, 0.3), sx * 0.4, sy * 0.4, sz * 0.4);
+    // pulsing glow ring on the turf under the crate
+    const glow = new THREE.Mesh(this.geo('crateGlow', () => new THREE.TorusGeometry(1, 0.05, 8, 40)),
+      new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.5 + Math.sin(t * 3) * 0.2 }));
+    glow.position.set(w.x, TURF_Y + 0.05, w.z);
+    glow.rotation.x = Math.PI / 2;
+    glow.scale.setScalar(0.75 + Math.sin(t * 3) * 0.06);
+    this.dynamic.add(glow);
+    const q = this.text('?', 46); q.position.set(w.x, TURF_Y + 1.55 + bobY, w.z); this.dynamic.add(q);
+  }
+
+  // hand-painted crate texture: warm planks, nails and a stencilled ?
+  private crateTexture() {
+    const key = 'crateTexture';
+    let tex = this.textCache.get(key);
+    if (tex) return tex;
+    const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#c98a3e'; g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle = i % 2 ? '#b97a33' : '#d29a49';
+      g.fillRect(0, i * 64, 256, 60);
+      g.fillStyle = 'rgba(90,50,15,.55)';
+      g.fillRect(0, i * 64 + 60, 256, 4);
+    }
+    // wood grain streaks
+    g.strokeStyle = 'rgba(120,70,25,.35)'; g.lineWidth = 3;
+    for (let i = 0; i < 9; i++) { g.beginPath(); g.moveTo(10 + i * 28, 8); g.bezierCurveTo(20 + i * 28, 80, 2 + i * 28, 170, 14 + i * 28, 248); g.stroke(); }
+    // frame + nails
+    g.strokeStyle = '#8a5a22'; g.lineWidth = 14; g.strokeRect(7, 7, 242, 242);
+    g.fillStyle = '#ffd166';
+    for (const [x, y] of [[24, 24], [232, 24], [24, 232], [232, 232]]) { g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.fill(); }
+    // stencilled question mark
+    g.font = '900 150px Fredoka, Arial'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.strokeStyle = 'rgba(70,35,5,.9)'; g.lineWidth = 12; g.strokeText('?', 128, 136);
+    g.fillStyle = '#fff3be'; g.fillText('?', 128, 136);
+    tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
+    this.textCache.set(key, tex);
+    return tex;
   }
 
   private addFieldObject(type: string, p: Vec, angle: number, ghost = false) {
@@ -352,27 +496,62 @@ export class BobbleLeague3DRenderer {
     } else if (type === 'ramp') {
       // true wedge shape matching physics zone: low lip at -x rising to the
       // launch lip at +x (local +x == ramp facing/launch direction)
+      const hx = fieldRadiusToWorld(RAMP_HALF_LEN), hz = fieldRadiusToWorld(RAMP_HALF_WIDTH);
       const wedge = new THREE.Mesh(this.geo('rampWedge', () => this.wedgeGeometry()), fx(col, 0.35));
       wedge.position.y = TURF_Y + 0.01; wedge.castShadow = !ghost; wedge.receiveShadow = true; grp.add(wedge);
-      // base plate + launch direction chevrons up the slope
-      this.mesh(grp, new THREE.BoxGeometry(fieldRadiusToWorld(RAMP_HALF_LEN) * 2 + 0.24, 0.08, fieldRadiusToWorld(RAMP_HALF_WIDTH) * 2 + 0.24), fx(0x7c6ae8, 0.45), 0, TURF_Y + 0.04, 0);
+      // base plate, raised side rails and a hazard-striped launch lip
+      this.mesh(grp, new THREE.BoxGeometry(hx * 2 + 0.24, 0.08, hz * 2 + 0.24), fx(0x7c6ae8, 0.45), 0, TURF_Y + 0.04, 0);
+      for (const s of [-1, 1] as const) {
+        const rail = this.mesh(grp, new THREE.BoxGeometry(Math.hypot(hx * 2, 0.82) + 0.1, 0.14, 0.12), fx(0x5b4bc4, 0.4), 0, TURF_Y + 0.45, s * (hz + 0.05), !ghost);
+        rail.rotation.z = Math.atan2(0.82, hx * 2); // follow the slope up to the lip
+      }
+      const lip = this.mesh(grp, new THREE.BoxGeometry(0.18, 0.94, hz * 2 + 0.2), ghost ? fx(0xfde047, 0.35) : this.texturedMat('hazardLip', () => new THREE.MeshStandardMaterial({ map: this.hazardTexture(), roughness: 0.4 })), hx - 0.04, TURF_Y + 0.42, 0, !ghost);
+      lip.castShadow = !ghost;
+      // launch direction chevrons up the slope
       for (const [off, h] of [[-0.7, 0.28], [0, 0.52], [0.7, 0.76]] as const) {
-        const arrow = new THREE.Mesh(this.geo('rampArrow', () => new THREE.ConeGeometry(0.18, 0.44, 4)), ghost ? fx(0xf5f3ff, 0.3) : this.mat(0xf5f3ff, 0.3));
+        const arrow = new THREE.Mesh(this.geo('rampArrow', () => new THREE.ConeGeometry(0.18, 0.44, 4)), ghost ? fx(0xf5f3ff, 0.3) : this.mat(0xf5f3ff, 0.3, { emissive: 0x4c3d99 }));
         arrow.position.set(off, TURF_Y + h, 0);
         arrow.rotation.set(0, Math.PI / 4, -Math.PI / 2);
         grp.add(arrow);
       }
     } else {
-      // boost pad (physics radius 70 -> 1.4) with chevron arrows along the push direction
+      // boost pad (physics radius 70 -> 1.4): glowing turbine ring + animated chevrons
+      const t = performance.now() / 1000;
       const pad = this.mesh(grp, new THREE.CylinderGeometry(1.4, 1.5, 0.1, 36), fx(col, 0.45), 0, TURF_Y + 0.06, 0);
       pad.castShadow = false;
-      for (const off of [-0.55, 0.1, 0.75]) {
-        const arrow = new THREE.Mesh(this.geo('boostArrow', () => new THREE.ConeGeometry(0.22, 0.55, 4)), ghost ? fx(0xf0f9ff, 0.3) : this.mat(0xf0f9ff, 0.3));
-        arrow.position.set(off, TURF_Y + 0.16, 0);
+      const rim = this.mesh(grp, new THREE.CylinderGeometry(1.46, 1.52, 0.06, 36), ghost ? fx(0x0ea5e9, 0.3) : this.mat(0x0ea5e9, 0.3, { emissive: 0x0b4a66 }), 0, TURF_Y + 0.12, 0);
+      rim.castShadow = false;
+      // speed streak decals sweeping with time so the pad reads as powered-on
+      if (!ghost) {
+        const swirl = new THREE.Mesh(this.geo('boostSwirl', () => new THREE.TorusGeometry(1.05, 0.05, 6, 40, Math.PI * 0.9)),
+          new THREE.MeshBasicMaterial({ color: 0xe0f2fe, transparent: true, opacity: 0.75 }));
+        swirl.position.set(0, TURF_Y + 0.13, 0); swirl.rotation.x = Math.PI / 2; swirl.rotation.z = -t * 3.2;
+        grp.add(swirl);
+      }
+      for (const [i, off] of [-0.55, 0.1, 0.75].entries()) {
+        const pulse = ghost ? 0 : Math.max(0, Math.sin(t * 5 - i * 1.1)) * 0.12;
+        const arrow = new THREE.Mesh(this.geo('boostArrow', () => new THREE.ConeGeometry(0.24, 0.62, 4)), ghost ? fx(0xf0f9ff, 0.3) : this.mat(0xf0f9ff, 0.3, { emissive: 0x2a6f8f }));
+        arrow.position.set(off + pulse, TURF_Y + 0.18, 0);
         arrow.rotation.set(0, Math.PI / 4, -Math.PI / 2);
+        arrow.scale.setScalar(1 + pulse);
         grp.add(arrow);
       }
     }
+  }
+
+  // yellow/black hazard stripes for the ramp launch lip
+  private hazardTexture() {
+    const key = 'hazardTexture';
+    let tex = this.textCache.get(key);
+    if (tex) return tex;
+    const c = document.createElement('canvas'); c.width = 128; c.height = 128;
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#fbbf24'; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = '#1f2937';
+    for (let i = -2; i < 6; i++) { g.save(); g.translate(i * 32, 0); g.rotate(Math.PI / 4); g.fillRect(0, -64, 16, 256); g.restore(); }
+    tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
+    this.textCache.set(key, tex);
+    return tex;
   }
 
   // wedge prism: flat low edge at local -x rising to a tall launch lip at +x
@@ -439,10 +618,53 @@ export class BobbleLeague3DRenderer {
     }
   }
 
+  // -- ramp launch FX ------------------------------------------------------
+  private addRampFx(state: GameState) {
+    const now = Date.now();
+    for (const ev of state.rampEvents ?? []) {
+      const age = (now - ev.at) / 900;
+      if (age < 0 || age > 1) continue;
+      const w = fieldToWorld(ev.pos);
+      const fade = 1 - age;
+      // rising violet burst ring at the lip
+      const ring = new THREE.Mesh(this.geo('rampPulse', () => new THREE.TorusGeometry(1, 0.06, 8, 48)),
+        new THREE.MeshBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.8 * fade }));
+      ring.position.set(w.x, TURF_Y + 0.15 + age * 1.4, w.z);
+      ring.rotation.x = Math.PI / 2;
+      ring.scale.setScalar(0.5 + age * 1.6);
+      this.dynamic.add(ring);
+      const spark = new THREE.Mesh(this.geo('rampSpark', () => new THREE.SphereGeometry(1, 16, 10)),
+        new THREE.MeshBasicMaterial({ color: 0xede9fe, transparent: true, opacity: 0.55 * fade, depthWrite: false }));
+      spark.position.set(w.x, TURF_Y + 0.6 + age * 1.6, w.z);
+      spark.scale.setScalar(0.3 + age * 0.5);
+      this.dynamic.add(spark);
+    }
+  }
+
+  // -- rotation affordance --------------------------------------------------
+  // Dashed ring + ⟳ handle over your own rotatable pads: hold LMB and drag to spin.
+  private addRotateAffordance(pos: Vec, active: boolean) {
+    const w = fieldToWorld(pos);
+    const t = performance.now() / 1000;
+    const ring = new THREE.Mesh(this.geo('rotateRing', () => new THREE.TorusGeometry(1, 0.045, 8, 48)),
+      new THREE.MeshBasicMaterial({ color: active ? 0x38f0e6 : 0xfff3be, transparent: true, opacity: active ? 0.95 : 0.4 + Math.sin(t * 2.4) * 0.12 }));
+    ring.position.set(w.x, TURF_Y + 0.06, w.z);
+    ring.rotation.x = Math.PI / 2;
+    ring.rotation.z = active ? t * 2 : 0;
+    ring.scale.setScalar(1.75);
+    this.dynamic.add(ring);
+    if (!active) {
+      const handle = this.text('⟳', 30, '#fff3be');
+      handle.position.set(w.x + 1.35, TURF_Y + 0.9, w.z - 1.1);
+      handle.scale.multiplyScalar(0.7);
+      this.dynamic.add(handle);
+    }
+  }
+
   // -- aiming affordance --------------------------------------------------
-  private addAimAffordance(state: GameState, drag: { bobbleId: string; start: Vec; current: Vec }) {
-    const bobble = state.bobbles.find(b => b.id === drag.bobbleId);
-    const origin = bobble?.pos ?? drag.start;
+  private addAimAffordance(state: GameState, drag: { babbleId: string; start: Vec; current: Vec }) {
+    const babble = state.babbles.find(b => b.id === drag.babbleId);
+    const origin = babble?.pos ?? drag.start;
     const dx = origin.x - drag.current.x, dy = origin.y - drag.current.y;
     const pull = Math.hypot(dx, dy);
     if (pull < 4) return;
@@ -459,15 +681,15 @@ export class BobbleLeague3DRenderer {
     this.drawLaunchArrow(origin, Math.atan2(dy, dx), power, 1);
   }
 
-  // committed intents stay visible for every aimed bobble on your side until resolution begins
-  private addCommittedIntents(state: GameState, you: string, skipBobbleId?: string) {
+  // committed intents stay visible for every aimed babble on your side until resolution begins
+  private addCommittedIntents(state: GameState, you: string, skipBabbleId?: string) {
     const mySide = state.players[you]?.side;
     if (!mySide) return;
     for (const intent of Object.values(state.pendingIntents)) {
-      if (intent.bobbleId === skipBobbleId) continue;
-      const bobble = state.bobbles.find(b => b.id === intent.bobbleId);
-      if (!bobble || bobble.side !== mySide) continue;
-      this.drawLaunchArrow(bobble.pos, intent.aimAngle, Math.min(1, intent.impulse / 900), 0.72);
+      if (intent.babbleId === skipBabbleId) continue;
+      const babble = state.babbles.find(b => b.id === intent.babbleId);
+      if (!babble || babble.side !== mySide) continue;
+      this.drawLaunchArrow(babble.pos, intent.aimAngle, Math.min(1, intent.impulse / 900), 0.72);
     }
   }
 
@@ -494,7 +716,7 @@ export class BobbleLeague3DRenderer {
       d.position.copy(o.clone().add(dir.clone().multiplyScalar(len + 0.5 + i * 0.55)));
       this.dynamic.add(d);
     }
-    // power ring pulsing around the bobble
+    // power ring pulsing around the babble
     const ring = new THREE.Mesh(this.geo('aimRing', () => new THREE.TorusGeometry(1, 0.05, 8, 48)), basic(0.9 * opacity));
     ring.position.set(o.x, TURF_Y + 0.05, o.z); ring.rotation.x = Math.PI / 2;
     ring.scale.setScalar(0.7 + power * 0.9); this.dynamic.add(ring);
@@ -507,7 +729,7 @@ export class BobbleLeague3DRenderer {
     const board = this.scorePanel(state.score.left, state.score.right, state.turn, state.config.maxTurns, TEAMS[left?.team ?? 'pigs'].emoji, TEAMS[right?.team ?? 'snow'].emoji);
     board.position.set(0, 4.6, -FIELD_Z / 2 - 1.4);
     this.dynamic.add(board);
-    const logo = this.text('BOBBLE\nLEAGUE', 52, '#ffd94f');
+    const logo = this.text('BABBLE\nLEAGUE', 52, '#ffd94f');
     logo.position.set(FIELD_X / 2 - 1.3, 4.4, -FIELD_Z / 2 - 1.2);
     logo.scale.multiplyScalar(0.85);
     this.dynamic.add(logo);

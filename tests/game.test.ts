@@ -8,10 +8,14 @@ import {
   BOX_LIFETIME_TURNS,
   collectPowerBox,
   createInitialState,
+  findDisconnectedSeat,
   grantCheatBox,
-  launchBobble,
+  launchBabble,
   MAX_RESOLVE_MS,
   RAMP_LAUNCH_SPEED,
+  reclaimPlayer,
+  redactStateFor,
+  removePlayer,
   rotateFieldObject,
   setFieldObjectAngle,
   setSideTeam,
@@ -24,8 +28,8 @@ import { BOX_TYPE_IDS, BUMPERS, FIELD } from '../shared/types';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
-describe('classic Bobble League shared rules', () => {
-  it('starts classic matches with four bobbles per team in selected formations', () => {
+describe('classic Babble League shared rules', () => {
+  it('starts classic matches with four babbles per team in selected formations', () => {
     const s = createInitialState('TEST', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
@@ -34,10 +38,10 @@ describe('classic Bobble League shared rules', () => {
     startGame(s, seq([0.5]));
 
     expect(s.phase).toBe('planning');
-    expect(s.bobbles.filter(b => b.side === 'left')).toHaveLength(4);
-    expect(s.bobbles.filter(b => b.side === 'right')).toHaveLength(4);
-    expect(s.bobbles.find(b => b.id === 'left-1')?.pos.x).toBeGreaterThan(250);
-    expect(s.bobbles.find(b => b.id === 'right-1')?.pos.x).toBeGreaterThan(FIELD.width - 260);
+    expect(s.babbles.filter(b => b.side === 'left')).toHaveLength(4);
+    expect(s.babbles.filter(b => b.side === 'right')).toHaveLength(4);
+    expect(s.babbles.find(b => b.id === 'left-1')?.pos.x).toBeGreaterThan(250);
+    expect(s.babbles.find(b => b.id === 'right-1')?.pos.x).toBeGreaterThan(FIELD.width - 260);
   });
 
   it('uses drag/launch intents and resolves turn-based physics back to planning', () => {
@@ -46,12 +50,12 @@ describe('classic Bobble League shared rules', () => {
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
 
-    const accepted = launchBobble(s, 'l', { bobbleId: 'left-1', aimAngle: 0, impulse: 600 }, 1000);
+    const accepted = launchBabble(s, 'l', { babbleId: 'left-1', aimAngle: 0, impulse: 600 }, 1000);
     expect(accepted).toBe(true);
     expect(s.phase).toBe('planning');
     expect(s.pendingIntents['left-1']?.impulse).toBe(600);
-    for (const id of ['left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: 0, impulse: 1 }, 1000);
-    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
+    for (const id of ['left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 1 }, 1000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
     stepGame(s, {}, 1000, seq([0.1, 0.2, 0.3]));
     expect(s.phase).toBe('resolving');
 
@@ -74,8 +78,8 @@ describe('classic Bobble League shared rules', () => {
       addPlayer(s, 'r', 'Righty', 'tigers', 'right');
       startGame(s);
       s.turn = maxTurns;
-      for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
-      for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: 0, impulse: 1 }, 1000);
+      for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
+      for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: 0, impulse: 1 }, 1000);
       for (let i = 0; i < 400 && s.phase !== 'finished'; i++) stepGame(s, {}, 1000 + i * 33);
       expect(s.phase).toBe('finished');
       expect(s.winner).toBeNull();
@@ -88,18 +92,18 @@ describe('classic Bobble League shared rules', () => {
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
     const type = 'bigHead';
-    s.boxes = [{ id: 'box-1', type, anchor: 'topMid', pos: { ...s.bobbles[0].pos }, spawnedAt: 1000 }];
+    s.boxes = [{ id: 'box-1', type, anchor: 'topMid', pos: { ...s.babbles[0].pos }, spawnedAt: 1000 }];
 
-    collectPowerBox(s, s.bobbles[0], 1000);
+    collectPowerBox(s, s.babbles[0], 1000);
 
     expect(s.boxes).toHaveLength(0);
-    expect(s.powerPlayInventories.left).toEqual([{ type, availableTurn: 2 }]);
-    expect(usePowerPlay(s, 'l', { type, targetBobbleId: 'left-1' }, 1000)).toBe(false);
+    expect(s.powerPlayInventories.left).toEqual([{ type, availableTurn: 2, holderId: 'l' }]);
+    expect(usePowerPlay(s, 'l', { type, targetBabbleId: 'left-1' }, 1000)).toBe(false);
 
     s.turn = 2;
-    expect(usePowerPlay(s, 'l', { type, targetBobbleId: 'left-1' }, 2000)).toBe(true);
+    expect(usePowerPlay(s, 'l', { type, targetBabbleId: 'left-1' }, 2000)).toBe(true);
     expect(s.powerPlayInventories.left).toHaveLength(0);
-    expect(s.bobbles[0].effects.map(e => e.type)).toContain('bigHead');
+    expect(s.babbles[0].effects.map(e => e.type)).toContain('bigHead');
   });
 
   it('keeps spawned boxes alive by turn count so planning timers do not expire pickup', () => {
@@ -132,7 +136,7 @@ describe('classic Bobble League shared rules', () => {
     stepGame(s, {}, 1033, seq([0.5]));
 
     expect(s.boxes.some(b => b.id === 'ball-box')).toBe(false);
-    expect(s.powerPlayInventories.left).toEqual([{ type: 'boost', availableTurn: 2 }]);
+    expect(s.powerPlayInventories.left).toEqual([{ type: 'boost', availableTurn: 2, holderId: 'l' }]);
     expect(s.powerPlayInventories.right).toHaveLength(0);
   });
 
@@ -143,10 +147,10 @@ describe('classic Bobble League shared rules', () => {
     startGame(s, seq([0.5]));
     s.powerPlayInventories.left.push({ type: 'bigHead', availableTurn: 1 });
 
-    expect(usePowerPlay(s, 'l', { type: 'bigHead', targetBobbleId: 'right-2' }, 1000)).toBe(true);
+    expect(usePowerPlay(s, 'l', { type: 'bigHead', targetBabbleId: 'right-2' }, 1000)).toBe(true);
 
-    expect(s.bobbles.find(b => b.id === 'right-2')?.effects.map(e => e.type)).toContain('bigHead');
-    expect(s.bobbles.find(b => b.id === 'left-1')?.effects.map(e => e.type)).not.toContain('bigHead');
+    expect(s.babbles.find(b => b.id === 'right-2')?.effects.map(e => e.type)).toContain('bigHead');
+    expect(s.babbles.find(b => b.id === 'left-1')?.effects.map(e => e.type)).not.toContain('bigHead');
   });
 
   it('locks formation selection except kickoff and the first turn after a goal', () => {
@@ -156,8 +160,8 @@ describe('classic Bobble League shared rules', () => {
     startGame(s, seq([0.5]));
 
     expect(applyFormation(s, 'left', 'box')).toBe(true);
-    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: 0, impulse: 1 }, 1000);
-    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
+    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 1 }, 1000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
     for (let i = 0; i < 400 && s.phase === 'planning'; i++) stepGame(s, {}, 1000 + i * 33, seq([0.5]));
     for (let i = 0; i < 400 && s.phase === 'resolving'; i++) stepGame(s, {}, 2000 + i * 33, seq([0.5]));
     expect(s.phase).toBe('planning');
@@ -208,15 +212,15 @@ describe('classic Bobble League shared rules', () => {
     expect(BOX_TYPE_IDS).toHaveLength(11);
   });
 
-  it('distributes four bobbles across four teammates and resolves when all eight are aimed', () => {
+  it('distributes four babbles across four teammates and resolves when all eight are aimed', () => {
     const s = createInitialState('EIGHT', 1);
     for (let i = 0; i < 4; i++) addPlayer(s, `l${i}`, `Left ${i}`, 'pigs', 'left');
     for (let i = 0; i < 4; i++) addPlayer(s, `r${i}`, `Right ${i}`, 'parrots', 'right');
     startGame(s, seq([0.5]));
-    for (let i = 0; i < 4; i++) expect(s.players[`l${i}`].controlledBobbleIds).toEqual([`left-${i + 1}`]);
-    for (let i = 0; i < 4; i++) expect(s.players[`r${i}`].controlledBobbleIds).toEqual([`right-${i + 1}`]);
-    for (let i = 1; i <= 4; i++) launchBobble(s, `l${i - 1}`, { bobbleId: `left-${i}`, aimAngle: 0, impulse: 50 }, 1000);
-    for (let i = 1; i <= 4; i++) launchBobble(s, `r${i - 1}`, { bobbleId: `right-${i}`, aimAngle: Math.PI, impulse: 50 }, 1000);
+    for (let i = 0; i < 4; i++) expect(s.players[`l${i}`].controlledBabbleIds).toEqual([`left-${i + 1}`]);
+    for (let i = 0; i < 4; i++) expect(s.players[`r${i}`].controlledBabbleIds).toEqual([`right-${i + 1}`]);
+    for (let i = 1; i <= 4; i++) launchBabble(s, `l${i - 1}`, { babbleId: `left-${i}`, aimAngle: 0, impulse: 50 }, 1000);
+    for (let i = 1; i <= 4; i++) launchBabble(s, `r${i - 1}`, { babbleId: `right-${i}`, aimAngle: Math.PI, impulse: 50 }, 1000);
     stepGame(s, {}, 1000, seq([0.5]));
     expect(s.phase).toBe('resolving');
     expect(Object.keys(s.pendingIntents)).toHaveLength(8);
@@ -238,8 +242,8 @@ describe('classic Bobble League shared rules', () => {
     expect(s.turn).toBe(2);
     expect(s.ball.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 });
 
-    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: 0, impulse: 1 }, 2000);
-    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 2000);
+    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 1 }, 2000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 2000);
     for (let i = 0; i < 400 && s.turn === 2; i++) stepGame(s, {}, 2000 + i * 33, seq([0.5]));
     expect(s.score.left).toBe(1);
     expect(s.score.right).toBe(0);
@@ -278,16 +282,16 @@ describe('classic Bobble League shared rules', () => {
     s.phase = 'resolving';
     s.resolvingStartedAt = 1000;
     for (let now = 1033; now <= 10990; now += 33) {
-      s.bobbles[0].vel = { x: 500, y: 0 }; // keep an object perpetually fast
+      s.babbles[0].vel = { x: 500, y: 0 }; // keep an object perpetually fast
       stepGame(s, {}, now, seq([0.5]));
       expect(s.phase).toBe('resolving'); // still resolving before the 10s cap
     }
-    s.bobbles[0].vel = { x: 500, y: 0 };
+    s.babbles[0].vel = { x: 500, y: 0 };
     stepGame(s, {}, 11001, seq([0.5]));
     expect(s.phase).toBe('planning');
     expect(s.turn).toBe(2);
     expect(s.ball.vel).toEqual({ x: 0, y: 0 });
-    for (const b of s.bobbles) expect(b.vel).toEqual({ x: 0, y: 0 }); // no physics carryover
+    for (const b of s.babbles) expect(b.vel).toEqual({ x: 0, y: 0 }); // no physics carryover
   });
 
   it('placed blocks deflect the ball, goo slows it, and boost pads accelerate it', () => {
@@ -332,8 +336,8 @@ describe('classic Bobble League shared rules', () => {
     expect(usePowerPlay(s, 'l', { type: 'beachBall' }, 1000)).toBe(true);
     expect(s.ball.radius).toBeGreaterThan(FIELD.ballRadius);
     expect(s.beachBallUntilTurn).toBe(1);
-    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBobble(s, 'l', { bobbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
-    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBobble(s, 'r', { bobbleId: id, aimAngle: 0, impulse: 1 }, 1000);
+    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: 0, impulse: 1 }, 1000);
     for (let i = 0; i < 400 && s.turn === 1; i++) stepGame(s, {}, 1000 + i * 33, seq([0.5]));
     expect(s.turn).toBe(2);
     expect(s.ball.radius).toBe(FIELD.ballRadius);
@@ -505,5 +509,253 @@ describe('classic Bobble League shared rules', () => {
     expect(s.phase).toBe('finished');
     expect(s.winner).toBe('left');
     expect(s.score.left).toBe(1);
+  });
+});
+
+describe('goal mouth scoring is airtight', () => {
+  const setup = (mode: 1 | 3 = 3) => {
+    const s = createInitialState('MOUTH', mode);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    return s;
+  };
+
+  it('scores the moment the ball overlaps the goal mouth so it can never rest inside a gate', () => {
+    const s = setup();
+    s.ball.pos = { x: 2, y: FIELD.goalY + 40 }; // stationary, overlapping the left mouth
+    s.ball.vel = { x: 0, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.score.right).toBe(1); // ball in the left gate credits the right team
+    expect(s.ball.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 }); // kickoff reset, nothing lingers in the gate
+  });
+
+  it('scores a stalled ball overlapping the right mouth too', () => {
+    const s = setup();
+    s.ball.pos = { x: FIELD.width - 2, y: FIELD.goalY + FIELD.goalHeight - 30 };
+    s.ball.vel = { x: 0, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.score.left).toBe(1);
+  });
+
+  it('does not score while the ball only touches the mouth plane from the field side', () => {
+    const s = setup();
+    s.ball.pos = { x: s.ball.radius, y: FIELD.goalY + 40 }; // resting against the line, not across it
+    s.ball.vel = { x: 0, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.score).toEqual({ left: 0, right: 0 });
+    expect(s.turn).toBe(2); // turn settled normally instead
+  });
+
+  it('does not score outside the mouth height even when far past the line', () => {
+    const s = setup();
+    s.ball.pos = { x: 2, y: FIELD.goalY - 40 };
+    s.ball.vel = { x: 0, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.score).toEqual({ left: 0, right: 0 });
+  });
+
+  it('credits the defending side while Swap Goals is active', () => {
+    const s = setup();
+    s.swappedGoalsUntilTurn = s.turn;
+    s.ball.pos = { x: 2, y: FIELD.goalY + 40 }; // left gate while swapped
+    s.ball.vel = { x: 0, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.score.left).toBe(1);
+    expect(s.score.right).toBe(0);
+  });
+});
+
+describe('one box per player (server-enforced)', () => {
+  it('rejects a pickup when the controlling player already holds a box, leaving it on the field', () => {
+    const s = createInitialState('ONEBOX', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'boost', availableTurn: 1, holderId: 'l' });
+    s.boxes = [{ id: 'box-1', type: 'bigHead', anchor: 'topMid', pos: { ...s.babbles[0].pos }, spawnedAt: 1000 }];
+
+    expect(collectPowerBox(s, s.babbles[0], 1000)).toBe(false);
+
+    expect(s.boxes).toHaveLength(1);
+    expect(s.powerPlayInventories.left).toHaveLength(1);
+  });
+
+  it('lets each teammate hold exactly one box', () => {
+    const s = createInitialState('ONEBOX2', 3);
+    addPlayer(s, 'l1', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'l2', 'Left Two', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    const babbleOf = (pid: string) => s.babbles.find(b => s.players[pid].controlledBabbleIds.includes(b.id))!;
+
+    s.boxes = [{ id: 'box-1', type: 'boost', anchor: 'topMid', pos: { ...babbleOf('l1').pos }, spawnedAt: 1000 }];
+    expect(collectPowerBox(s, babbleOf('l1'), 1000)).toBe(true);
+    expect(s.powerPlayInventories.left).toEqual([{ type: 'boost', availableTurn: 2, holderId: 'l1' }]);
+
+    s.boxes = [{ id: 'box-2', type: 'ghosted', anchor: 'topMid', pos: { ...babbleOf('l2').pos }, spawnedAt: 1100 }];
+    expect(collectPowerBox(s, babbleOf('l2'), 1100)).toBe(true);
+    expect(s.powerPlayInventories.left).toHaveLength(2);
+
+    s.boxes = [{ id: 'box-3', type: 'swapGoals', anchor: 'topMid', pos: { ...babbleOf('l1').pos }, spawnedAt: 1200 }];
+    expect(collectPowerBox(s, babbleOf('l1'), 1200)).toBe(false); // l1 is already full
+    expect(s.boxes).toHaveLength(1);
+  });
+
+  it('assigns ball pickups to a teammate with a free slot and never reveals the type publicly', () => {
+    const s = createInitialState('BALLONE', 3);
+    addPlayer(s, 'l1', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'l2', 'Left Two', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'boost', availableTurn: 1, holderId: 'l1' });
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.ball.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
+    s.ball.vel = { x: 0, y: 0 };
+    s.ball.lastTouchedBy = 'left';
+    s.boxes = [{ id: 'ball-box', type: 'bigHead', anchor: 'topMid', pos: { ...s.ball.pos }, spawnedAt: 1000, untilTurn: s.turn + 2 }];
+
+    stepGame(s, {}, 1033, seq([0.5]));
+
+    expect(s.powerPlayInventories.left).toContainEqual({ type: 'bigHead', availableTurn: 2, holderId: 'l2' });
+    expect(s.events.some(e => /grabbed a mystery box/.test(e.message))).toBe(true);
+    expect(s.events.some(e => /Big Head/.test(e.message))).toBe(false); // type stays team-private
+  });
+
+  it('only the holding player can spend a held power play', () => {
+    const s = createInitialState('HOLDER', 3);
+    addPlayer(s, 'l1', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'l2', 'Left Two', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'bigHead', availableTurn: 1, holderId: 'l1' });
+
+    expect(usePowerPlay(s, 'l2', { type: 'bigHead', targetBabbleId: 'left-1' }, 1000)).toBe(false);
+    expect(usePowerPlay(s, 'r', { type: 'bigHead', targetBabbleId: 'left-1' }, 1000)).toBe(false);
+    expect(usePowerPlay(s, 'l1', { type: 'bigHead', targetBabbleId: 'left-1' }, 1000)).toBe(true);
+    expect(s.powerPlayInventories.left).toHaveLength(0);
+  });
+
+  it('redacts opponent inventory details but exposes box counts to everyone', () => {
+    const s = createInitialState('REDACT', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    s.powerPlayInventories.left.push({ type: 'boost', availableTurn: 1, holderId: 'l' });
+    s.powerPlayInventories.right.push({ type: 'ghosted', availableTurn: 1, holderId: 'r' }, { type: 'bigHead', availableTurn: 2, holderId: 'r' });
+
+    const forLeft = redactStateFor(s, 'l');
+    expect(forLeft.powerPlayInventories.left).toEqual([{ type: 'boost', availableTurn: 1, holderId: 'l' }]);
+    expect(forLeft.powerPlayInventories.right).toEqual([]);
+    expect(forLeft.powerPlayCounts).toEqual({ left: 1, right: 2 });
+
+    const forRight = redactStateFor(s, 'r');
+    expect(forRight.powerPlayInventories.left).toEqual([]);
+    expect(forRight.powerPlayInventories.right).toHaveLength(2);
+    expect(forRight.powerPlayCounts).toEqual({ left: 1, right: 2 });
+
+    const spectator = redactStateFor(s, 'not-in-room');
+    expect(spectator.powerPlayInventories.left).toEqual([]);
+    expect(spectator.powerPlayInventories.right).toEqual([]);
+    expect(spectator.powerPlayCounts).toEqual({ left: 1, right: 2 });
+  });
+});
+
+describe('ramp launch events', () => {
+  it('records a ramp launch event for the ball so the client can animate the hop', () => {
+    const s = createInitialState('RAMPEV', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.fieldObjects = [{ id: 'ramp-1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: 99 }];
+    s.ball.pos = { x: 505, y: 330 };
+    s.ball.vel = { x: 150, y: -60 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.rampEvents.length).toBeGreaterThanOrEqual(1);
+    expect(s.rampEvents[0]).toMatchObject({ mover: 'ball', pos: { x: 550, y: 310 } });
+    // debounced: the same mover riding the ramp on the next tick does not spam events
+    stepGame(s, {}, 1066, seq([0.5]));
+    expect(s.rampEvents.filter(e => e.mover === 'ball')).toHaveLength(1);
+  });
+
+  it('records babble ramp launches with the specific babble id', () => {
+    const s = createInitialState('RAMPEV2', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000;
+    s.fieldObjects = [{ id: 'ramp-1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: 99 }];
+    const b = s.babbles.find(x => x.id === 'left-1')!;
+    b.pos = { x: 505, y: 310 };
+    b.vel = { x: 120, y: 0 };
+    s.ball.pos = { x: 900, y: 100 }; // keep the ball away from the ramp
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.rampEvents.some(e => e.mover === 'babble' && e.moverId === 'left-1')).toBe(true);
+  });
+
+  it('boost pads are launch-day strong', () => {
+    expect(BOOST_PAD_ACCEL).toBeGreaterThanOrEqual(4000);
+    expect(RAMP_LAUNCH_SPEED).toBeGreaterThanOrEqual(700);
+  });
+});
+
+describe('reconnect seat reclaim', () => {
+  it('lets a returning player reclaim their disconnected seat with babbles and held box', () => {
+    const s = createInitialState('RECON', 3);
+    addPlayer(s, 'old-sock', 'Dana', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'boost', availableTurn: 1, holderId: 'old-sock' });
+    const babbles = [...s.players['old-sock'].controlledBabbleIds];
+    expect(babbles.length).toBeGreaterThan(0);
+
+    removePlayer(s, 'old-sock');
+    expect(s.players['old-sock'].connected).toBe(false);
+
+    const seat = findDisconnectedSeat(s, 'Dana');
+    expect(seat?.id).toBe('old-sock');
+    const reclaimed = reclaimPlayer(s, seat!.id, 'new-sock');
+    expect(reclaimed).not.toBeNull();
+    expect(s.players['old-sock']).toBeUndefined();
+    expect(s.players['new-sock']).toMatchObject({ name: 'Dana', side: 'left', connected: true, controlledBabbleIds: babbles });
+    expect(s.powerPlayInventories.left[0].holderId).toBe('new-sock');
+    expect(usePowerPlay(s, 'new-sock', { type: 'boost', position: { x: 500, y: 300 }, angle: 0 }, 1000)).toBe(true);
+  });
+
+  it('never reclaims connected seats or unknown names', () => {
+    const s = createInitialState('RECON2', 3);
+    addPlayer(s, 'a', 'Dana', 'pigs', 'left');
+    expect(findDisconnectedSeat(s, 'Dana')).toBeNull(); // still connected
+    expect(findDisconnectedSeat(s, 'Nobody')).toBeNull();
+    expect(reclaimPlayer(s, 'a', 'b')).toBeNull(); // connected seats stay put
+  });
+});
+
+describe('move ball ability', () => {
+  it('teleports the ball to the clicked spot, clamped inside the field, and stops it dead', () => {
+    const s = createInitialState('MOVEB', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    s.powerPlayInventories.left.push({ type: 'moveBall', availableTurn: 1, holderId: 'l' });
+    s.ball.vel = { x: 300, y: -200 };
+    expect(usePowerPlay(s, 'l', { type: 'moveBall', position: { x: -400, y: 99999 } }, 1000)).toBe(true);
+    expect(s.ball.pos).toEqual({ x: FIELD.ballRadius, y: FIELD.height - FIELD.ballRadius });
+    expect(s.ball.vel).toEqual({ x: 0, y: 0 });
+    expect(s.ball.lastTouchedBy).toBeNull();
+
+    s.powerPlayInventories.left.push({ type: 'moveBall', availableTurn: 1, holderId: 'l' });
+    expect(usePowerPlay(s, 'l', { type: 'moveBall', position: { x: 640, y: 222 } }, 1100)).toBe(true);
+    expect(s.ball.pos).toEqual({ x: 640, y: 222 });
+
+    s.powerPlayInventories.left.push({ type: 'moveBall', availableTurn: 1, holderId: 'l' });
+    expect(usePowerPlay(s, 'l', { type: 'moveBall', position: { x: Number.NaN, y: 10 } }, 1200)).toBe(true);
+    expect(s.ball.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 }); // bogus input falls back to center
   });
 });

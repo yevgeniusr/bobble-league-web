@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, grantCheatBox, launchBobble, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -71,13 +71,14 @@ io.on('connection', socket => {
 
   socket.on('player:launch', intent => {
     const room = currentRoom(socket); if (!room) return;
-    if (!launchBobble(room.state, socket.id, intent)) socket.emit('room:error', 'That bobble cannot be launched right now.');
+    if (!launchBabble(room.state, socket.id, intent)) socket.emit('room:error', 'That babblehead cannot be launched right now.');
     room.lastActiveAt = Date.now();
   });
 
   socket.on('player:power', use => {
     const room = currentRoom(socket); if (!room) return;
-    if (!usePowerPlay(room.state, socket.id, use)) socket.emit('room:error', 'That Power Play is not available yet.');
+    if (!use || !BOX_TYPE_IDS.includes(use.type as BoxType)) return;
+    if (!usePowerPlay(room.state, socket.id, use)) socket.emit('room:error', 'That Power Play is not available to you right now.');
     room.lastActiveAt = Date.now();
   });
 
@@ -148,11 +149,16 @@ function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
   socket.data.roomCode = room.state.roomCode;
   socket.data.playerId = socket.id;
   socket.join(room.state.roomCode);
-  addPlayer(room.state, socket.id, name, team);
-  if (team) setSideTeam(room.state, socket.id, team);
+  // returning player (same name, disconnected seat): reclaim side/babbleheads/box
+  const seat = findDisconnectedSeat(room.state, name);
+  const reclaimed = seat ? reclaimPlayer(room.state, seat.id, socket.id) : null;
+  if (!reclaimed) {
+    addPlayer(room.state, socket.id, name, team);
+    if (team) setSideTeam(room.state, socket.id, team);
+  }
   room.inputs[socket.id] = { ...blankInput };
   room.lastActiveAt = Date.now();
-  socket.emit('game:state', room.state, socket.id);
+  socket.emit('game:state', redactStateFor(room.state, socket.id), socket.id);
 }
 function currentRoom(socket: { data: SocketData }) { return socket.data.roomCode ? rooms.get(socket.data.roomCode) : undefined; }
 function uniqueRoomCode() { let code = ''; do code = nanoid(5).replace(/[-_]/g, 'Z').toUpperCase(); while (rooms.has(code)); return code; }
@@ -161,9 +167,14 @@ setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
     stepGame(room.state, room.inputs, now);
-    io.to(code).emit('game:state', room.state, '');
     if (now - room.lastActiveAt > 1000 * 60 * 60 && Object.values(room.state.players).every(p => !p.connected)) rooms.delete(code);
+  }
+  // per-socket emits so each viewer only ever receives their own team's
+  // inventory details; opponents just get box counts
+  for (const [, s] of io.sockets.sockets) {
+    const room = s.data.roomCode ? rooms.get(s.data.roomCode) : undefined;
+    if (room) s.emit('game:state', redactStateFor(room.state, s.id), s.id);
   }
 }, 1000 / 30);
 
-httpServer.listen(port, () => console.log(`BAbble League listening on :${port}`));
+httpServer.listen(port, () => console.log(`Babble League listening on :${port}`));

@@ -1,4 +1,4 @@
-# BAbble League Web
+# Babble League Web
 
 A production-oriented, web-based multiplayer babble soccer game inspired by Discord party sports games. It uses an authoritative Node/Socket.IO server, a React/Vite canvas client, deterministic shared game rules, multiple teams, first-to-1/3/5 game modes, and mystery box power-ups.
 
@@ -44,6 +44,7 @@ Health check: `GET /healthz`.
 ## Docker
 
 ```bash
+# Image tag intentionally matches the existing package/repo name for deploy compatibility.
 docker build -t bobble-league-web .
 docker run --rm -p 3000:3000 bobble-league-web
 ```

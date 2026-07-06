@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 
-const url = process.env.BOBBLE_URL || 'http://127.0.0.1:3117';
+const url = process.env.BABBLE_URL || 'http://127.0.0.1:3117';
 const timeoutMs = Number(process.env.BETABOTS_TIMEOUT_MS || 120000);
 const requireGoal = process.env.BETABOTS_REQUIRE_GOAL !== '0';
 const botCount = Number(process.env.BETABOTS_COUNT || 8);
@@ -27,22 +27,22 @@ function waitFor(predicate, label, timeout = timeoutMs) {
   });
 }
 function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
-function chooseLaunch(state, side, bobbleId) {
-  const bobble = state.bobbles.find(b => b.id === bobbleId);
-  if (!bobble) return null;
+function chooseLaunch(state, side, babbleId) {
+  const babble = state.babbles.find(b => b.id === babbleId);
+  if (!babble) return null;
   const ball = state.ball.pos;
   const goal = side === 'left' ? { x: 1142, y: 310 } : { x: -42, y: 310 };
   // Opening play: four players on each side flick together toward the center ball.
   if (Math.abs(ball.x - 550) < 12 && Math.abs(ball.y - 310) < 12) {
     const target = { x: 550, y: 310 };
-    return { bobbleId, aimAngle: Math.atan2(target.y - bobble.pos.y, target.x - bobble.pos.x), impulse: bobble.id.endsWith('2') || bobble.id.endsWith('3') ? 900 : 620 };
+    return { babbleId, aimAngle: Math.atan2(target.y - babble.pos.y, target.x - babble.pos.x), impulse: babble.id.endsWith('2') || babble.id.endsWith('3') ? 900 : 620 };
   }
   const toGoal = { x: goal.x - ball.x, y: goal.y - ball.y };
   const len = Math.hypot(toGoal.x, toGoal.y) || 1;
   const contactBehindBall = { x: ball.x - (toGoal.x / len) * 46, y: ball.y - (toGoal.y / len) * 46 };
-  // If far from ball, send outer bobbles on bank-support lines instead of all chasing same point.
-  const target = dist(bobble.pos, ball) < 260 ? contactBehindBall : { x: ball.x - (side === 'left' ? 120 : -120), y: ball.y + (bobble.pos.y < ball.y ? -70 : 70) };
-  return { bobbleId, aimAngle: Math.atan2(target.y - bobble.pos.y, target.x - bobble.pos.x), impulse: 900 };
+  // If far from ball, send outer babbles on bank-support lines instead of all chasing same point.
+  const target = dist(babble.pos, ball) < 260 ? contactBehindBall : { x: ball.x - (side === 'left' ? 120 : -120), y: ball.y + (babble.pos.y < ball.y ? -70 : 70) };
+  return { babbleId, aimAngle: Math.atan2(target.y - babble.pos.y, target.x - babble.pos.x), impulse: 900 };
 }
 async function main() {
   if (botCount !== 8) throw new Error('This gate is intentionally configured for 8 Betabots: 4 per team.');
@@ -57,12 +57,12 @@ async function main() {
   }
   for (const bot of bots) bot.socket.emit('player:formation', 'forward');
   bots[0].socket.emit('game:start');
-  await waitFor(() => bots[0].state?.phase === 'planning' && bots[0].state.bobbles.length === 8, 'planning state with 8 bobbles');
+  await waitFor(() => bots[0].state?.phase === 'planning' && bots[0].state.babbles.length === 8, 'planning state with 8 babbles');
   await waitFor(() => Object.values(bots[0].state.players).filter(p => p.connected).length === 8, '8 connected players');
   const sideCounts = Object.values(bots[0].state.players).reduce((acc, p) => (acc[p.side]++, acc), { left: 0, right: 0 });
   if (sideCounts.left !== 4 || sideCounts.right !== 4) throw new Error(`expected 4v4, saw ${JSON.stringify(sideCounts)}`);
-  const distribution = Object.values(bots[0].state.players).map(p => `${p.name}:${p.side}:${p.controlledBobbleIds.join(',')}`);
-  for (const p of Object.values(bots[0].state.players)) if (p.controlledBobbleIds.length !== 1) throw new Error(`expected each 4v4 player to control one bobble: ${distribution.join(' | ')}`);
+  const distribution = Object.values(bots[0].state.players).map(p => `${p.name}:${p.side}:${p.controlledBabbleIds.join(',')}`);
+  for (const p of Object.values(bots[0].state.players)) if (p.controlledBabbleIds.length !== 1) throw new Error(`expected each 4v4 player to control one babble: ${distribution.join(' | ')}`);
 
   const transcript = [`distribution ${distribution.join(' | ')}`];
   let lastTurn = 0;
@@ -85,12 +85,12 @@ async function main() {
       for (const bot of bots) {
         const player = state.players[bot.you];
         if (!player) continue;
-        for (const bobbleId of player.controlledBobbleIds) {
-          const intent = chooseLaunch(state, player.side, bobbleId);
+        for (const babbleId of player.controlledBabbleIds) {
+          const intent = chooseLaunch(state, player.side, babbleId);
           if (intent) { bot.socket.emit('player:launch', intent); launched++; }
         }
       }
-      transcript.push(`turn ${state.turn}: all ${launched} controlled bobbles aimed`);
+      transcript.push(`turn ${state.turn}: all ${launched} controlled babbles aimed`);
     }
     await new Promise(r => setTimeout(r, 80));
   }

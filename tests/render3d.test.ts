@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BUMPERS, FIELD } from '../shared/types';
-import { ballSpinToRotation, BUMPER_WORLD_POSITIONS, fieldToWorld, fieldRadiusToWorld, GOAL_COLORS, goalDisplayColors, worldToField } from '../client/src/render3d';
+import { BUMPERS, FIELD, RampEvent } from '../shared/types';
+import { ballSpinToRotation, BUMPER_WORLD_POSITIONS, fieldToWorld, fieldRadiusToWorld, GOAL_COLORS, goalDisplayColors, latestRampEvent, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 
 describe('3D renderer coordinate mapping', () => {
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
@@ -35,6 +35,50 @@ describe('3D renderer coordinate mapping', () => {
     const rollY = ballSpinToRotation({ x: 0, y: 0.8 });
     expect(rollY.x).toBeCloseTo(0.8);
     expect(rollY.z).toBeCloseTo(0);
+  });
+
+  it('rolls the ball about the axis perpendicular to its actual travel delta', () => {
+    const r = fieldRadiusToWorld(FIELD.ballRadius);
+    // travelling +field-x: axis is world -z, angle = distance / radius
+    const rollX = rollDelta({ x: 50, y: 0 }, r);
+    expect(rollX.axis).toEqual({ x: 0, y: 0, z: -1 });
+    expect(rollX.angle).toBeCloseTo(1 / r);
+    // travelling +field-y (world +z): axis is world +x
+    const rollY = rollDelta({ x: 0, y: 50 }, r);
+    expect(rollY.axis.x).toBeCloseTo(1);
+    expect(rollY.axis.y).toBeCloseTo(0);
+    expect(rollY.axis.z).toBeCloseTo(0);
+    expect(rollY.angle).toBeCloseTo(1 / r);
+    // diagonal travel: axis normalized and perpendicular to the motion
+    const diag = rollDelta({ x: 30, y: 40 }, r);
+    expect(Math.hypot(diag.axis.x, diag.axis.y, diag.axis.z)).toBeCloseTo(1);
+    expect(diag.axis.x * 30 + diag.axis.z * 40).toBeCloseTo(0); // axis ⟂ travel
+    // no movement: no rotation
+    expect(rollDelta({ x: 0, y: 0 }, r).angle).toBe(0);
+    // goal resets / Move Ball teleports exceed the roll threshold
+    expect(ROLL_TELEPORT_FIELD_DIST).toBeGreaterThan(100);
+  });
+
+  it('animates a parabolic ramp hop only within the hop window', () => {
+    expect(rampHopOffset(-0.1)).toBe(0);
+    expect(rampHopOffset(0)).toBeCloseTo(0);
+    expect(rampHopOffset(RAMP_HOP_SECONDS / 2)).toBeGreaterThan(1);
+    expect(rampHopOffset(RAMP_HOP_SECONDS)).toBeCloseTo(0);
+    expect(rampHopOffset(RAMP_HOP_SECONDS + 0.1)).toBe(0);
+  });
+
+  it('finds the freshest ramp event for exactly the requested mover', () => {
+    const now = 10000;
+    const events: RampEvent[] = [
+      { pos: { x: 1, y: 1 }, at: now - 100, mover: 'ball' },
+      { pos: { x: 2, y: 2 }, at: now - 50, mover: 'babble', moverId: 'left-1' },
+      { pos: { x: 3, y: 3 }, at: now - 60_000, mover: 'babble', moverId: 'left-2' } // stale
+    ];
+    expect(latestRampEvent(events, 'ball', undefined, now)?.pos).toEqual({ x: 1, y: 1 });
+    expect(latestRampEvent(events, 'babble', 'left-1', now)?.pos).toEqual({ x: 2, y: 2 });
+    expect(latestRampEvent(events, 'babble', 'left-2', now)).toBeNull();
+    expect(latestRampEvent(events, 'babble', 'right-1', now)).toBeNull();
+    expect(latestRampEvent(undefined, 'ball', undefined, now)).toBeNull();
   });
 
   it('swaps visible gate colours while Swap Goals is active', () => {
