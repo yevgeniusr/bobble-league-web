@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
+import { trackAnalyticsEvent } from './analytics';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
 
@@ -48,6 +49,7 @@ function App() {
   React.useEffect(() => {
     socket.on('game:state', (s, playerId) => { setState(s); if (playerId) setYou(playerId); });
     socket.on('room:error', setError);
+    socket.on('analytics:event', trackAnalyticsEvent);
     // reconnect robustness: on transport loss show a banner, then automatically
     // rejoin the same room; the server reclaims the old seat by display name.
     const onDisconnect = () => setConn('reconnecting');
@@ -62,7 +64,7 @@ function App() {
     };
     socket.on('disconnect', onDisconnect);
     socket.io.on('reconnect', onConnect);
-    return () => { socket.off('game:state'); socket.off('room:error'); socket.off('disconnect', onDisconnect); socket.io.off('reconnect', onConnect); };
+    return () => { socket.off('game:state'); socket.off('room:error'); socket.off('analytics:event', trackAnalyticsEvent); socket.off('disconnect', onDisconnect); socket.io.off('reconnect', onConnect); };
   }, []);
 
   // toasts should never linger forever

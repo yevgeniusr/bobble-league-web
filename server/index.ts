@@ -1,5 +1,6 @@
 import compression from 'compression';
 import express from 'express';
+import fs from 'node:fs';
 import helmet from 'helmet';
 import { createServer } from 'node:http';
 import path from 'node:path';
@@ -7,13 +8,16 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
+import { buildGamePlayerEvent, drainAnalyticsEvents, GamePlayerLifecycle } from '../shared/analytics';
 import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { freePhysics } from '../shared/physics';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+loadLocalEnv();
 const isProd = process.env.NODE_ENV === 'production';
 const port = Number(process.env.PORT ?? 3000);
+const xtremepushSdkKey = process.env.XTREMEPUSH_SDK_KEY?.trim() ?? '';
 // Dev/test cheat hooks (window.__babbleDev on the client) are rejected in
 // production unless the deployment explicitly opts in with ENABLE_CHEATS=true.
 const cheatsEnabled = !isProd || process.env.ENABLE_CHEATS === 'true';
@@ -35,6 +39,20 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
 app.use(express.json());
 app.get('/healthz', (_, res) => res.json({ ok: true, rooms: rooms.size, uptime: process.uptime() }));
+app.get('/api/config', (_, res) => res.json({ xtremepushSdkKey: xtremepushSdkKey || null }));
+app.get('/api/xtremepush/sdk.js', async (_, res) => {
+  res.type('application/javascript');
+  if (!xtremepushSdkKey) return res.status(204).send('');
+  try {
+    const upstream = await fetch(`https://cdn.webpu.sh/${encodeURIComponent(xtremepushSdkKey)}/sdk.js`);
+    if (!upstream.ok) throw new Error('Xtremepush SDK unavailable');
+    res.setHeader('cache-control', 'public, max-age=300');
+    return res.send(await upstream.text());
+  } catch {
+    res.setHeader('cache-control', 'no-store');
+    return res.send(`window.xtremepush=window.xtremepush||function(){(window.xtremepush.q=window.xtremepush.q||[]).push(arguments);};`);
+  }
+});
 
 if (isProd) {
   const clientDir = path.resolve(process.cwd(), 'dist/client');
@@ -57,6 +75,7 @@ io.on('connection', socket => {
     const room: Room = { state, inputs: {}, lastActiveAt: Date.now() };
     rooms.set(roomCode, room);
     joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
+    emitGamePlayer(socket, room, 'room_created');
     cb({ ok: true, roomCode, playerId: socket.id });
   });
 
@@ -66,7 +85,8 @@ io.on('connection', socket => {
     const room = rooms.get(parsed.data.roomCode);
     if (!room) return cb({ ok: false, error: 'Room not found.' });
     if (Object.values(room.state.players).filter(p => p.connected).length >= 8) return cb({ ok: false, error: 'Room is full.' });
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
+    const join = joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
+    emitGamePlayer(socket, room, join.reclaimed ? 'player_reconnected' : 'room_joined');
     cb({ ok: true, roomCode: parsed.data.roomCode, playerId: socket.id });
   });
 
@@ -86,6 +106,7 @@ io.on('connection', socket => {
     const room = currentRoom(socket); if (!room) return;
     if (!use || !BOX_TYPE_IDS.includes(use.type as BoxType)) return;
     if (!usePowerPlay(room.state, socket.id, use)) socket.emit('room:error', 'That Power Play is not available to you right now.');
+    flushAnalytics(room);
     room.lastActiveAt = Date.now();
   });
 
@@ -143,6 +164,7 @@ io.on('connection', socket => {
 
   socket.on('room:leave', () => {
     const room = currentRoom(socket); if (!room) return;
+    emitGamePlayer(socket, room, 'player_left');
     removePlayer(room.state, socket.id);
     socket.leave(room.state.roomCode);
     socket.data.roomCode = undefined;
@@ -152,9 +174,9 @@ io.on('connection', socket => {
 
   // freePhysics at match boundaries: the next resolving tick rebuilds a
   // pristine Rapier world, so no contact/solver state carries across matches.
-  socket.on('game:start', () => { const room = currentRoom(socket); if (room) { freePhysics(room.state); startGame(room.state); } });
-  socket.on('game:reset', mode => { const room = currentRoom(socket); if (room && GAME_MODES.includes(mode)) { freePhysics(room.state); resetGame(room.state, mode); } });
-  socket.on('disconnect', () => { const room = currentRoom(socket); if (room) removePlayer(room.state, socket.id); });
+  socket.on('game:start', () => { const room = currentRoom(socket); if (room) { freePhysics(room.state); startGame(room.state); emitGamePlayerToConnected(room, 'match_started'); } });
+  socket.on('game:reset', mode => { const room = currentRoom(socket); if (room && GAME_MODES.includes(mode)) { freePhysics(room.state); resetGame(room.state, mode); emitGamePlayerToConnected(room, 'match_reset'); } });
+  socket.on('disconnect', () => { const room = currentRoom(socket); if (room) { emitGamePlayer(socket, room, 'player_disconnected'); removePlayer(room.state, socket.id); } });
 });
 
 function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
@@ -171,14 +193,51 @@ function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
   room.inputs[socket.id] = { ...blankInput };
   room.lastActiveAt = Date.now();
   socket.emit('game:state', redactStateFor(room.state, socket.id), socket.id);
+  return { reclaimed: Boolean(reclaimed) };
 }
 function currentRoom(socket: { data: SocketData }) { return socket.data.roomCode ? rooms.get(socket.data.roomCode) : undefined; }
 function uniqueRoomCode() { let code = ''; do code = nanoid(5).replace(/[-_]/g, 'Z').toUpperCase(); while (rooms.has(code)); return code; }
+
+function emitGamePlayer(socket: IOSocket, room: Room, lifecycle: GamePlayerLifecycle) {
+  socket.emit('analytics:event', buildGamePlayerEvent(room.state, lifecycle, socket.id));
+}
+
+function emitGamePlayerToConnected(room: Room, lifecycle: GamePlayerLifecycle) {
+  for (const player of Object.values(room.state.players)) {
+    if (!player.connected) continue;
+    io.to(player.id).emit('analytics:event', buildGamePlayerEvent(room.state, lifecycle, player.id));
+  }
+}
+
+function flushAnalytics(room: Room) {
+  for (const event of drainAnalyticsEvents(room.state)) {
+    const target = typeof event.payload.playerId === 'string' ? event.payload.playerId : undefined;
+    if (target) io.to(target).emit('analytics:event', event);
+    else io.to(room.state.roomCode).emit('analytics:event', event);
+  }
+}
+
+function loadLocalEnv() {
+  const file = path.resolve(process.cwd(), '.env');
+  if (!fs.existsSync(file)) return;
+  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (process.env[key] !== undefined) continue;
+    let value = trimmed.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    process.env[key] = value;
+  }
+}
 
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
     stepGame(room.state, room.inputs, now);
+    flushAnalytics(room);
     if (now - room.lastActiveAt > 1000 * 60 * 60 && Object.values(room.state.players).every(p => !p.connected)) {
       freePhysics(room.state); // release the room's Rapier world (WASM memory)
       rooms.delete(code);

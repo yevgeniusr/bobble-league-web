@@ -187,6 +187,7 @@ export type ClientToServerEvents = {
 export type ServerToClientEvents = {
   'game:state': (state: GameState, you: string) => void;
   'room:error': (message: string) => void;
+  'analytics:event': (event: import('./analytics').AnalyticsEvent) => void;
 };
 
 export type JoinResult = { ok: true; roomCode: string; playerId: string } | { ok: false; error: string };
