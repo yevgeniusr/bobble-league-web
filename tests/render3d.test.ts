@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BUMPERS, FIELD, RampEvent } from '../shared/types';
-import { babbleGhosted, ballSpinToRotation, BUMPER_WORLD_POSITIONS, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, latestRampEvent, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { BUMPERS, FIELD, MAPS, MAP_IDS, RampEvent } from '../shared/types';
+import { babbleGhosted, ballSpinToRotation, BUMPER_WORLD_POSITIONS, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, latestRampEvent, mapBumperWorldPositions, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 
 describe('3D renderer coordinate mapping', () => {
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
@@ -21,6 +21,16 @@ describe('3D renderer coordinate mapping', () => {
     });
     const quadrants = BUMPER_WORLD_POSITIONS.map(w => `${w.x < 0 ? 'L' : 'R'}${w.z < 0 ? 'T' : 'B'}`).sort();
     expect(quadrants).toEqual(['LB', 'LT', 'RB', 'RT']);
+  });
+
+  it('maps every selectable map bumper layout from shared config', () => {
+    for (const mapId of MAP_IDS) {
+      const positions = mapBumperWorldPositions(mapId);
+      expect(positions).toHaveLength(MAPS[mapId].layout.bumpers.length);
+      positions.forEach((w, i) => expect(w).toEqual(fieldToWorld(MAPS[mapId].layout.bumpers[i])));
+    }
+    expect(mapBumperWorldPositions('moon')).not.toEqual(BUMPER_WORLD_POSITIONS);
+    expect(mapBumperWorldPositions('volcano')).not.toEqual(BUMPER_WORLD_POSITIONS);
   });
 
   it('derives ball roll rotation from authoritative spin so it matches travel direction', () => {

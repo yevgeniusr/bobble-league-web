@@ -7,7 +7,7 @@ Use a production TypeScript browser/game stack:
 - **Client:** Vite + React + PixiJS canvas renderer.
 - **Server:** Node.js + Fastify/Express + Socket.IO for WebSocket rooms.
 - **Simulation:** authoritative server-side fixed timestep physics. Rigid-body integration and collisions use Rapier 2D (`@dimforge/rapier2d-deterministic-compat`: WASM inlined for Node/test/Docker compatibility, deterministic build for reproducible server simulation) in `shared/physics.ts`; game-feel rules (bumpers, boosts, goo, ramps, boxes, goals, settling) remain plain TypeScript in `shared/game.ts`. Clients render snapshots only and never load the physics WASM.
-- **Shared code:** TypeScript message schemas, constants, room/game types, seeded RNG helpers.
+- **Shared code:** TypeScript message schemas, constants, room/game types, selectable map config (`MAPS`), seeded RNG helpers.
 - **Tests:** Vitest for unit/integration, Playwright for browser flows, Artillery/k6 for WebSocket load.
 - **Deploy:** Docker image deployed by Coolify, with `/healthz`, HTTPS, WebSocket proxy support, and optional Redis when scaling beyond one instance.
 
@@ -47,10 +47,12 @@ Optional infra
 2. Others join by short room code.
 3. Lobby supports teams: `blue`, `red`, `spectator`.
 4. Players toggle ready; host can change mode until countdown starts.
-5. Server starts countdown once rules are satisfied.
-6. Match runs until one team reaches target goals.
-7. Match-over screen supports rematch or return to lobby.
-8. Empty rooms are destroyed after a short TTL.
+5. Players can change the room map only while still in `lobby`; map choice is
+   included in every snapshot and locks after kickoff until reset/new room.
+6. Server starts countdown once rules are satisfied.
+7. Match runs until one team reaches target goals.
+8. Match-over screen supports rematch or return to lobby.
+9. Empty rooms are destroyed after a short TTL.
 
 ## Power-up spawning rule
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ActiveEffect, BIG_BUMPER_RADIUS, BOX_TYPES, BUMPER_RADIUS, BUMPERS, FIELD, FieldObjectType, GameState, RAMP_HALF_LEN, RAMP_HALF_WIDTH, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec } from '../../shared/types';
+import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec, normalizeMapId } from '../../shared/types';
 
 export type WorldXZ = { x: number; z: number };
 export type PlacingGhost = { type: FieldObjectType; pos: Vec; angle: number };
@@ -17,6 +17,7 @@ export function fieldToWorld(p: Vec): WorldXZ { return { x: (p.x - FIELD.width /
 export function worldToField(p: WorldXZ): Vec { return { x: p.x * 50 + FIELD.width / 2, y: p.z * 50 + FIELD.height / 2 }; }
 export function fieldRadiusToWorld(r: number): number { return r / 50; }
 export const BUMPER_WORLD_POSITIONS: WorldXZ[] = BUMPERS.map(fieldToWorld);
+export const mapBumperWorldPositions = (mapId: MapId): WorldXZ[] => MAPS[normalizeMapId(mapId)].layout.bumpers.map(fieldToWorld);
 
 // Deterministic ball rotation from the authoritative spin state so the visual
 // roll always matches travel direction (field x -> world x, field y -> world z).
@@ -105,6 +106,7 @@ export class BabbleLeague3DRenderer {
   private board = new THREE.Group();
   private dynamic = new THREE.Group();
   private goalTint: Record<'left' | 'right', THREE.MeshStandardMaterial[]> = { left: [], right: [] };
+  private boardMapId: MapId | null = null;
   // persistent rolling state so the ball markings physically roll with travel
   private ballQuat = new THREE.Quaternion();
   private lastBallPos: Vec | null = null;
@@ -120,8 +122,8 @@ export class BabbleLeague3DRenderer {
     this.renderer.shadowMap.enabled = !this.lowPower;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(this.lowPower ? 0.5 : Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setClearColor(0xf16845, 1);
-    this.scene.fog = new THREE.Fog(0xf16845, 34, 70);
+    this.renderer.setClearColor(MAPS.stadium.theme.sky, 1);
+    this.scene.fog = new THREE.Fog(MAPS.stadium.theme.fog, 34, 70);
     this.camera = new THREE.PerspectiveCamera(42, 16 / 9, 0.1, 200);
     this.camera.position.set(0, 16.2, 14.4);
     this.camera.lookAt(0, 0.4, 0);
@@ -135,7 +137,6 @@ export class BabbleLeague3DRenderer {
     const fill = new THREE.DirectionalLight(0x9fb8ff, 0.7);
     fill.position.set(7, 9, -11);
     this.scene.add(fill);
-    this.buildBoard();
     this.scene.add(this.board);
     this.scene.add(this.dynamic);
     window.addEventListener('resize', this.resize);
@@ -162,6 +163,8 @@ export class BabbleLeague3DRenderer {
   }
 
   render({ state, you, drag, placing, selectedBabbleId, rotatingPad }: RenderInput) {
+    const mapId = normalizeMapId(state.mapId);
+    this.ensureBoard(mapId);
     this.clearDynamic();
     this.buildHud(state);
     this.applyGoalSwap(state);
@@ -227,47 +230,61 @@ export class BabbleLeague3DRenderer {
   }
 
   // -- static arena -----------------------------------------------------
-  private buildBoard() {
+  private ensureBoard(mapId: MapId) {
+    if (this.boardMapId === mapId) return;
+    this.board.clear();
+    this.goalTint = { left: [], right: [] };
+    const theme = MAPS[mapId].theme;
+    this.renderer.setClearColor(theme.sky, 1);
+    this.scene.fog = new THREE.Fog(theme.fog, mapId === 'moon' ? 42 : 34, mapId === 'volcano' ? 62 : 70);
+    this.buildBoard(mapId);
+    this.boardMapId = mapId;
+  }
+
+  private buildBoard(mapId: MapId) {
     const g = this.board;
+    const map = MAPS[mapId];
+    const theme = map.theme;
     // warm two-tone table backdrop with soft vignette panels
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(0xf3714d, 0.85), -(FIELD_X / 4 + 2), -0.45, 0);
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(0xea5a41, 0.85), FIELD_X / 4 + 2, -0.45, 0);
+    this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(theme.tableLeft, 0.85), -(FIELD_X / 4 + 2), -0.45, 0);
+    this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(theme.tableRight, 0.85), FIELD_X / 4 + 2, -0.45, 0);
     // cream plinth + chamfered golden frame
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 3, 0.76, FIELD_Z + 2.9), this.mat(0xfff3be, 0.7), 0, 0, 0, true);
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 1.4, 0.9, FIELD_Z + 1.2), this.mat(0xf7b43a, 0.55), 0, 0.42, 0, true);
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 0.5, 0.34, FIELD_Z + 0.3), this.mat(0xe89a2b, 0.5), 0, 0.9, 0, true);
+    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 3, 0.76, FIELD_Z + 2.9), this.mat(theme.plinth, 0.7), 0, 0, 0, true);
+    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 1.4, 0.9, FIELD_Z + 1.2), this.mat(theme.frame, 0.55, { emissive: mapId === 'volcano' ? 0x3b1208 : 0 }), 0, 0.42, 0, true);
+    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 0.5, 0.34, FIELD_Z + 0.3), this.mat(theme.frameDark, 0.5), 0, 0.9, 0, true);
     // raised rim walls (top/bottom + short corner returns beside goals)
-    const rimMat = this.mat(0xf7c452, 0.45);
+    const rimMat = this.mat(theme.frame, 0.45, { emissive: mapId === 'volcano' ? 0x4a1608 : 0 });
     for (const s of [-1, 1] as const) {
       this.mesh(g, new THREE.BoxGeometry(FIELD_X + 0.5, 0.6, 0.42), rimMat, 0, 1.22, s * (FIELD_Z / 2 + 0.03), true);
       for (const e of [-1, 1] as const) this.mesh(g, new THREE.BoxGeometry(0.42, 0.6, 2.2), rimMat, e * (FIELD_X / 2 + 0.03), 1.22, s * (FIELD_Z / 2 - 1.05), true);
     }
     // rounded studs along the frame corners
     const stud = new THREE.SphereGeometry(0.22, 20, 12);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) this.mesh(g, stud, this.mat(0xffe08a, 0.35), sx * (FIELD_X / 2 + 0.55), 1.02, sz * (FIELD_Z / 2 + 0.55), true);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) this.mesh(g, stud, this.mat(theme.bumperCap, 0.35), sx * (FIELD_X / 2 + 0.55), 1.02, sz * (FIELD_Z / 2 + 0.55), true);
     // signature teal turf slab; the striped/marked surface is a canvas texture on top
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X, 0.24, FIELD_Z), this.mat(0x2c9297, 0.85), 0, 0.82, 0);
-    const turfMat = new THREE.MeshStandardMaterial({ map: this.turfTexture(), roughness: 0.88, metalness: 0.02 });
-    this.matCache.set('turfSurface', turfMat);
+    this.mesh(g, new THREE.BoxGeometry(FIELD_X, 0.24, FIELD_Z), this.mat(theme.fieldBase, 0.85), 0, 0.82, 0);
+    const turfMat = new THREE.MeshStandardMaterial({ map: this.turfTexture(mapId), roughness: 0.88, metalness: 0.02, emissive: new THREE.Color(mapId === 'volcano' ? 0x180604 : 0x000000), emissiveIntensity: mapId === 'volcano' ? 0.25 : 0 });
+    this.matCache.set(`turfSurface:${mapId}`, turfMat);
     const turf = new THREE.Mesh(this.geo('turfPlane', () => new THREE.PlaneGeometry(FIELD_X, FIELD_Z)), turfMat);
     turf.rotation.x = -Math.PI / 2; turf.position.y = TURF_Y; turf.receiveShadow = true; g.add(turf);
-    this.addGoal(-1); this.addGoal(1);
+    this.addGoal(-1, mapId); this.addGoal(1, mapId);
     // all four corner bumpers, aligned with the authoritative physics colliders
-    for (const w of BUMPER_WORLD_POSITIONS) this.addBumper(w.x, w.z);
+    for (const w of mapBumperWorldPositions(mapId)) this.addBumper(w.x, w.z, mapId);
     // decorative pennant posts behind the far rim
     for (let i = -2; i <= 2; i++) {
       const post = this.mesh(g, new THREE.CylinderGeometry(0.07, 0.09, 1.7, 10), this.mat(0xfff3be, 0.5), i * 4.4, 1.6, -FIELD_Z / 2 - 1.7, true);
       post.castShadow = true;
-      const flag = this.mesh(g, new THREE.ConeGeometry(0.3, 0.55, 4), this.mat(i % 2 ? 0x5c64d1 : 0xde4f49, 0.5, { flat: true }), i * 4.4, 2.45, -FIELD_Z / 2 - 1.7, true);
+      const flag = this.mesh(g, new THREE.ConeGeometry(0.3, 0.55, 4), this.mat(i % 2 ? theme.leftGoal : theme.rightGoal, 0.5, { flat: true, emissive: mapId === 'moon' ? 0x101c33 : 0 }), i * 4.4, 2.45, -FIELD_Z / 2 - 1.7, true);
       flag.rotation.x = Math.PI;
     }
   }
 
-  private addGoal(side: -1 | 1) {
+  private addGoal(side: -1 | 1, mapId: MapId) {
     const g = this.board;
+    const theme = MAPS[mapId].theme;
     const x = side * (FIELD_X / 2 - 0.35);
     const key = side < 0 ? 'left' : 'right';
-    const col = GOAL_COLORS[key];
+    const col = key === 'left' ? theme.leftGoal : theme.rightGoal;
     const halfGoal = fieldRadiusToWorld(FIELD.goalHeight) / 2;
     // dedicated tintable materials so Swap Goals can visibly recolor the gates
     const frameTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.32, metalness: 0.06 });
@@ -348,13 +365,29 @@ export class BabbleLeague3DRenderer {
       chev.castShadow = false;
       g.add(chev);
     }
+    if (theme.gateStyle === 'sciFi') {
+      for (const y of [1.28, 2.62]) {
+        const beam = new THREE.Mesh(this.geo('goalEnergyBeam', () => new THREE.CylinderGeometry(0.035, 0.035, halfGoal * 2.05, 10)), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.65 }));
+        beam.position.set(x - side * 0.18, y, 0);
+        beam.rotation.x = Math.PI / 2;
+        g.add(beam);
+      }
+    } else if (theme.gateStyle === 'volcanic') {
+      for (const s of [-1, 1] as const) {
+        const spike = this.mesh(g, new THREE.ConeGeometry(0.24, 0.72, 6), this.mat(0x1f0b08, 0.7, { flat: true, emissive: 0x3b1006 }), x + side * 0.22, 3.15, s * halfGoal, true);
+        spike.rotation.x = Math.PI;
+      }
+    }
   }
 
   // Swap Goals power play: recolor the gates while active so everyone can see
   // which direction currently scores, plus a pulsing halo and center banner.
   private applyGoalSwap(state: GameState) {
     const swapped = state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn >= state.turn;
-    const cols = goalDisplayColors(swapped);
+    const theme = MAPS[normalizeMapId(state.mapId)].theme;
+    const cols = swapped
+      ? { left: theme.rightGoal, right: theme.leftGoal }
+      : { left: theme.leftGoal, right: theme.rightGoal };
     for (const m of this.goalTint.left) { m.color.setHex(cols.left); m.emissive.setHex(swapped ? cols.left : 0x000000); m.emissiveIntensity = swapped ? 0.45 : 0; }
     for (const m of this.goalTint.right) { m.color.setHex(cols.right); m.emissive.setHex(swapped ? cols.right : 0x000000); m.emissiveIntensity = swapped ? 0.45 : 0; }
     if (!swapped) return;
@@ -374,20 +407,33 @@ export class BabbleLeague3DRenderer {
     this.dynamic.add(banner);
   }
 
-  private addBumper(x: number, z: number) {
+  private addBumper(x: number, z: number, mapId: MapId) {
     const g = this.board;
+    const theme = MAPS[mapId].theme;
     const sx = Math.sign(x) || 1;
     const sz = Math.sign(z) || 1;
     // Corner socket integrated into the raised rim, so the bumper reads as
     // part of the board corner rather than a loose cylinder on turf.
-    this.mesh(g, new THREE.BoxGeometry(1.55, 0.2, 1.0), this.mat(0xffe08a, 0.42), x + sx * 0.28, 1.09, z, true);
-    this.mesh(g, new THREE.BoxGeometry(1.0, 0.2, 1.55), this.mat(0xffe08a, 0.42), x, 1.09, z + sz * 0.28, true);
-    const socket = this.mesh(g, new THREE.CylinderGeometry(0.98, 1.1, 0.18, 44), this.mat(0x9b5144, 0.55), x, 1.12, z, true);
+    this.mesh(g, new THREE.BoxGeometry(1.55, 0.2, 1.0), this.mat(theme.bumperCap, 0.42), x + sx * 0.28, 1.09, z, true);
+    this.mesh(g, new THREE.BoxGeometry(1.0, 0.2, 1.55), this.mat(theme.bumperCap, 0.42), x, 1.09, z + sz * 0.28, true);
+    const socket = this.mesh(g, new THREE.CylinderGeometry(0.98, 1.1, 0.18, 44), this.mat(theme.bumperBase, 0.55), x, 1.12, z, true);
     socket.scale.set(1.06, 1, 1.06);
-    this.mesh(g, new THREE.CylinderGeometry(0.74, 0.82, 0.28, 44), this.mat(0x8f3644, 0.5), x, 1.24, z, true);
-    this.mesh(g, new THREE.CylinderGeometry(0.66, 0.7, 0.42, 44), this.mat(0xc94d5b, 0.4), x, 1.56, z, true);
-    this.mesh(g, new THREE.CylinderGeometry(0.7, 0.7, 0.1, 44), this.mat(0xf4d3b0, 0.35), x, 1.8, z, true);
-    this.mesh(g, new THREE.SphereGeometry(0.34, 28, 16), this.mat(0xffe08a, 0.3, { emissive: 0x694312 }), x, 1.9, z, true);
+    this.mesh(g, new THREE.CylinderGeometry(0.74, 0.82, 0.28, 44), this.mat(theme.frameDark, 0.5), x, 1.24, z, true);
+    this.mesh(g, new THREE.CylinderGeometry(0.66, 0.7, 0.42, 44), this.mat(theme.bumperDrum, 0.4, { emissive: mapId === 'moon' ? 0x12334a : mapId === 'volcano' ? 0x54140c : 0 }), x, 1.56, z, true);
+    this.mesh(g, new THREE.CylinderGeometry(0.7, 0.7, 0.1, 44), this.mat(theme.plinth, 0.35), x, 1.8, z, true);
+    this.mesh(g, new THREE.SphereGeometry(0.34, 28, 16), this.mat(theme.bumperCap, 0.3, { emissive: mapId === 'volcano' ? 0x7a2e08 : 0x12304a }), x, 1.9, z, true);
+    if (mapId === 'moon') {
+      const ring = new THREE.Mesh(this.geo('moonBumperHalo', () => new THREE.TorusGeometry(1, 0.04, 8, 48)), new THREE.MeshBasicMaterial({ color: theme.bumperDrum, transparent: true, opacity: 0.55 }));
+      ring.position.set(x, TURF_Y + 0.08, z);
+      ring.rotation.x = Math.PI / 2;
+      ring.scale.setScalar(1.12);
+      g.add(ring);
+    } else if (mapId === 'volcano') {
+      for (const a of [0, Math.PI * 0.67, Math.PI * 1.34]) {
+        const rock = this.mesh(g, new THREE.ConeGeometry(0.18, 0.45, 5), this.mat(0x1f0b08, 0.76, { flat: true }), x + Math.cos(a) * 0.85, 1.35, z + Math.sin(a) * 0.85, true);
+        rock.rotation.x = Math.PI;
+      }
+    }
   }
 
   // -- dynamic actors ---------------------------------------------------
@@ -678,24 +724,25 @@ export class BabbleLeague3DRenderer {
   private addBumperFx(state: GameState) {
     const now = Date.now();
     const big = state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
+    const map = MAPS[normalizeMapId(state.mapId)];
     if (big) {
       const t = performance.now() / 1000;
-      const bigR = fieldRadiusToWorld(BIG_BUMPER_RADIUS);
-      for (const w of BUMPER_WORLD_POSITIONS) {
+      const bigR = fieldRadiusToWorld(map.layout.bigBumperRadius);
+      for (const w of mapBumperWorldPositions(map.id)) {
         // persistent super-charged bumper shell: enlarged glowing drum + dome
-        this.mesh(this.dynamic, this.geo('bigBumperBase', () => new THREE.CylinderGeometry(1.02, 1.14, 0.34, 40)), this.mat(0xb3421f, 0.5), w.x, 1.2, w.z, true);
-        this.mesh(this.dynamic, this.geo('bigBumperDrum', () => new THREE.CylinderGeometry(0.94, 1.0, 0.52, 40)), this.mat(0xf97316, 0.35, { emissive: 0x7a2e08 }), w.x, 1.6, w.z, true);
-        this.mesh(this.dynamic, this.geo('bigBumperCap', () => new THREE.CylinderGeometry(1.0, 1.0, 0.12, 40)), this.mat(0xffd166, 0.3, { emissive: 0x6b4d0a }), w.x, 1.9, w.z, true);
-        const dome = this.mesh(this.dynamic, this.geo('bigBumperDome', () => new THREE.SphereGeometry(0.5, 28, 16)), this.mat(0xffe08a, 0.25, { emissive: 0x8a5a12 }), w.x, 2.12, w.z, true);
+        this.mesh(this.dynamic, this.geo('bigBumperBase', () => new THREE.CylinderGeometry(1.02, 1.14, 0.34, 40)), this.mat(map.theme.bumperBase, 0.5), w.x, 1.2, w.z, true);
+        this.mesh(this.dynamic, this.geo('bigBumperDrum', () => new THREE.CylinderGeometry(0.94, 1.0, 0.52, 40)), this.mat(map.theme.bumperDrum, 0.35, { emissive: map.theme.bumperBase }), w.x, 1.6, w.z, true);
+        this.mesh(this.dynamic, this.geo('bigBumperCap', () => new THREE.CylinderGeometry(1.0, 1.0, 0.12, 40)), this.mat(map.theme.bumperCap, 0.3, { emissive: map.theme.frameDark }), w.x, 1.9, w.z, true);
+        const dome = this.mesh(this.dynamic, this.geo('bigBumperDome', () => new THREE.SphereGeometry(0.5, 28, 16)), this.mat(map.theme.bumperCap, 0.25, { emissive: map.theme.frameDark }), w.x, 2.12, w.z, true);
         dome.scale.setScalar(1 + Math.sin(t * 6) * 0.05);
         const ring = new THREE.Mesh(this.geo('bumperBigRing', () => new THREE.TorusGeometry(1, 0.07, 8, 48)),
-          new THREE.MeshBasicMaterial({ color: 0xffb454, transparent: true, opacity: 0.55 + Math.sin(t * 6) * 0.25 }));
+          new THREE.MeshBasicMaterial({ color: map.theme.bumperCap, transparent: true, opacity: 0.55 + Math.sin(t * 6) * 0.25 }));
         ring.position.set(w.x, TURF_Y + 0.08, w.z);
         ring.rotation.x = Math.PI / 2;
         ring.scale.setScalar(bigR + 0.25 + Math.sin(t * 6) * 0.08);
         this.dynamic.add(ring);
       }
-      const banner = this.text('BIG BUMPERS!', 34, '#ffb454');
+      const banner = this.text('BIG BUMPERS!', 34, map.theme.accent);
       banner.position.set(0, 4.2, FIELD_Z / 2 + 0.6);
       this.dynamic.add(banner);
     }
@@ -705,13 +752,13 @@ export class BabbleLeague3DRenderer {
       const w = fieldToWorld(ev.pos);
       const fade = 1 - age;
       const ring = new THREE.Mesh(this.geo('bumperPulse', () => new THREE.TorusGeometry(1, 0.06, 8, 48)),
-        new THREE.MeshBasicMaterial({ color: 0xffe86a, transparent: true, opacity: 0.85 * fade }));
+        new THREE.MeshBasicMaterial({ color: map.theme.bumperCap, transparent: true, opacity: 0.85 * fade }));
       ring.position.set(w.x, TURF_Y + 0.1 + age * 0.5, w.z);
       ring.rotation.x = Math.PI / 2;
-      ring.scale.setScalar(fieldRadiusToWorld(BUMPER_RADIUS) + age * 1.9);
+      ring.scale.setScalar(fieldRadiusToWorld(map.layout.bumperRadius) + age * 1.9);
       this.dynamic.add(ring);
       const glow = new THREE.Mesh(this.geo('bumperGlow', () => new THREE.SphereGeometry(1, 20, 12)),
-        new THREE.MeshBasicMaterial({ color: 0xfff3be, transparent: true, opacity: 0.5 * fade, depthWrite: false }));
+        new THREE.MeshBasicMaterial({ color: map.theme.accent, transparent: true, opacity: 0.5 * fade, depthWrite: false }));
       glow.position.set(w.x, 1.9, w.z);
       glow.scale.setScalar(0.45 + age * 0.6);
       this.dynamic.add(glow);
@@ -832,17 +879,46 @@ export class BabbleLeague3DRenderer {
     }
   }
 
-  private turfTexture() {
-    const key = 'turfTexture';
+  private turfTexture(mapId: MapId) {
+    const key = `turfTexture:${mapId}`;
     let tex = this.textCache.get(key);
     if (tex) return tex;
+    const theme = MAPS[mapId].theme;
     const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
     const g = c.getContext('2d')!;
     for (let i = 0; i < 10; i++) {
-      g.fillStyle = i % 2 ? '#56c6c8' : '#32adb2';
+      g.fillStyle = i % 2 ? theme.stripeA : theme.stripeB;
       g.fillRect(i * c.width / 10, 0, c.width / 10, c.height);
     }
-    g.strokeStyle = 'rgba(255,255,255,.85)';
+    if (theme.pattern === 'craters') {
+      const craters = [[160, 120, 46], [360, 380, 34], [540, 135, 58], [720, 330, 44], [875, 170, 28]];
+      for (const [x, y, r] of craters) {
+        const grad = g.createRadialGradient(x - r * 0.25, y - r * 0.25, r * 0.1, x, y, r);
+        grad.addColorStop(0, 'rgba(225,238,255,.28)');
+        grad.addColorStop(0.58, 'rgba(36,48,70,.18)');
+        grad.addColorStop(1, 'rgba(8,14,26,.34)');
+        g.fillStyle = grad;
+        g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = 'rgba(232,244,255,.24)';
+        g.lineWidth = 5;
+        g.stroke();
+      }
+    } else if (theme.pattern === 'lava') {
+      g.lineCap = 'round';
+      for (let i = 0; i < 5; i++) {
+        const y = 72 + i * 92;
+        g.strokeStyle = i % 2 ? 'rgba(251,113,34,.8)' : 'rgba(239,68,68,.75)';
+        g.lineWidth = 12 + (i % 3) * 4;
+        g.beginPath();
+        g.moveTo(40, y);
+        for (let x = 120; x < c.width; x += 110) g.lineTo(x, y + Math.sin((x + i * 77) / 90) * 34);
+        g.stroke();
+        g.strokeStyle = 'rgba(254,215,170,.45)';
+        g.lineWidth = 3;
+        g.stroke();
+      }
+    }
+    g.strokeStyle = theme.line;
     g.lineWidth = 8;
     g.strokeRect(22, 22, c.width - 44, c.height - 44);
     g.beginPath(); g.moveTo(c.width / 2, 22); g.lineTo(c.width / 2, c.height - 22); g.stroke();

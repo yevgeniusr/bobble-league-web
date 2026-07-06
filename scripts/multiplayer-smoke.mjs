@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 
 const url = process.env.BABBLE_URL || 'http://127.0.0.1:3117';
+const mapId = process.env.BABBLE_MAP || 'stadium';
 const browser = await chromium.launch({ headless: true });
 const errors = [];
 let host;
@@ -15,6 +16,7 @@ try {
   }
 
   await host.goto(url, { waitUntil: 'domcontentloaded' });
+  if (await host.locator('select.mapSelect').count()) await host.locator('select.mapSelect').first().selectOption(mapId);
   await host.locator('button', { hasText: /create room/i }).click({ force: true, timeout: 10000, noWaitAfter: true });
   await host.waitForSelector('.roomCodeValue', { timeout: 10000 });
   const roomCode = (await host.locator('.roomCodeValue').innerText()).trim();
@@ -34,7 +36,7 @@ try {
   const guestText = await guest.locator('body').innerText();
   if (!hostText.includes(roomCode) || !guestText.includes(roomCode)) throw new Error('Room code not visible after start');
   if (errors.length) throw new Error(`Browser errors: ${errors.join('\n')}`);
-  console.log(JSON.stringify({ ok: true, roomCode, hostHasCode: hostText.includes(roomCode), guestHasCode: guestText.includes(roomCode), errors }, null, 2));
+  console.log(JSON.stringify({ ok: true, roomCode, mapId, hostHasCode: hostText.includes(roomCode), guestHasCode: guestText.includes(roomCode), errors }, null, 2));
 } catch (err) {
   if (errors.length) console.error('[multiplayer-smoke] browser errors:\n' + errors.join('\n'));
   if (host) {

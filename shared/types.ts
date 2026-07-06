@@ -62,6 +62,7 @@ export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
 
 export type Vec = { x: number; y: number };
+export type BoxAnchor = 'topMid' | 'bottomMid' | 'midLeft' | 'midRight';
 
 // Ramp wedge footprint (also used by the client renderer). Kept in types.ts so
 // the browser bundle never has to import shared/game.ts (which pulls in the
@@ -77,6 +78,256 @@ export const BUMPERS: readonly Vec[] = [
   { x: 92, y: FIELD.height - 92 },
   { x: FIELD.width - 92, y: FIELD.height - 92 }
 ] as const;
+
+export type MapId = 'stadium' | 'moon' | 'volcano';
+export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano'] as const;
+
+export type MapPhysicsMultipliers = {
+  babbleImpulseScale: number;
+  maxSpeed: number;
+  settleSpeed: number;
+  lowSpeedBrakeThreshold: number;
+  lowSpeedBrakeFactor: number;
+  bumperBoost: number;
+  bumperMinExitBall: number;
+  bumperMinExitBabble: number;
+  bigBumperBoostMult: number;
+  bigBumperRestitution: number;
+  boostPadAccel: number;
+  rampLaunchSpeed: number;
+  babbleDragPerTick: number;
+  ballDragPerTick: number;
+  beachBallDragPerTick: number;
+  babbleRestitution: number;
+  ballRestitution: number;
+  wallRestitution: number;
+  blockRestitution: number;
+  babbleDensity: number;
+  ballDensityBase: number;
+};
+
+export type MapConfig = {
+  id: MapId;
+  label: string;
+  shortLabel: string;
+  description: string;
+  layout: {
+    bumpers: readonly Vec[];
+    bumperRadius: number;
+    bigBumperRadius: number;
+    boxSpawnAnchors: BoxAnchor[];
+  };
+  theme: {
+    sky: number;
+    fog: number;
+    tableLeft: number;
+    tableRight: number;
+    plinth: number;
+    frame: number;
+    frameDark: number;
+    fieldBase: number;
+    stripeA: string;
+    stripeB: string;
+    line: string;
+    bumperBase: number;
+    bumperDrum: number;
+    bumperCap: number;
+    leftGoal: number;
+    rightGoal: number;
+    accent: string;
+    pattern: 'stadium' | 'craters' | 'lava';
+    gateStyle: 'classic' | 'sciFi' | 'volcanic';
+  };
+  physics: MapPhysicsMultipliers;
+};
+
+const PHYSICS_1X: MapPhysicsMultipliers = {
+  babbleImpulseScale: 1,
+  maxSpeed: 1,
+  settleSpeed: 1,
+  lowSpeedBrakeThreshold: 1,
+  lowSpeedBrakeFactor: 1,
+  bumperBoost: 1,
+  bumperMinExitBall: 1,
+  bumperMinExitBabble: 1,
+  bigBumperBoostMult: 1,
+  bigBumperRestitution: 1,
+  boostPadAccel: 1,
+  rampLaunchSpeed: 1,
+  babbleDragPerTick: 1,
+  ballDragPerTick: 1,
+  beachBallDragPerTick: 1,
+  babbleRestitution: 1,
+  ballRestitution: 1,
+  wallRestitution: 1,
+  blockRestitution: 1,
+  babbleDensity: 1,
+  ballDensityBase: 1
+};
+
+export const MAPS: Record<MapId, MapConfig> = {
+  stadium: {
+    id: 'stadium',
+    label: 'Stadium',
+    shortLabel: 'Stadium',
+    description: 'The classic Babble League arena with corner bumpers and standard tabletop physics.',
+    layout: { bumpers: BUMPERS, bumperRadius: BUMPER_RADIUS, bigBumperRadius: BIG_BUMPER_RADIUS, boxSpawnAnchors: ['topMid', 'bottomMid'] },
+    theme: {
+      sky: 0xf16845,
+      fog: 0xf16845,
+      tableLeft: 0xf3714d,
+      tableRight: 0xea5a41,
+      plinth: 0xfff3be,
+      frame: 0xf7b43a,
+      frameDark: 0xe89a2b,
+      fieldBase: 0x2c9297,
+      stripeA: '#56c6c8',
+      stripeB: '#32adb2',
+      line: 'rgba(255,255,255,.85)',
+      bumperBase: 0x9b5144,
+      bumperDrum: 0xc94d5b,
+      bumperCap: 0xffe08a,
+      leftGoal: 0x4a5ad6,
+      rightGoal: 0xf05d48,
+      accent: '#ffe86a',
+      pattern: 'stadium',
+      gateStyle: 'classic'
+    },
+    physics: PHYSICS_1X
+  },
+  moon: {
+    id: 'moon',
+    label: 'Moon Base',
+    shortLabel: 'Moon',
+    description: 'Low-grip lunar felt with floatier movement, bouncier walls, crater bumpers, and sci-fi gates.',
+    layout: {
+      bumpers: [
+        { x: 155, y: 118 },
+        { x: FIELD.width - 155, y: 118 },
+        { x: 155, y: FIELD.height - 118 },
+        { x: FIELD.width - 155, y: FIELD.height - 118 },
+        { x: FIELD.width / 2, y: FIELD.height / 2 - 120 },
+        { x: FIELD.width / 2, y: FIELD.height / 2 + 120 }
+      ],
+      bumperRadius: 34,
+      bigBumperRadius: 50,
+      boxSpawnAnchors: ['topMid', 'bottomMid', 'midLeft', 'midRight']
+    },
+    theme: {
+      sky: 0x101827,
+      fog: 0x1b2440,
+      tableLeft: 0x172033,
+      tableRight: 0x101827,
+      plinth: 0xd7e3f6,
+      frame: 0x6dd8ff,
+      frameDark: 0x405174,
+      fieldBase: 0x72819a,
+      stripeA: '#8593aa',
+      stripeB: '#697892',
+      line: 'rgba(232,244,255,.82)',
+      bumperBase: 0x45536f,
+      bumperDrum: 0x7dd3fc,
+      bumperCap: 0xe0f7ff,
+      leftGoal: 0x67e8f9,
+      rightGoal: 0xc084fc,
+      accent: '#bfdbfe',
+      pattern: 'craters',
+      gateStyle: 'sciFi'
+    },
+    physics: {
+      ...PHYSICS_1X,
+      babbleImpulseScale: 0.92,
+      maxSpeed: 0.95,
+      settleSpeed: 0.82,
+      lowSpeedBrakeThreshold: 0.68,
+      lowSpeedBrakeFactor: 1.08,
+      bumperBoost: 0.88,
+      bumperMinExitBall: 0.86,
+      bumperMinExitBabble: 0.86,
+      bigBumperBoostMult: 0.92,
+      bigBumperRestitution: 1.04,
+      boostPadAccel: 0.9,
+      rampLaunchSpeed: 0.92,
+      babbleDragPerTick: 1.035,
+      ballDragPerTick: 1.03,
+      beachBallDragPerTick: 1.018,
+      babbleRestitution: 1.08,
+      ballRestitution: 1.1,
+      wallRestitution: 1.08,
+      blockRestitution: 1.08,
+      babbleDensity: 0.88,
+      ballDensityBase: 0.76
+    }
+  },
+  volcano: {
+    id: 'volcano',
+    label: 'Volcano Bowl',
+    shortLabel: 'Volcano',
+    description: 'Hot lava rails, offset volcanic bumpers, faster boosts, and harsher hazard bounces.',
+    layout: {
+      bumpers: [
+        { x: 210, y: 108 },
+        { x: FIELD.width - 210, y: 108 },
+        { x: 210, y: FIELD.height - 108 },
+        { x: FIELD.width - 210, y: FIELD.height - 108 },
+        { x: FIELD.width / 2, y: 86 },
+        { x: FIELD.width / 2, y: FIELD.height - 86 }
+      ],
+      bumperRadius: 38,
+      bigBumperRadius: 56,
+      boxSpawnAnchors: ['topMid', 'bottomMid']
+    },
+    theme: {
+      sky: 0x2a100c,
+      fog: 0x5a1f11,
+      tableLeft: 0x4a140d,
+      tableRight: 0x2d0d0a,
+      plinth: 0x2f1b17,
+      frame: 0xf97316,
+      frameDark: 0x7c2d12,
+      fieldBase: 0x4a1d1a,
+      stripeA: '#5f2420',
+      stripeB: '#3d1715',
+      line: 'rgba(255,196,120,.78)',
+      bumperBase: 0x6b1f13,
+      bumperDrum: 0xef4444,
+      bumperCap: 0xfbbf24,
+      leftGoal: 0xffb84d,
+      rightGoal: 0xff4d4d,
+      accent: '#fed7aa',
+      pattern: 'lava',
+      gateStyle: 'volcanic'
+    },
+    physics: {
+      ...PHYSICS_1X,
+      babbleImpulseScale: 1.08,
+      maxSpeed: 1.12,
+      settleSpeed: 1.08,
+      lowSpeedBrakeThreshold: 1.1,
+      lowSpeedBrakeFactor: 0.96,
+      bumperBoost: 1.28,
+      bumperMinExitBall: 1.2,
+      bumperMinExitBabble: 1.16,
+      bigBumperBoostMult: 1.1,
+      bigBumperRestitution: 1.08,
+      boostPadAccel: 1.18,
+      rampLaunchSpeed: 1.15,
+      babbleDragPerTick: 0.985,
+      ballDragPerTick: 0.99,
+      beachBallDragPerTick: 0.995,
+      babbleRestitution: 1.04,
+      ballRestitution: 1.08,
+      wallRestitution: 1.1,
+      blockRestitution: 1.18,
+      babbleDensity: 1.03,
+      ballDensityBase: 0.92
+    }
+  }
+} as const;
+
+export function normalizeMapId(mapId: unknown): MapId {
+  return MAP_IDS.includes(mapId as MapId) ? mapId as MapId : 'stadium';
+}
 
 export type PlayerInput = { up: boolean; down: boolean; left: boolean; right: boolean; kick: boolean };
 export type PlayerSide = 'left' | 'right';
@@ -105,7 +356,6 @@ export type BabbleState = {
 // spin accumulates rolling rotation (radians) derived from authoritative movement:
 // spin.x from travel along field x, spin.y from travel along field y.
 export type BallState = { pos: Vec; vel: Vec; radius: number; lastTouchedBy?: PlayerSide | null; spin?: Vec };
-export type BoxAnchor = 'topMid' | 'bottomMid' | 'midLeft' | 'midRight';
 export type BoxState = { id: string; type: BoxType; anchor: BoxAnchor; pos: Vec; spawnedAt: number; untilTurn?: number };
 export type FieldObjectType = 'boost' | 'stickyGoo' | 'ramp' | 'block';
 export const FIELD_OBJECT_TYPES: readonly FieldObjectType[] = ['boost', 'stickyGoo', 'ramp', 'block'] as const;
@@ -123,6 +373,7 @@ export type PowerPlayUse = { type: BoxType; targetBabbleId?: string; position?: 
 // one box (server-enforced); teammates can see holders, opponents cannot.
 export type InventoryItem = { type: BoxType; availableTurn: number; holderId?: string };
 export type MatchConfig = {
+  mapId: MapId;
   goalTarget: GameMode;
   length: GameLength;
   maxTurns: 30 | 90 | 150;
@@ -136,6 +387,7 @@ export type GameState = {
   roomCode: string;
   phase: RoomPhase;
   mode: GameMode;
+  mapId: MapId;
   config: MatchConfig;
   winner: PlayerSide | null;
   turn: number;
@@ -167,7 +419,7 @@ export type GameState = {
 };
 
 export type ClientToServerEvents = {
-  'room:create': (payload: { name: string; team?: TeamId; mode: GameMode }, cb: (r: JoinResult) => void) => void;
+  'room:create': (payload: { name: string; team?: TeamId; mode: GameMode; mapId?: MapId }, cb: (r: JoinResult) => void) => void;
   'room:join': (payload: { roomCode: string; name: string; team?: TeamId }, cb: (r: JoinResult) => void) => void;
   'player:input': (input: PlayerInput) => void;
   'player:launch': (intent: TurnIntent) => void;
@@ -175,6 +427,7 @@ export type ClientToServerEvents = {
   'player:fieldRotate': (payload: { id: string; angle?: number }) => void;
   'player:formation': (formation: FormationId) => void;
   'player:team': (team: TeamId) => void;
+  'room:map': (mapId: MapId) => void;
   // Dev/test-only hooks (window.__babbleDev). Rejected by production servers
   // unless ENABLE_CHEATS=true.
   'player:cheatBoxes': () => void;

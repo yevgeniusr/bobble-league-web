@@ -8,11 +8,14 @@ A production-oriented, web-based multiplayer babble soccer game inspired by Disc
 
 - Real-time multiplayer rooms with shareable room codes.
 - Authoritative server simulation at 30 ticks/sec.
+- Pre-start map selection: Stadium, Moon Base, or Volcano Bowl. The selected
+  map is included in snapshots and locks after kickoff until reset/new room.
 - Teams: Pigs, Parrots, Penguins, Tigers, Frogs, Foxes.
 - Match modes: first to 1, 3, or 5 goals.
-- Babble soccer mechanics: run, dash/kick, bounce, score goals.
+- Babble soccer mechanics: drag-launch, bounce, score goals.
 - Box spawning: every second kickoff turn creates one random top/bottom lane box.
-- Box effects: speed, slow, big, tiny, freeze, ghost, magnet, bomb, shield, swap.
+- Power Play boxes: Beach Ball, Move Ball, Swap Goals, Big Bumpers, Boost,
+  Sticky Goo, Ramp, Block, Big Head, Ghosted, and Move Player.
 - Responsive web UI and Docker/Coolify-ready deployment.
 
 ## Physics engine
@@ -28,6 +31,22 @@ game-feel rules — corner bumpers, boost pads, sticky goo, ramps, box pickups,
 goal detection, settling — stay as explicit rule code in `shared/game.ts`. The
 browser client never imports the physics module; it renders server state only,
 so no WASM ships in the client bundle.
+
+### Maps
+
+Map config lives in `shared/types.ts` (`MAPS`, `MAP_IDS`, `MapId`) so client,
+server, tests, and scripts share one registry.
+
+- `stadium`: default/current layout and physics, with the classic four corner
+  bumpers.
+- `moon`: lunar colors, crater-style round bumper layout, lower-grip/floatier
+  damping, and sci-fi gates.
+- `volcano`: lava colors, offset volcanic bumpers, faster hazard-like bounces,
+  and volcanic gates.
+
+Players can choose the map while creating a room or from the in-room settings
+menu while the room is still in `lobby`. The server rejects `room:map` after
+kickoff; use Reset or create a new room to change maps.
 
 ### Local physics tuning
 
@@ -47,6 +66,15 @@ source. Examples:
 BABBLE_MAX_SPEED=1450 npm test
 BABBLE_IMPULSE_SCALE=1.0 BABBLE_BALL_DENSITY=0.86 npm run smoke
 BABBLE_BUMPER_BOOST=270 BABBLE_RAMP_LAUNCH_SPEED=740 npm run render-check
+```
+
+Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano`:
+
+```bash
+BABBLE_MAP=moon npm run smoke
+BABBLE_MAP=volcano npm run betabots
+BABBLE_MAP=moon node scripts/stage2-render-check.mjs
+BABBLE_MAP=volcano node scripts/box-control-check.mjs
 ```
 
 Common knobs:

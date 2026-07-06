@@ -17,6 +17,8 @@ import {
   GameMode,
   GameState,
   InventoryItem,
+  MAPS,
+  MapId,
   PlayerInput,
   PlayerSide,
   PlayerState,
@@ -24,7 +26,8 @@ import {
   TEAM_IDS,
   TeamId,
   TurnIntent,
-  Vec
+  Vec,
+  normalizeMapId
 } from './types';
 import { stepPhysics } from './physics';
 import { PHYSICS_CONFIG } from './physicsConfig';
@@ -67,13 +70,15 @@ export const BOOST_PAD_ACCEL = PHYSICS_CONFIG.boostPadAccel;
 export const RAMP_LAUNCH_SPEED = PHYSICS_CONFIG.rampLaunchSpeed;
 export { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from './types';
 
-export function createInitialState(roomCode: string, mode: GameMode = 3): GameState {
+export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: MapId = 'stadium'): GameState {
   const length = GAME_LENGTHS[mode];
+  const selectedMap = normalizeMapId(mapId);
   return {
     roomCode,
     phase: 'lobby',
     mode,
-    config: { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, allAimedResolveGraceMs: ALL_AIMED_RESOLVE_GRACE_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] },
+    mapId: selectedMap,
+    config: matchConfig(mode, selectedMap),
     winner: null,
     turn: 1,
     kickoffAt: Date.now(),
@@ -97,8 +102,39 @@ export function createInitialState(roomCode: string, mode: GameMode = 3): GameSt
     powerPlayInventories: { left: [], right: [] },
     score: { left: 0, right: 0 },
     swappedGoalsUntilTurn: null,
-    events: [{ at: Date.now(), message: `Room ${roomCode} created.` }]
+    events: [{ at: Date.now(), message: `Room ${roomCode} created on ${MAPS[selectedMap].label}.` }]
   };
+}
+
+function matchConfig(mode: GameMode, mapId: MapId) {
+  const length = GAME_LENGTHS[mode];
+  return {
+    mapId,
+    goalTarget: mode,
+    length: length.length,
+    maxTurns: length.maxTurns,
+    turnDurationMs: TURN_DURATION_MS,
+    allAimedResolveGraceMs: ALL_AIMED_RESOLVE_GRACE_MS,
+    boxSpawnEveryTurns: 2 as const,
+    boxSpawnAnchors: [...MAPS[mapId].layout.boxSpawnAnchors]
+  };
+}
+
+const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
+const tune = (state: GameState, key: keyof typeof PHYSICS_CONFIG) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
+
+export function setMap(state: GameState, mapId: MapId) {
+  const selectedMap = normalizeMapId(mapId);
+  if (state.phase !== 'lobby') return false;
+  if (state.mapId === selectedMap) return true;
+  state.mapId = selectedMap;
+  state.config = matchConfig(state.mode, selectedMap);
+  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
+  state.boxes = [];
+  state.bumperEvents = [];
+  state.rampEvents = [];
+  pushEvent(state, `Map changed to ${MAPS[selectedMap].label}.`);
+  return true;
 }
 
 export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide): PlayerState {
@@ -172,6 +208,8 @@ export function applyFormation(state: GameState, side: PlayerSide, formation: Fo
 }
 
 export function startGame(state: GameState, rng: Rng = Math.random) {
+  state.mapId = normalizeMapId(state.mapId);
+  state.config = matchConfig(state.mode, state.mapId);
   state.phase = 'planning';
   state.winner = null;
   state.formationSelectionTurn = 1;
@@ -191,13 +229,14 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   buildBabbles(state);
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
-  pushEvent(state, `Kickoff! First to ${state.mode}.`);
+  pushEvent(state, `Kickoff on ${MAPS[state.mapId].label}! First to ${state.mode}.`);
 }
 
 export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.random) {
   const length = GAME_LENGTHS[mode];
   state.mode = mode;
-  state.config = { goalTarget: mode, length: length.length, maxTurns: length.maxTurns, turnDurationMs: TURN_DURATION_MS, allAimedResolveGraceMs: ALL_AIMED_RESOLVE_GRACE_MS, boxSpawnEveryTurns: 2, boxSpawnAnchors: ['topMid', 'bottomMid'] };
+  state.mapId = normalizeMapId(state.mapId);
+  state.config = matchConfig(mode, state.mapId);
   state.phase = 'lobby';
   state.formationSelectionTurn = null;
   state.winner = null;
@@ -218,7 +257,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   for (const p of Object.values(state.players)) p.score = 0;
   buildBabbles(state);
-  pushEvent(state, `Reset to ${length.length} first-to-${mode}.`);
+  pushEvent(state, `Reset to ${length.length} first-to-${mode} on ${MAPS[state.mapId].label}.`);
 }
 
 export function launchBabble(state: GameState, playerId: string, intent: TurnIntent, _now = Date.now()) {
@@ -277,8 +316,9 @@ function beginResolving(state: GameState, now: number) {
     if (!babble) continue;
     const boost = babble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
     const bigHead = babble.effects.some(e => e.type === 'bigHead' && e.untilTurn >= state.turn) ? 1.3 : 1;
-    babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * BABBLE_IMPULSE_SCALE;
-    babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * BABBLE_IMPULSE_SCALE;
+    const impulseScale = tune(state, 'babbleImpulseScale');
+    babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * impulseScale;
+    babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * impulseScale;
     babble.lastLaunchedTurn = state.turn;
   }
   state.phase = 'resolving';
@@ -400,7 +440,8 @@ export function redactStateFor(state: GameState, viewerId: string): GameState {
 }
 
 export function spawnBox(state: GameState, now = Date.now(), rng: Rng = Math.random): BoxState {
-  const anchor = rng() < 0.5 ? 'topMid' : 'bottomMid';
+  const anchors = state.config.boxSpawnAnchors.length ? state.config.boxSpawnAnchors : mapOf(state).layout.boxSpawnAnchors;
+  const anchor = anchors[Math.floor(rng() * anchors.length)] ?? 'topMid';
   const type = BOX_TYPE_IDS[Math.floor(rng() * BOX_TYPE_IDS.length)] ?? 'beachBall';
   const box: BoxState = {
     id: `box-${state.nextBoxId++}`,
@@ -462,18 +503,21 @@ function updateBallSpin(state: GameState, dt: number) {
 }
 
 function clampAllSpeeds(state: GameState) {
-  clampSpeed(state.ball.vel);
-  for (const b of state.babbles) clampSpeed(b.vel);
+  const max = tune(state, 'maxSpeed');
+  clampSpeed(state.ball.vel, max);
+  for (const b of state.babbles) clampSpeed(b.vel, max);
 }
 
 // Below the brake threshold pieces decay extra fast, so turns end with a crisp
 // stop instead of a long low-speed glide (settling feels immediate).
 function applyLowSpeedBrake(state: GameState) {
+  const threshold = tune(state, 'lowSpeedBrakeThreshold');
+  const factor = Math.min(0.99, tune(state, 'lowSpeedBrakeFactor'));
   for (const vel of [state.ball.vel, ...state.babbles.map(b => b.vel)]) {
     const s = Math.hypot(vel.x, vel.y);
-    if (s > 0 && s < LOW_SPEED_BRAKE_THRESHOLD) {
-      vel.x *= LOW_SPEED_BRAKE_FACTOR;
-      vel.y *= LOW_SPEED_BRAKE_FACTOR;
+    if (s > 0 && s < threshold) {
+      vel.x *= factor;
+      vel.y *= factor;
     }
   }
 }
@@ -484,13 +528,16 @@ export function bigBumpersActive(state: GameState) {
 
 function resolveCornerBumpers(state: GameState, now: number) {
   const big = bigBumpersActive(state);
-  const bumperRadius = big ? BIG_BUMPER_RADIUS : BUMPER_RADIUS;
-  const boost = big ? BUMPER_BOOST * BIG_BUMPER_BOOST_MULT : BUMPER_BOOST;
-  for (const c of BUMPERS) {
+  const map = mapOf(state);
+  const bumperRadius = big ? map.layout.bigBumperRadius : map.layout.bumperRadius;
+  const baseBoost = tune(state, 'bumperBoost');
+  const boost = big ? baseBoost * tune(state, 'bigBumperBoostMult') : baseBoost;
+  const maxSpeed = tune(state, 'maxSpeed');
+  for (const c of map.layout.bumpers) {
     for (const b of state.babbles) {
-      if (staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, big ? 1.05 : 0.92, boost * 0.85, BUMPER_MIN_EXIT_BABBLE)) pushBumperEvent(state, c, now);
+      if (staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, big ? 1.05 : 0.92, boost * 0.85, tune(state, 'bumperMinExitBabble'), maxSpeed)) pushBumperEvent(state, c, now);
     }
-    if (staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, big ? BIG_BUMPER_RESTITUTION : 1.04, boost, BUMPER_MIN_EXIT_BALL)) pushBumperEvent(state, c, now);
+    if (staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, big ? tune(state, 'bigBumperRestitution') : 1.04, boost, tune(state, 'bumperMinExitBall'), maxSpeed)) pushBumperEvent(state, c, now);
   }
   state.bumperEvents = state.bumperEvents.filter(e => now - e.at < BUMPER_EVENT_TTL_MS).slice(-12);
 }
@@ -501,7 +548,7 @@ function pushBumperEvent(state: GameState, pos: Vec, now: number) {
   state.bumperEvents.push({ pos: { ...pos }, at: now });
 }
 
-function staticCircleBounce(pos: Vec, vel: Vec, radius: number, center: Vec, bumperRadius: number, restitution: number, boost = 0, minExitSpeed = 0) {
+function staticCircleBounce(pos: Vec, vel: Vec, radius: number, center: Vec, bumperRadius: number, restitution: number, boost = 0, minExitSpeed = 0, maxSpeed = MAX_SPEED) {
   const dx = pos.x - center.x, dy = pos.y - center.y;
   const d = Math.hypot(dx, dy) || 0.0001;
   const min = radius + bumperRadius;
@@ -522,7 +569,7 @@ function staticCircleBounce(pos: Vec, vel: Vec, radius: number, center: Vec, bum
       vel.x *= minExitSpeed / exit;
       vel.y *= minExitSpeed / exit;
     }
-    clampSpeed(vel);
+    clampSpeed(vel, maxSpeed);
     return true;
   }
   return false;
@@ -534,6 +581,9 @@ function clampSpeed(vel: Vec, max = MAX_SPEED) {
 }
 
 function resolveFieldObjects(state: GameState, dt: number, now = Date.now()) {
+  const boostPadAccel = tune(state, 'boostPadAccel');
+  const rampLaunchSpeed = tune(state, 'rampLaunchSpeed');
+  const maxSpeed = tune(state, 'maxSpeed');
   const movers: { pos: Vec; vel: Vec; radius: number; ghosted: boolean; mover: 'ball' | 'babble'; moverId?: string }[] = [
     { pos: state.ball.pos, vel: state.ball.vel, radius: state.ball.radius, ghosted: false, mover: 'ball' },
     ...state.babbles.map(b => ({ pos: b.pos, vel: b.vel, radius: b.radius, ghosted: b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn), mover: 'babble' as const, moverId: b.id }))
@@ -543,14 +593,14 @@ function resolveFieldObjects(state: GameState, dt: number, now = Date.now()) {
     for (const m of movers) {
       if (o.type === 'boost') {
         if (dist(m.pos, o.pos) <= 70 + m.radius) {
-          m.vel.x += Math.cos(o.angle) * BOOST_PAD_ACCEL * dt;
-          m.vel.y += Math.sin(o.angle) * BOOST_PAD_ACCEL * dt;
-          clampSpeed(m.vel);
+          m.vel.x += Math.cos(o.angle) * boostPadAccel * dt;
+          m.vel.y += Math.sin(o.angle) * boostPadAccel * dt;
+          clampSpeed(m.vel, maxSpeed);
         }
       } else if (o.type === 'stickyGoo') {
         if (dist(m.pos, o.pos) <= 80 + m.radius) { m.vel.x *= 0.93; m.vel.y *= 0.93; }
       } else if (o.type === 'ramp') {
-        if (!m.ghosted && resolveRamp(m.pos, m.vel, m.radius, o.pos, o.angle) === 'launch') pushRampEvent(state, o.pos, m.mover, m.moverId, now);
+        if (!m.ghosted && resolveRamp(m.pos, m.vel, m.radius, o.pos, o.angle, rampLaunchSpeed, maxSpeed) === 'launch') pushRampEvent(state, o.pos, m.mover, m.moverId, now);
       }
     }
   }
@@ -567,7 +617,7 @@ function pushRampEvent(state: GameState, pos: Vec, mover: 'ball' | 'babble', mov
 // Ramp wedge physics: movers travelling with the ramp direction ride up the
 // slope, get aligned to the ramp's facing and launched off the lip; movers
 // hitting the tall back face bounce off like a wall.
-function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: number): 'launch' | 'wall' | false {
+function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: number, launchSpeed = RAMP_LAUNCH_SPEED, maxSpeed = MAX_SPEED): 'launch' | 'wall' | false {
   const dirX = Math.cos(angle), dirY = Math.sin(angle);
   const relX = pos.x - center.x, relY = pos.y - center.y;
   const along = relX * dirX + relY * dirY;
@@ -577,10 +627,10 @@ function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: num
   if (into >= 0) {
     // riding up the wedge: redirect along the ramp and guarantee launch speed
     const speed = Math.hypot(vel.x, vel.y);
-    const exit = Math.max(speed, RAMP_LAUNCH_SPEED);
+    const exit = Math.max(speed, launchSpeed);
     vel.x = dirX * exit;
     vel.y = dirY * exit;
-    clampSpeed(vel);
+    clampSpeed(vel, maxSpeed);
     return 'launch';
   }
   // hitting the tall back of the wedge: push out and reflect
@@ -724,7 +774,7 @@ function resetForPlanning(state: GameState, _rng: Rng) {
 
 function allSettled(state: GameState) {
   const speeds = [Math.hypot(state.ball.vel.x, state.ball.vel.y), ...state.babbles.map(b => Math.hypot(b.vel.x, b.vel.y))];
-  return speeds.every(s => s < SETTLE_SPEED);
+  return speeds.every(s => s < tune(state, 'settleSpeed'));
 }
 
 function anchorPosition(anchor: BoxState['anchor'], rng: Rng): Vec {

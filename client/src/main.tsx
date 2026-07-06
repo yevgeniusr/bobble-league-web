@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
-import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
+import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
 
@@ -37,6 +37,7 @@ function App() {
   // 'bobble:name' is the legacy pre-rename localStorage key, read only for migration; new writes use 'babble:name'.
   const [name, setName] = React.useState(() => localStorage.getItem('babble:name') || localStorage.getItem('bobble:name') || `Player${Math.floor(Math.random()*99)}`);
   const [mode, setMode] = React.useState<GameMode>(3);
+  const [mapId, setMapId] = React.useState<MapId>('stadium');
   const [roomCode, setRoomCode] = React.useState('');
   const [error, setError] = React.useState('');
   const [conn, setConn] = React.useState<'connected' | 'reconnecting'>('connected');
@@ -65,6 +66,10 @@ function App() {
     return () => { socket.off('game:state'); socket.off('room:error'); socket.off('disconnect', onDisconnect); socket.io.off('reconnect', onConnect); };
   }, []);
 
+  React.useEffect(() => {
+    if (state?.mapId) setMapId(state.mapId);
+  }, [state?.mapId]);
+
   // toasts should never linger forever
   React.useEffect(() => {
     if (!error) return;
@@ -74,7 +79,7 @@ function App() {
 
   function createRoom() {
     localStorage.setItem('babble:name', name);
-    socket.emit('room:create', { name, mode }, res => res.ok ? (setRoomCode(res.roomCode), setError('')) : setError(res.error));
+    socket.emit('room:create', { name, mode, mapId }, res => res.ok ? (setRoomCode(res.roomCode), setError('')) : setError(res.error));
   }
   function joinRoom() {
     localStorage.setItem('babble:name', name);
@@ -107,6 +112,7 @@ function App() {
             <div className="lobbyCol">
               <p className="fieldLabel">Host a match</p>
               <label>Game length <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage: 1 goal / 30 turns</option><option value={3}>Qualifier: 3 goals / 90 turns</option><option value={5}>Champion: 5 goals / 150 turns</option></select></label>
+              <label>Map <select className="mapSelect" value={mapId} onChange={e=>setMapId(e.target.value as MapId)}>{MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label}: {MAPS[id].shortLabel === 'Stadium' ? 'classic' : MAPS[id].shortLabel.toLowerCase()}</option>)}</select></label>
               <button className="primary" onClick={createRoom}>Create room</button>
             </div>
             <div className="lobbyDivider"><span>or</span></div>
@@ -120,7 +126,7 @@ function App() {
         </section>
       </div>
     </section>}
-    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} error={error} onDismissError={()=>setError('')} onLeave={()=>{ socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
+    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} error={error} onDismissError={()=>setError('')} onLeave={()=>{ socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
   </main>;
 }
@@ -207,14 +213,14 @@ export function abilityMode(type: BoxType): 'place' | 'babble' | 'point' | 'inst
   return 'instant';
 }
 
-function GameScreen({ state, you, mode, setMode, error, onDismissError, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; error: string; onDismissError: ()=>void; onLeave: ()=>void }) {
+function GameScreen({ state, you, mode, setMode, mapId, setMapId, error, onDismissError, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; error: string; onDismissError: ()=>void; onLeave: ()=>void }) {
   const [placing, setPlacing] = React.useState<PlacingGhost | null>(null);
   const [aiming, setAiming] = React.useState<AbilityAim | null>(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
   return <section className="gameShell">
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
     <TopHud state={state} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>
-    {menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
+    {menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
     <BottomActionBar state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
     {error && <section className="panel error" role="alert" title="Click to dismiss" onClick={onDismissError}>{error}<span className="errorClose"> ✕</span></section>}
   </section>;
@@ -237,7 +243,7 @@ function TopHud({ state, menuOpen, onToggleMenu }: { state: GameState; menuOpen:
   return <header className="topHud">
     <TeamScorePill state={state} side="left"/>
     <div className="matchStatus">
-      <b>{state.config.length} · first to {state.config.goalTarget}</b>
+      <b>{MAPS[state.mapId].shortLabel} · {state.config.length} · first to {state.config.goalTarget}</b>
       <small>turn {state.turn}/{state.config.maxTurns} · {state.phase} · {secs}s · aimed {Object.keys(state.pendingIntents).length}/{state.babbles.length}</small>
     </div>
     <div className="topRight">
@@ -250,7 +256,7 @@ function TopHud({ state, menuOpen, onToggleMenu }: { state: GameState; menuOpen:
 
 // Everything app-like (room sharing, players/teams, match admin) lives behind
 // the ⚙ menu so the live match screen stays board-first.
-function SettingsMenu({ state, you, mode, setMode, onLeave, onClose }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; onLeave: ()=>void; onClose: ()=>void }) {
+function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, onLeave, onClose }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; onLeave: ()=>void; onClose: ()=>void }) {
   const [copied, setCopied] = React.useState<'code' | 'invite' | null>(null);
   const copy = (text: string, kind: 'code' | 'invite') => {
     navigator.clipboard?.writeText(text).then(() => { setCopied(kind); setTimeout(() => setCopied(null), 1600); }).catch(() => {});
@@ -287,6 +293,12 @@ function SettingsMenu({ state, you, mode, setMode, onLeave, onClose }: { state: 
     </section>
     <section className="menuSection">
       <b>Match</b>
+      <label>Map
+        <select className="mapSelect" value={state.phase === 'lobby' ? mapId : state.mapId} disabled={state.phase !== 'lobby'} onChange={e => { const next = e.target.value as MapId; setMapId(next); socket.emit('room:map', next); }}>
+          {MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label}</option>)}
+        </select>
+      </label>
+      {state.phase !== 'lobby' && <small className="menuNote">{MAPS[state.mapId].label} is locked until reset.</small>}
       <div className="menuActions">
         <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select>
         <button type="button" onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button>

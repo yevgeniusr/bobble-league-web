@@ -5,6 +5,7 @@ const timeoutMs = Number(process.env.BETABOTS_TIMEOUT_MS || 120000);
 const requireGoal = process.env.BETABOTS_REQUIRE_GOAL !== '0';
 const botCount = Number(process.env.BETABOTS_COUNT || 8);
 const attackSide = process.env.BETABOTS_ATTACK_SIDE === 'right' ? 'right' : 'left';
+const mapId = process.env.BABBLE_MAP || 'stadium';
 
 function connectBot(name) {
   const socket = io(url, { reconnection: false, timeout: 5000 });
@@ -63,7 +64,7 @@ async function main() {
   if (botCount !== 8) throw new Error('This gate is intentionally configured for 8 Betabots: 4 per team.');
   const bots = Array.from({ length: botCount }, (_, i) => connectBot(`Betabot ${i + 1}`));
   await waitFor(() => bots.every(b => b.socket.connected), 'all 8 bot sockets connected', 10000);
-  const created = await emitAck(bots[0].socket, 'room:create', { name: bots[0].name, team: 'pigs', mode: 1 });
+  const created = await emitAck(bots[0].socket, 'room:create', { name: bots[0].name, team: 'pigs', mode: 1, mapId });
   if (!created.ok) throw new Error(`create failed: ${created.error}`);
   for (let i = 1; i < bots.length; i++) {
     const team = i % 2 === 0 ? 'pigs' : 'parrots';
@@ -90,7 +91,7 @@ async function main() {
       if (requireGoal && state.score.left + state.score.right === 0) throw new Error(`Betabots finished without a goal: score=${state.score.left}-${state.score.right} turn=${state.turn}`);
       const errors = bots.flatMap(b => b.errors.map(e => `${b.name}:${e}`));
       if (errors.length) throw new Error(`Betabots saw room errors: ${errors.join('|')}`);
-      console.log(JSON.stringify({ ok: true, roomCode: state.roomCode, bots: bots.length, sideCounts, distribution, winner: state.winner, score: state.score, turn: state.turn, transcript, errors }, null, 2));
+      console.log(JSON.stringify({ ok: true, roomCode: state.roomCode, mapId: state.mapId, bots: bots.length, sideCounts, distribution, winner: state.winner, score: state.score, turn: state.turn, transcript, errors }, null, 2));
       bots.forEach(b => b.socket.disconnect());
       return;
     }

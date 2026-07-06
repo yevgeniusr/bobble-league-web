@@ -11,6 +11,7 @@ import * as THREE from 'three';
 // mistaken for the one we spawn (a stale one would miss BABBLE_TURN_MS below)
 const PORT = process.env.BOXCHECK_PORT || String(3200 + (process.pid % 400));
 const url = `http://127.0.0.1:${PORT}`;
+const mapId = process.env.BABBLE_MAP || 'stadium';
 const FIELD = { width: 1100, height: 620 };
 const TURF_Y = 1.02;
 
@@ -48,6 +49,7 @@ try {
   // opt into the developer console hook (no cheat UI exists in the app)
   await page.addInitScript(() => localStorage.setItem('babble:devtools', '1'));
   await page.goto(url, { waitUntil: 'domcontentloaded' });
+  if (await page.locator('select.mapSelect').count()) await page.locator('select.mapSelect').first().selectOption(mapId);
   await page.locator('button', { hasText: /create room/i }).click({ force: true });
   await page.waitForSelector('.roomCodeValue', { timeout: 10000 });
   await page.locator('button', { hasText: /start match/i }).click({ force: true });
@@ -126,6 +128,7 @@ try {
 
   const out = {
     ok: aimedBefore >= 1 && aimedAfterReaim === aimedBefore && placingHintCleared && aimedAfterBoost > aimedAfterReaim && targetingCleared && aimedAfterGhost > aimedAfterBoost && errors.length === 0,
+    mapId,
     aimedBefore, aimedAfterReaim, aimedAfterBoost, aimedAfterGhost, placingHintCleared, targetingCleared,
     errors: errors.slice(0, 5)
   };

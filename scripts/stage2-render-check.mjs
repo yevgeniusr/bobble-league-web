@@ -4,8 +4,9 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-const PORT = '3121';
+const PORT = process.env.STAGE2_PORT || String(3700 + (process.pid % 400));
 const url = `http://127.0.0.1:${PORT}`;
+const mapId = process.env.BABBLE_MAP || 'stadium';
 const server = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], { stdio: 'ignore', env: { ...process.env, PORT, NODE_ENV: 'production' } });
 try {
   for (let i = 0; i < 60; i++) { try { if ((await fetch(`${url}/healthz`)).ok) break; } catch {} await delay(400); }
@@ -15,6 +16,7 @@ try {
   page.on('pageerror', e => errors.push('pageerror: ' + e));
   page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
+  if (await page.locator('select.mapSelect').count()) await page.locator('select.mapSelect').first().selectOption(mapId);
   await page.locator('button', { hasText: /create room/i }).click({ force: true });
   await page.waitForSelector('.roomCodeValue', { timeout: 10000 });
   await page.locator('button', { hasText: /start match/i }).click({ force: true });
@@ -29,7 +31,7 @@ try {
   await page.mouse.up();
   await delay(1500);
   const hudText = await page.locator('body').innerText();
-  const out = { ok: fallback === 0 && errors.length === 0, fallback, errors: errors.slice(0, 5), hasControlsHint: /drag back to aim/i.test(hudText) };
+  const out = { ok: fallback === 0 && errors.length === 0, mapId, fallback, errors: errors.slice(0, 5), hasControlsHint: /drag back to aim/i.test(hudText) };
   console.log(JSON.stringify(out, null, 2));
   await browser.close();
   if (!out.ok) process.exit(1);
