@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from '../../shared/game';
-import { BIG_BUMPER_RADIUS, BOX_TYPES, BUMPER_RADIUS, BUMPERS, FIELD, FieldObjectType, GameState, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec } from '../../shared/types';
+import { ActiveEffect, BIG_BUMPER_RADIUS, BOX_TYPES, BUMPER_RADIUS, BUMPERS, FIELD, FieldObjectType, GameState, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec } from '../../shared/types';
 
 export type WorldXZ = { x: number; z: number };
 export type PlacingGhost = { type: FieldObjectType; pos: Vec; angle: number };
@@ -54,6 +54,13 @@ export function latestRampEvent(events: readonly RampEvent[] | undefined, mover:
     if (e.mover === mover && e.moverId === moverId && (now - e.at) / 1000 <= RAMP_HOP_SECONDS) return e;
   }
   return null;
+}
+
+// Ghosted power play: the whole babble renders translucent so everyone can see
+// it phases through other babbleheads, plus a pulsing ghost aura and label.
+export const GHOST_OPACITY = 0.38;
+export function babbleGhosted(effects: readonly ActiveEffect[] | undefined, turn: number): boolean {
+  return !!effects?.some(e => e.type === 'ghosted' && e.untilTurn >= turn);
 }
 
 export const GOAL_COLORS = { left: 0x4a5ad6, right: 0xf05d48 } as const;
@@ -312,9 +319,9 @@ export class BabbleLeague3DRenderer {
   }
 
   // -- dynamic actors ---------------------------------------------------
-  private blobShadow(x: number, z: number, r: number) {
+  private blobShadow(x: number, z: number, r: number, opacity = 0.24) {
     const m = new THREE.Mesh(this.geo('blob', () => new THREE.CircleGeometry(1, 40)),
-      this.mat(0x143317, 0.9, { transparent: true, opacity: 0.24 }));
+      this.mat(0x143317, 0.9, { transparent: true, opacity }));
     m.position.set(x, TURF_Y + 0.03, z); m.rotation.x = -Math.PI / 2; m.scale.setScalar(r); m.receiveShadow = false; this.dynamic.add(m);
   }
 
@@ -326,36 +333,57 @@ export class BabbleLeague3DRenderer {
     const t = performance.now() / 1000 + hashId(b.id) * 7;
     const bobY = Math.sin(t * 3.1) * 0.05;
     const wobble = Math.sin(t * 2.4) * 0.09;
-    this.blobShadow(w.x, w.z, r * 1.5);
+    // Ghosted babbles render translucent with a faint shadow and no cast shadow
+    const ghosted = babbleGhosted(b.effects, state.turn);
+    const bmat = (color: number | string, roughness: number) =>
+      ghosted ? this.mat(color, roughness, { transparent: true, opacity: GHOST_OPACITY }) : this.mat(color, roughness);
+    const solid = !ghosted;
+    this.blobShadow(w.x, w.z, r * 1.5, ghosted ? 0.1 : 0.24);
 
     const hop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'babble', b.id, Date.now())?.at ?? -1e12)) / 1000);
     const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
     const sideCol = b.side === 'left' ? 0xe25a4c : 0x5147a8;
     // pedestal base
-    this.mesh(grp, new THREE.CylinderGeometry(r * 1.05, r * 1.3, 0.22, 36), this.mat(sideCol, 0.45), 0, TURF_Y + 0.12, 0, true);
-    this.mesh(grp, new THREE.CylinderGeometry(r * 0.85, r * 1.05, 0.2, 36), this.mat(0xfff3be, 0.4), 0, TURF_Y + 0.32, 0, true);
+    this.mesh(grp, new THREE.CylinderGeometry(r * 1.05, r * 1.3, 0.22, 36), bmat(sideCol, 0.45), 0, TURF_Y + 0.12, 0, solid);
+    this.mesh(grp, new THREE.CylinderGeometry(r * 0.85, r * 1.05, 0.2, 36), bmat(0xfff3be, 0.4), 0, TURF_Y + 0.32, 0, solid);
     // torso in team colors
-    const torso = this.mesh(grp, new THREE.SphereGeometry(r * 0.62, 28, 18), this.mat(team.primary, 0.4), 0, TURF_Y + 0.6, 0, true);
+    const torso = this.mesh(grp, new THREE.SphereGeometry(r * 0.62, 28, 18), bmat(team.primary, 0.4), 0, TURF_Y + 0.6, 0, solid);
     torso.scale.set(1, 1.15, 0.9);
-    this.mesh(grp, new THREE.SphereGeometry(r * 0.4, 22, 14), this.mat(team.secondary, 0.45), 0, TURF_Y + 0.56, r * 0.32, true);
+    this.mesh(grp, new THREE.SphereGeometry(r * 0.4, 22, 14), bmat(team.secondary, 0.45), 0, TURF_Y + 0.56, r * 0.32, solid);
     // oversized wobbling babble head
     const head = new THREE.Group(); head.position.set(0, TURF_Y + 1.18 + bobY, 0); head.rotation.z = wobble; head.rotation.x = wobble * 0.5; grp.add(head);
-    const skull = this.mesh(head, new THREE.SphereGeometry(r * 0.98, 40, 26), this.mat(team.primary, 0.32), 0, 0, 0, true);
+    const skull = this.mesh(head, new THREE.SphereGeometry(r * 0.98, 40, 26), bmat(team.primary, 0.32), 0, 0, 0, solid);
     skull.scale.set(1, 1.08, 0.96);
     // muzzle, ears, eyes
-    this.mesh(head, new THREE.SphereGeometry(r * 0.42, 22, 14), this.mat(team.secondary, 0.4), 0, -r * 0.18, r * 0.72, true);
+    this.mesh(head, new THREE.SphereGeometry(r * 0.42, 22, 14), bmat(team.secondary, 0.4), 0, -r * 0.18, r * 0.72, solid);
     for (const s of [-1, 1]) {
-      this.mesh(head, new THREE.SphereGeometry(r * 0.3, 18, 12), this.mat(team.primary, 0.35), s * r * 0.66, r * 0.82, 0, true);
-      this.mesh(head, new THREE.SphereGeometry(r * 0.16, 14, 10), this.mat(team.secondary, 0.4), s * r * 0.66, r * 0.82, r * 0.12);
-      const eye = this.mesh(head, new THREE.SphereGeometry(r * 0.19, 16, 10), this.mat(0xffffff, 0.25), s * r * 0.34, r * 0.22, r * 0.78);
+      this.mesh(head, new THREE.SphereGeometry(r * 0.3, 18, 12), bmat(team.primary, 0.35), s * r * 0.66, r * 0.82, 0, solid);
+      this.mesh(head, new THREE.SphereGeometry(r * 0.16, 14, 10), bmat(team.secondary, 0.4), s * r * 0.66, r * 0.82, r * 0.12);
+      const eye = this.mesh(head, new THREE.SphereGeometry(r * 0.19, 16, 10), bmat(0xffffff, 0.25), s * r * 0.34, r * 0.22, r * 0.78);
       eye.castShadow = false;
-      this.mesh(head, new THREE.SphereGeometry(r * 0.09, 10, 8), this.mat(0x1c1310, 0.3), s * r * 0.34, r * 0.22, r * 0.94);
+      this.mesh(head, new THREE.SphereGeometry(r * 0.09, 10, 8), bmat(0x1c1310, 0.3), s * r * 0.34, r * 0.22, r * 0.94);
     }
-    // team emoji badge on the chest
-    const badge = this.text(team.emoji, 44);
-    badge.scale.setScalar(0.9);
-    badge.position.set(w.x, TURF_Y + 0.66, w.z + r * 0.66);
-    this.dynamic.add(badge);
+    // ghost aura: pulsing translucent shell + floating GHOSTED tag
+    if (ghosted) {
+      const shell = new THREE.Mesh(this.geo('ghostShell', () => new THREE.SphereGeometry(1, 24, 16)),
+        new THREE.MeshBasicMaterial({ color: 0xd8b4fe, transparent: true, opacity: 0.16 + Math.sin(t * 3.4) * 0.06, depthWrite: false }));
+      shell.position.set(0, TURF_Y + 1.05, 0);
+      shell.scale.set(r * 1.55, r * 2.15 + Math.sin(t * 3.4) * 0.05, r * 1.55);
+      grp.add(shell);
+      const halo = new THREE.Mesh(this.geo('ghostHalo', () => new THREE.TorusGeometry(1, 0.05, 8, 48)),
+        new THREE.MeshBasicMaterial({ color: 0xd8b4fe, transparent: true, opacity: 0.55 + Math.sin(t * 3.4) * 0.2 }));
+      halo.position.set(w.x, TURF_Y + 0.06, w.z); halo.rotation.x = Math.PI / 2; halo.scale.setScalar(r * 1.8); this.dynamic.add(halo);
+      const tag = this.text('👻 GHOSTED', 24, '#e9d5ff');
+      tag.position.set(w.x, TURF_Y + 2.65 + bobY, w.z);
+      this.dynamic.add(tag);
+    }
+    // team emoji badge on the chest (hidden while ghosted so the see-through body reads clearly)
+    if (!ghosted) {
+      const badge = this.text(team.emoji, 44);
+      badge.scale.setScalar(0.9);
+      badge.position.set(w.x, TURF_Y + 0.66, w.z + r * 0.66);
+      this.dynamic.add(badge);
+    }
     // control ring for your babbles
     if (state.players[you]?.controlledBabbleIds.includes(b.id)) {
       const ring = new THREE.Mesh(this.geo('ctrlRing', () => new THREE.TorusGeometry(1, 0.06, 8, 48)), this.mat(0xffe86a, 0.4, { emissive: 0x6b5410 }));

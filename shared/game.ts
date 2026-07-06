@@ -39,7 +39,10 @@ export const BALL_MASS_FACTOR = 0.78;
 export const BOX_LIFETIME_TURNS = 3;
 const SETTLE_SPEED = 18;
 export const MAX_RESOLVE_MS = 10000;
-const TURN_DURATION_MS = 15000;
+// BABBLE_TURN_MS is a server-side test hook (used by scripts/box-control-check.mjs,
+// where headless WebGL is too slow to finish a scripted turn in 15s). Browsers have
+// no `process`, so players always get the standard 15s turn.
+const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 15000;
 const MAX_SPEED = 1600;
 export const BUMPER_BOOST = 220;
 // Big Bumpers power play: noticeably stronger corner hits plus higher restitution.

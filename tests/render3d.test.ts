@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, RampEvent } from '../shared/types';
-import { ballSpinToRotation, BUMPER_WORLD_POSITIONS, fieldToWorld, fieldRadiusToWorld, GOAL_COLORS, goalDisplayColors, latestRampEvent, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { babbleGhosted, ballSpinToRotation, BUMPER_WORLD_POSITIONS, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, latestRampEvent, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 
 describe('3D renderer coordinate mapping', () => {
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
@@ -79,6 +79,18 @@ describe('3D renderer coordinate mapping', () => {
     expect(latestRampEvent(events, 'babble', 'left-2', now)).toBeNull();
     expect(latestRampEvent(events, 'babble', 'right-1', now)).toBeNull();
     expect(latestRampEvent(undefined, 'ball', undefined, now)).toBeNull();
+  });
+
+  it('renders ghosted babbles translucent only while the effect is active', () => {
+    // ghosted babbles must be clearly see-through but still visible
+    expect(GHOST_OPACITY).toBeGreaterThan(0.1);
+    expect(GHOST_OPACITY).toBeLessThan(0.6);
+    expect(babbleGhosted([{ type: 'ghosted', untilTurn: 3 }], 3)).toBe(true);
+    expect(babbleGhosted([{ type: 'ghosted', untilTurn: 4 }], 3)).toBe(true);
+    expect(babbleGhosted([{ type: 'ghosted', untilTurn: 2 }], 3)).toBe(false); // expired
+    expect(babbleGhosted([{ type: 'bigHead', untilTurn: 9 }], 3)).toBe(false); // other effects
+    expect(babbleGhosted([], 3)).toBe(false);
+    expect(babbleGhosted(undefined, 3)).toBe(false);
   });
 
   it('swaps visible gate colours while Swap Goals is active', () => {

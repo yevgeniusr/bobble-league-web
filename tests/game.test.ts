@@ -736,6 +736,61 @@ describe('reconnect seat reclaim', () => {
   });
 });
 
+describe('using a box never blocks babble control', () => {
+  const setup = () => {
+    const s = createInitialState('CTRL', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    return s;
+  };
+
+  it('keeps controlledBabbleIds and same-turn launching intact after every power play type', () => {
+    for (const type of BOX_TYPE_IDS) {
+      const s = setup();
+      const before = [...s.players.l.controlledBabbleIds];
+      expect(before).toHaveLength(4);
+      s.powerPlayInventories.left.push({ type, availableTurn: 1, holderId: 'l' });
+      expect(usePowerPlay(s, 'l', { type, targetBabbleId: 'left-2', position: { x: 500, y: 300 }, angle: 0 }, 1000)).toBe(true);
+      expect(s.players.l.controlledBabbleIds).toEqual(before);
+      expect(s.phase).toBe('planning');
+      for (const id of before) {
+        expect(launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 100 }, 1000)).toBe(true);
+      }
+    }
+  });
+
+  it('still allows launching controlled babbles on the turn after a box was used', () => {
+    const s = setup();
+    s.powerPlayInventories.left.push({ type: 'ghosted', availableTurn: 1, holderId: 'l' });
+    expect(usePowerPlay(s, 'l', { type: 'ghosted', targetBabbleId: 'left-1' }, 1000)).toBe(true);
+    for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 1 }, 1000);
+    for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
+    for (let i = 0; i < 400 && s.turn === 1; i++) stepGame(s, {}, 1000 + i * 33, seq([0.5]));
+    expect(s.turn).toBe(2);
+    expect(s.phase).toBe('planning');
+    expect(s.players.l.controlledBabbleIds).toHaveLength(4);
+    for (const id of s.players.l.controlledBabbleIds) {
+      expect(launchBabble(s, 'l', { babbleId: id, aimAngle: 0, impulse: 100 }, 20000)).toBe(true);
+    }
+  });
+
+  it('redacted state preserves players, controlled babbles and your own inventory holders', () => {
+    const s = setup();
+    s.powerPlayInventories.left.push({ type: 'boost', availableTurn: 1, holderId: 'l' });
+    const view = redactStateFor(s, 'l');
+    expect(view.players).toEqual(s.players);
+    expect(view.players.l.controlledBabbleIds).toEqual(s.players.l.controlledBabbleIds);
+    expect(view.powerPlayInventories.left).toEqual([{ type: 'boost', availableTurn: 1, holderId: 'l' }]);
+    expect(view.babbles).toEqual(s.babbles);
+    // after spending the box, the viewer still owns the same babbles
+    expect(usePowerPlay(s, 'l', { type: 'boost', position: { x: 500, y: 300 }, angle: 0 }, 1000)).toBe(true);
+    const after = redactStateFor(s, 'l');
+    expect(after.players.l.controlledBabbleIds).toEqual(view.players.l.controlledBabbleIds);
+    expect(after.powerPlayInventories.left).toHaveLength(0);
+  });
+});
+
 describe('move ball ability', () => {
   it('teleports the ball to the clicked spot, clamped inside the field, and stops it dead', () => {
     const s = createInitialState('MOVEB', 3);

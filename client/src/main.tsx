@@ -290,6 +290,12 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // if placement is cancelled from the HUD mid-drag, drop the stale place mode
+  // immediately so the next pointer press controls babbles again
+  React.useEffect(() => {
+    if (!placing) setMode(m => (m?.kind === 'place' ? null : m));
+  }, [placing]);
+
   React.useEffect(() => {
     if (!placing && !aiming) return;
     const onKey = (e: KeyboardEvent) => {
@@ -374,22 +380,17 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
     if (mode?.kind === 'place' && placing) {
       socket.emit('player:power', { type: placing.type, position: mode.anchor, angle: mode.angle });
       setPlacing(null);
-      setMode(null);
-      return;
-    }
-    if (mode?.kind === 'rotatePad') {
+    } else if (mode?.kind === 'rotatePad') {
       socket.emit('player:fieldRotate', { id: mode.id, angle: mode.angle });
-      setMode(null);
-      return;
-    }
-    if (mode?.kind === 'launch') {
+    } else if (mode?.kind === 'launch') {
       const dx = mode.start.x - mode.current.x;
       const dy = mode.start.y - mode.current.y;
       const pull = Math.hypot(dx, dy);
       // a click with no pull is ignored so a launch is never wasted by accident
       if (pull >= 8) socket.emit('player:launch', { babbleId: mode.babbleId, aimAngle: Math.atan2(dy, dx), impulse: Math.min(900, Math.max(1, pull * 6)) });
-      setMode(null);
     }
+    // always drop the pointer mode: a stale mode must never block later launches
+    setMode(null);
   };
 
   return <>
