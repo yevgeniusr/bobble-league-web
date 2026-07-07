@@ -3,7 +3,7 @@ import { drainAnalyticsEvents } from '../shared/analytics';
 import { addPlayer, collectPowerBox, createInitialState, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { FIELD } from '../shared/types';
 import { createXtremepushAnalytics } from '../client/src/analytics';
-import { buildHitEventBody, createXtremepushSender } from '../server/xtremepush';
+import { buildHitEventBody, buildImportProfileBody, createXtremepushSender } from '../server/xtremepush';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
@@ -215,19 +215,34 @@ describe('Xtremepush backend hit-event sender', () => {
     });
   });
 
-  it('posts gameplay analytics from the backend to Xtremepush hit/event', async () => {
+  it('builds the profile import body used to make users visible before events are hit', () => {
+    expect(buildImportProfileBody('token-for-test', 'babble-player:lefty', event)).toEqual({
+      apptoken: 'token-for-test',
+      columns: ['user_id', 'first_name'],
+      rows: [['babble-player:lefty', 'Lefty']],
+      async: false
+    });
+  });
+
+  it('imports the user profile before posting gameplay analytics to Xtremepush hit/event', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ success: true, code: 200 }), { status: 200 }));
     const sender = createXtremepushSender({ appToken: 'token-for-test', apiBase: 'https://api.example.test/base/', fetcher, logger: { warn: vi.fn() } });
 
     await expect(sender.send(event)).resolves.toBe(true);
-    expect(fetcher).toHaveBeenCalledWith('https://api.example.test/base/hit/event', expect.objectContaining({
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'https://api.example.test/base/import/profile', expect.objectContaining({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' }
+    }));
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'https://api.example.test/base/hit/event', expect.objectContaining({
       method: 'POST',
       headers: { 'content-type': 'application/json' }
     }));
     const calls = fetcher.mock.calls as unknown as [string, RequestInit][];
-    const body = JSON.parse(calls[0][1].body as string);
+    const importBody = JSON.parse(calls[0][1].body as string);
+    expect(importBody).toMatchObject({ apptoken: 'token-for-test', columns: ['user_id', 'first_name'], rows: [['babble-player:lefty', 'Lefty']], async: false });
+    const body = JSON.parse(calls[1][1].body as string);
     expect(body).toMatchObject({ apptoken: 'token-for-test', user_id: 'babble-player:lefty', event: 'abilityUsed', async: false });
-    expect(sender.debugSnapshot()).toMatchObject({ enabled: true, attempted: 1, succeeded: 1, failed: 0 });
+    expect(sender.debugSnapshot()).toMatchObject({ enabled: true, attempted: 1, succeeded: 1, failed: 0, profilesAttempted: 1, profilesSucceeded: 1, profilesFailed: 0 });
   });
 
   it('defaults backend analytics to the Xtremepush demo API host', async () => {
@@ -235,7 +250,8 @@ describe('Xtremepush backend hit-event sender', () => {
     const sender = createXtremepushSender({ appToken: 'token-for-test', fetcher, logger: { warn: vi.fn() } });
 
     await expect(sender.send(event)).resolves.toBe(true);
-    expect(fetcher).toHaveBeenCalledWith('https://api.demo.xtremepush.com/api/external/hit/event', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'https://api.demo.xtremepush.com/api/external/import/profile', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'https://api.demo.xtremepush.com/api/external/hit/event', expect.any(Object));
   });
 
   it('disables cleanly when the backend app token is missing', async () => {

@@ -15,6 +15,13 @@ type XtremepushHitBody = {
   async: false;
 };
 
+type XtremepushImportBody = {
+  apptoken: string;
+  columns: string[];
+  rows: unknown[][];
+  async: false;
+};
+
 type XtremepushSendRecord = {
   at: string;
   event: string;
@@ -24,6 +31,8 @@ type XtremepushSendRecord = {
   responseCode?: unknown;
   responseSuccess?: unknown;
   responseAsync?: unknown;
+  profileOk?: boolean;
+  profileStatus?: number;
   error?: string;
 };
 
@@ -32,6 +41,9 @@ export type XtremepushDebugSnapshot = {
   attempted: number;
   succeeded: number;
   failed: number;
+  profilesAttempted: number;
+  profilesSucceeded: number;
+  profilesFailed: number;
   last: XtremepushSendRecord[];
 };
 
@@ -56,6 +68,7 @@ export function createXtremepushSender(options: {
   const fetcher = options.fetcher ?? globalThis.fetch;
   const logger = options.logger ?? console;
   const stats = createStats(false);
+  const importedProfiles = new Set<string>();
 
   if (!appToken || !fetcher) {
     return { enabled: false, send: async () => false, debugSnapshot: () => snapshot(stats, false) };
@@ -69,6 +82,7 @@ export function createXtremepushSender(options: {
       const body = buildHitEventBody(appToken, event);
       stats.attempted += 1;
       try {
+        const profile = await ensureProfile({ apiBase, appToken, event, fetcher, importedProfiles, logger, stats, userId: body.user_id });
         const res = await fetcher(`${apiBase}/hit/event`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -76,7 +90,7 @@ export function createXtremepushSender(options: {
         });
         const response = await parseJsonResponse(res);
         const ok = res.ok && responseOk(response);
-        const record = buildRecord(body, ok, res.status, response);
+        const record = buildRecord(body, ok, res.status, response, undefined, profile.ok, profile.status);
         remember(stats, record);
         if (!ok) {
           stats.failed += 1;
@@ -84,7 +98,7 @@ export function createXtremepushSender(options: {
           return false;
         }
         stats.succeeded += 1;
-        if (DEBUG_LOG_SUCCESS) logger.info?.(`Xtremepush hit/event ok event=${event.name} user=${body.user_id} status=${res.status} async=${String(record.responseAsync)}`);
+        if (DEBUG_LOG_SUCCESS) logger.info?.(`Xtremepush hit/event ok event=${event.name} user=${body.user_id} profile=${String(profile.ok)} status=${res.status} async=${String(record.responseAsync)}`);
         return true;
       } catch (err) {
         stats.failed += 1;
@@ -116,6 +130,52 @@ export function buildHitEventBody(appToken: string, event: AnalyticsEvent): Xtre
   };
 }
 
+export function buildImportProfileBody(appToken: string, userId: string, event: AnalyticsEvent): XtremepushImportBody {
+  return {
+    apptoken: appToken,
+    columns: ['user_id', 'first_name'],
+    rows: [[userId, displayNameFor(event.payload, userId)]],
+    async: false
+  };
+}
+
+async function ensureProfile({ apiBase, appToken, event, fetcher, importedProfiles, logger, stats, userId }: {
+  apiBase: string;
+  appToken: string;
+  event: AnalyticsEvent;
+  fetcher: Fetcher;
+  importedProfiles: Set<string>;
+  logger: Pick<Console, 'warn'> & Partial<Pick<Console, 'info'>>;
+  stats: ReturnType<typeof createStats>;
+  userId: string;
+}): Promise<{ ok: boolean; status?: number }> {
+  if (importedProfiles.has(userId)) return { ok: true };
+  stats.profilesAttempted += 1;
+  const body = buildImportProfileBody(appToken, userId, event);
+  try {
+    const res = await fetcher(`${apiBase}/import/profile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const response = await parseJsonResponse(res);
+    const ok = res.ok && responseOk(response);
+    if (ok) {
+      importedProfiles.add(userId);
+      stats.profilesSucceeded += 1;
+      return { ok: true, status: res.status };
+    }
+    stats.profilesFailed += 1;
+    logger.warn(`Xtremepush import/profile failed for user=${userId}: status=${res.status} response=${summarizeResponse(response)}`);
+    return { ok: false, status: res.status };
+  } catch (err) {
+    stats.profilesFailed += 1;
+    const message = err instanceof Error ? err.message : 'unknown error';
+    logger.warn(`Xtremepush import/profile failed for user=${userId}: ${message}`);
+    return { ok: false };
+  }
+}
+
 function parseJsonResponse(res: Response) {
   return res.text().then(text => {
     if (!text) return null;
@@ -130,7 +190,7 @@ function responseOk(response: unknown) {
   return value === undefined || value === true || value === 'true';
 }
 
-function buildRecord(body: XtremepushHitBody, ok: boolean, status?: number, response?: unknown, error?: string): XtremepushSendRecord {
+function buildRecord(body: XtremepushHitBody, ok: boolean, status?: number, response?: unknown, error?: string, profileOk?: boolean, profileStatus?: number): XtremepushSendRecord {
   const obj = response && typeof response === 'object' ? response as Record<string, unknown> : {};
   return {
     at: new Date().toISOString(),
@@ -141,12 +201,14 @@ function buildRecord(body: XtremepushHitBody, ok: boolean, status?: number, resp
     responseCode: obj.code,
     responseSuccess: obj.success,
     responseAsync: obj.async,
+    profileOk,
+    profileStatus,
     error
   };
 }
 
 function createStats(enabled: boolean) {
-  return { enabled, attempted: 0, succeeded: 0, failed: 0, last: [] as XtremepushSendRecord[] };
+  return { enabled, attempted: 0, succeeded: 0, failed: 0, profilesAttempted: 0, profilesSucceeded: 0, profilesFailed: 0, last: [] as XtremepushSendRecord[] };
 }
 
 function remember(stats: ReturnType<typeof createStats>, record: XtremepushSendRecord) {
@@ -155,7 +217,16 @@ function remember(stats: ReturnType<typeof createStats>, record: XtremepushSendR
 }
 
 function snapshot(stats: ReturnType<typeof createStats>, enabled: boolean): XtremepushDebugSnapshot {
-  return { enabled, attempted: stats.attempted, succeeded: stats.succeeded, failed: stats.failed, last: [...stats.last] };
+  return {
+    enabled,
+    attempted: stats.attempted,
+    succeeded: stats.succeeded,
+    failed: stats.failed,
+    profilesAttempted: stats.profilesAttempted,
+    profilesSucceeded: stats.profilesSucceeded,
+    profilesFailed: stats.profilesFailed,
+    last: [...stats.last]
+  };
 }
 
 function summarizeResponse(response: unknown) {
@@ -175,9 +246,6 @@ function formatXtremepushTimestamp(value: unknown) {
 }
 
 function userIdFor(payload: AnalyticsPayload) {
-  // Xtremepush docs say `user_id` is the external user ID and auto-creates
-  // that profile if missing. Socket IDs were technically unique, but ephemeral
-  // and hard to find in the dashboard. Prefer stable, human-readable Babble IDs.
   const playerName = stringOrNull(payload.playerName);
   if (playerName) return `babble-player:${slug(playerName)}`;
   const holderId = stringOrNull(payload.holderId);
@@ -198,6 +266,13 @@ function userAttributesFor(payload: AnalyticsPayload) {
     last_event: payload.lifecycle ?? payload.abilityType ?? undefined
   };
   return Object.fromEntries(Object.entries(attrs).filter(([, value]) => value !== undefined && value !== null));
+}
+
+function displayNameFor(payload: AnalyticsPayload, userId: string) {
+  return stringOrNull(payload.playerName)
+    ?? stringOrNull(payload.holderId)
+    ?? stringOrNull(payload.roomCode)
+    ?? userId.slice(0, 64);
 }
 
 function stringOrNull(value: unknown) {
