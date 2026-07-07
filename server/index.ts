@@ -44,6 +44,7 @@ app.use(compression());
 app.use(express.json());
 app.get('/healthz', (_, res) => res.json({ ok: true, rooms: rooms.size, uptime: process.uptime() }));
 app.get('/api/config', (_, res) => res.json({ xtremepushBackend: xtremepush.enabled }));
+app.get('/api/analytics/debug', (_, res) => res.json({ xtremepush: xtremepush.debugSnapshot() }));
 app.get('/api/xtremepush/sdk.js', async (_, res) => {
   res.type('application/javascript');
   res.setHeader('cache-control', 'no-store');

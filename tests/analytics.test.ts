@@ -210,7 +210,8 @@ describe('Xtremepush backend hit-event sender', () => {
         map_id: 'volcano',
         last_event: 'boost'
       },
-      timestamp: '2026-07-07T01:02:03.000Z'
+      timestamp: '2026-07-07 01:02:03 +00:00',
+      async: false
     });
   });
 
@@ -225,7 +226,8 @@ describe('Xtremepush backend hit-event sender', () => {
     }));
     const calls = fetcher.mock.calls as unknown as [string, RequestInit][];
     const body = JSON.parse(calls[0][1].body as string);
-    expect(body).toMatchObject({ apptoken: 'token-for-test', user_id: 'socket-123', event: 'abilityUsed' });
+    expect(body).toMatchObject({ apptoken: 'token-for-test', user_id: 'socket-123', event: 'abilityUsed', async: false });
+    expect(sender.debugSnapshot()).toMatchObject({ enabled: true, attempted: 1, succeeded: 1, failed: 0 });
   });
 
   it('disables cleanly when the backend app token is missing', async () => {
