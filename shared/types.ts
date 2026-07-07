@@ -193,7 +193,24 @@ export const MAPS: Record<MapId, MapConfig> = {
       pattern: 'stadium',
       gateStyle: 'classic'
     },
-    physics: PHYSICS_1X
+    physics: {
+      ...PHYSICS_1X,
+      // Move the default map closer to the loved Moon feel: softer launch,
+      // lower top speed, later settling, and more glide/carry.
+      babbleImpulseScale: 0.94,
+      maxSpeed: 0.97,
+      settleSpeed: 0.88,
+      lowSpeedBrakeThreshold: 0.78,
+      lowSpeedBrakeFactor: 1.04,
+      babbleDragPerTick: 1.025,
+      ballDragPerTick: 1.025,
+      beachBallDragPerTick: 1.012,
+      babbleRestitution: 1.04,
+      ballRestitution: 1.06,
+      wallRestitution: 1.04,
+      babbleDensity: 0.94,
+      ballDensityBase: 0.88
+    }
   },
   moon: {
     id: 'moon',
@@ -236,11 +253,11 @@ export const MAPS: Record<MapId, MapConfig> = {
     },
     physics: {
       ...PHYSICS_1X,
-      babbleImpulseScale: 0.92,
-      maxSpeed: 0.95,
-      settleSpeed: 0.82,
-      lowSpeedBrakeThreshold: 0.68,
-      lowSpeedBrakeFactor: 1.08,
+      babbleImpulseScale: 0.88,
+      maxSpeed: 0.93,
+      settleSpeed: 0.75,
+      lowSpeedBrakeThreshold: 0.55,
+      lowSpeedBrakeFactor: 1.12,
       bumperBoost: 0.88,
       bumperMinExitBall: 0.86,
       bumperMinExitBabble: 0.86,
@@ -248,15 +265,15 @@ export const MAPS: Record<MapId, MapConfig> = {
       bigBumperRestitution: 1.04,
       boostPadAccel: 0.9,
       rampLaunchSpeed: 0.92,
-      babbleDragPerTick: 1.035,
-      ballDragPerTick: 1.03,
-      beachBallDragPerTick: 1.018,
-      babbleRestitution: 1.08,
-      ballRestitution: 1.1,
-      wallRestitution: 1.08,
+      babbleDragPerTick: 1.06,
+      ballDragPerTick: 1.05,
+      beachBallDragPerTick: 1.03,
+      babbleRestitution: 1.1,
+      ballRestitution: 1.12,
+      wallRestitution: 1.1,
       blockRestitution: 1.08,
-      babbleDensity: 0.88,
-      ballDensityBase: 0.76
+      babbleDensity: 0.82,
+      ballDensityBase: 0.7
     }
   },
   volcano: {
@@ -300,11 +317,11 @@ export const MAPS: Record<MapId, MapConfig> = {
     },
     physics: {
       ...PHYSICS_1X,
-      babbleImpulseScale: 1.08,
-      maxSpeed: 1.12,
-      settleSpeed: 1.08,
-      lowSpeedBrakeThreshold: 1.1,
-      lowSpeedBrakeFactor: 0.96,
+      babbleImpulseScale: 0.98,
+      maxSpeed: 1,
+      settleSpeed: 0.9,
+      lowSpeedBrakeThreshold: 0.82,
+      lowSpeedBrakeFactor: 1.03,
       bumperBoost: 1.28,
       bumperMinExitBall: 1.2,
       bumperMinExitBabble: 1.16,
@@ -312,15 +329,15 @@ export const MAPS: Record<MapId, MapConfig> = {
       bigBumperRestitution: 1.08,
       boostPadAccel: 1.18,
       rampLaunchSpeed: 1.15,
-      babbleDragPerTick: 0.985,
-      ballDragPerTick: 0.99,
-      beachBallDragPerTick: 0.995,
+      babbleDragPerTick: 1.038,
+      ballDragPerTick: 1.025,
+      beachBallDragPerTick: 1.01,
       babbleRestitution: 1.04,
       ballRestitution: 1.08,
       wallRestitution: 1.1,
       blockRestitution: 1.18,
-      babbleDensity: 1.03,
-      ballDensityBase: 0.92
+      babbleDensity: 0.94,
+      ballDensityBase: 0.84
     }
   }
 } as const;
