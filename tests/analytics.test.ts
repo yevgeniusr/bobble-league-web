@@ -230,6 +230,14 @@ describe('Xtremepush backend hit-event sender', () => {
     expect(sender.debugSnapshot()).toMatchObject({ enabled: true, attempted: 1, succeeded: 1, failed: 0 });
   });
 
+  it('defaults backend analytics to the Xtremepush demo API host', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ success: true, code: 200 }), { status: 200 }));
+    const sender = createXtremepushSender({ appToken: 'token-for-test', fetcher, logger: { warn: vi.fn() } });
+
+    await expect(sender.send(event)).resolves.toBe(true);
+    expect(fetcher).toHaveBeenCalledWith('https://api.demo.xtremepush.com/api/external/hit/event', expect.any(Object));
+  });
+
   it('disables cleanly when the backend app token is missing', async () => {
     const fetcher = vi.fn();
     const sender = createXtremepushSender({ appToken: '', fetcher });

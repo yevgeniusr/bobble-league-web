@@ -41,7 +41,7 @@ export type XtremepushSender = {
   debugSnapshot: () => XtremepushDebugSnapshot;
 };
 
-const DEFAULT_API_BASE = 'https://api.eu.xtremepush.com/api/external';
+const DEFAULT_API_BASE = 'https://api.demo.xtremepush.com/api/external';
 const DEBUG_LOG_SUCCESS = process.env.XTREMEPUSH_DEBUG === 'true' || process.env.XTREMEPUSH_LOG_SUCCESS === 'true';
 const MAX_RECORDS = 20;
 
