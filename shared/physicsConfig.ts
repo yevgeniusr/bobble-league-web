@@ -1,9 +1,9 @@
 // Local physics tuning knobs for the authoritative server/test simulation.
 //
 // Units are field pixels and seconds unless noted. Defaults are intentionally
-// controlled and a little heavier than the launch-day arcade tune: babbles and
-// the ball move slower, corner hits are less explosive, and the ball has enough
-// carry for clean shots to finish before the turn limit.
+// controlled and heavier than the launch-day arcade tune: babbles and the ball
+// move slower, while corner bumpers/mega bumpers are strong enough to feel like
+// intentional playfield features instead of soft wall nudges.
 //
 // Server/test override examples:
 //   BABBLE_MAX_SPEED=1450 npm test
@@ -18,25 +18,25 @@ const envNumber = (name: string, fallback: number) => {
 };
 
 export const PHYSICS_CONFIG = {
-  babbleImpulseScale: envNumber('BABBLE_IMPULSE_SCALE', 1.08),
-  maxSpeed: envNumber('BABBLE_MAX_SPEED', 1520),
+  babbleImpulseScale: envNumber('BABBLE_IMPULSE_SCALE', 0.9),
+  maxSpeed: envNumber('BABBLE_MAX_SPEED', 1250),
   settleSpeed: envNumber('BABBLE_SETTLE_SPEED', 24),
   lowSpeedBrakeThreshold: envNumber('BABBLE_LOW_SPEED_BRAKE_THRESHOLD', 128),
   lowSpeedBrakeFactor: envNumber('BABBLE_LOW_SPEED_BRAKE_FACTOR', 0.86),
 
-  bumperBoost: envNumber('BABBLE_BUMPER_BOOST', 290),
-  bumperMinExitBall: envNumber('BABBLE_BUMPER_MIN_EXIT_BALL', 560),
-  bumperMinExitBabble: envNumber('BABBLE_BUMPER_MIN_EXIT_BABBLE', 410),
-  bigBumperBoostMult: envNumber('BABBLE_BIG_BUMPER_MULT', 2.35),
-  bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1.14),
+  bumperBoost: envNumber('BABBLE_BUMPER_BOOST', 435),
+  bumperMinExitBall: envNumber('BABBLE_BUMPER_MIN_EXIT_BALL', 840),
+  bumperMinExitBabble: envNumber('BABBLE_BUMPER_MIN_EXIT_BABBLE', 615),
+  bigBumperBoostMult: envNumber('BABBLE_BIG_BUMPER_MULT', 7.05),
+  bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1.35),
 
   boostPadAccel: envNumber('BABBLE_BOOST_PAD_ACCEL', 4300),
   rampLaunchSpeed: envNumber('BABBLE_RAMP_LAUNCH_SPEED', 780),
 
   // Rapier material tuning. Drag values are the legacy per-30Hz-tick decay
   // converted to continuous damping in shared/physics.ts.
-  babbleDragPerTick: envNumber('BABBLE_DRAG_PER_TICK', 0.935),
-  ballDragPerTick: envNumber('BABBLE_BALL_DRAG_PER_TICK', 0.952),
+  babbleDragPerTick: envNumber('BABBLE_DRAG_PER_TICK', 0.92),
+  ballDragPerTick: envNumber('BABBLE_BALL_DRAG_PER_TICK', 0.94),
   beachBallDragPerTick: envNumber('BABBLE_BEACH_BALL_DRAG_PER_TICK', 0.97),
   babbleRestitution: envNumber('BABBLE_RESTITUTION', 0.66),
   ballRestitution: envNumber('BABBLE_BALL_RESTITUTION', 0.9),

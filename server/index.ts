@@ -12,12 +12,16 @@ import { buildGamePlayerEvent, drainAnalyticsEvents, GamePlayerLifecycle } from 
 import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setPlayerReady, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { freePhysics } from '../shared/physics';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
+import { createXtremepushSender } from './xtremepush';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadLocalEnv();
 const isProd = process.env.NODE_ENV === 'production';
 const port = Number(process.env.PORT ?? 3000);
-const xtremepushSdkKey = process.env.XTREMEPUSH_SDK_KEY?.trim() ?? '';
+const xtremepush = createXtremepushSender({
+  appToken: process.env.XTREMEPUSH_APP_TOKEN,
+  apiBase: process.env.XTREMEPUSH_API_BASE
+});
 // Dev/test cheat hooks (window.__babbleDev on the client) are rejected in
 // production unless the deployment explicitly opts in with ENABLE_CHEATS=true.
 const cheatsEnabled = !isProd || process.env.ENABLE_CHEATS === 'true';
@@ -39,19 +43,11 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
 app.use(express.json());
 app.get('/healthz', (_, res) => res.json({ ok: true, rooms: rooms.size, uptime: process.uptime() }));
-app.get('/api/config', (_, res) => res.json({ xtremepushSdkKey: xtremepushSdkKey || null }));
+app.get('/api/config', (_, res) => res.json({ xtremepushBackend: xtremepush.enabled }));
 app.get('/api/xtremepush/sdk.js', async (_, res) => {
   res.type('application/javascript');
-  if (!xtremepushSdkKey) return res.status(204).send('');
-  try {
-    const upstream = await fetch(`https://cdn.webpu.sh/${encodeURIComponent(xtremepushSdkKey)}/sdk.js`);
-    if (!upstream.ok) throw new Error('Xtremepush SDK unavailable');
-    res.setHeader('cache-control', 'public, max-age=300');
-    return res.send(await upstream.text());
-  } catch {
-    res.setHeader('cache-control', 'no-store');
-    return res.send(`window.xtremepush=window.xtremepush||function(){(window.xtremepush.q=window.xtremepush.q||[]).push(arguments);};`);
-  }
+  res.setHeader('cache-control', 'no-store');
+  return res.status(204).send('');
 });
 
 if (isProd) {
@@ -218,22 +214,24 @@ function currentRoom(socket: { data: SocketData }) { return socket.data.roomCode
 function uniqueRoomCode() { let code = ''; do code = nanoid(5).replace(/[-_]/g, 'Z').toUpperCase(); while (rooms.has(code)); return code; }
 
 function emitGamePlayer(socket: IOSocket, room: Room, lifecycle: GamePlayerLifecycle) {
-  socket.emit('analytics:event', buildGamePlayerEvent(room.state, lifecycle, socket.id));
+  sendAnalyticsEvent(buildGamePlayerEvent(room.state, lifecycle, socket.id));
 }
 
 function emitGamePlayerToConnected(room: Room, lifecycle: GamePlayerLifecycle) {
   for (const player of Object.values(room.state.players)) {
     if (!player.connected) continue;
-    io.to(player.id).emit('analytics:event', buildGamePlayerEvent(room.state, lifecycle, player.id));
+    sendAnalyticsEvent(buildGamePlayerEvent(room.state, lifecycle, player.id));
   }
 }
 
 function flushAnalytics(room: Room) {
   for (const event of drainAnalyticsEvents(room.state)) {
-    const target = typeof event.payload.playerId === 'string' ? event.payload.playerId : undefined;
-    if (target) io.to(target).emit('analytics:event', event);
-    else io.to(room.state.roomCode).emit('analytics:event', event);
+    sendAnalyticsEvent(event);
   }
+}
+
+function sendAnalyticsEvent(event: ReturnType<typeof buildGamePlayerEvent>) {
+  void xtremepush.send(event);
 }
 
 function loadLocalEnv() {

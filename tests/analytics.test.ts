@@ -3,6 +3,7 @@ import { drainAnalyticsEvents } from '../shared/analytics';
 import { addPlayer, collectPowerBox, createInitialState, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { FIELD } from '../shared/types';
 import { createXtremepushAnalytics } from '../client/src/analytics';
+import { buildHitEventBody, createXtremepushSender } from '../server/xtremepush';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
@@ -163,5 +164,76 @@ describe('Xtremepush browser analytics client', () => {
     const script = browser.scripts[0];
     expect(script?.src).toBe('https://cdn.example.test/sdk.js');
     expect(script?.dataset.xtremepushSdk).toBe('public-test-key');
+  });
+});
+
+
+describe('Xtremepush backend hit-event sender', () => {
+  const event = {
+    name: 'abilityUsed' as const,
+    payload: {
+      roomCode: 'ANL5',
+      timestamp: '2026-07-07T01:02:03.000Z',
+      phase: 'planning' as const,
+      turn: 4,
+      score: { left: 1, right: 0 },
+      matchMode: 3 as const,
+      matchLength: 'qualifier' as const,
+      goalTarget: 3 as const,
+      maxTurns: 90,
+      winner: null,
+      mapId: 'volcano',
+      playerId: 'socket-123',
+      playerSide: 'left' as const,
+      playerTeam: 'pigs' as const,
+      playerName: 'Lefty',
+      abilityType: 'boost'
+    }
+  };
+
+  it('builds the documented /hit/event body with app token, user_id, event, value, attributes, and timestamp', () => {
+    expect(buildHitEventBody('token-for-test', event)).toMatchObject({
+      apptoken: 'token-for-test',
+      user_id: 'socket-123',
+      event: 'abilityUsed',
+      value: {
+        roomCode: 'ANL5',
+        abilityType: 'boost',
+        babbleUserId: 'socket-123'
+      },
+      user_attributes: {
+        room_code: 'ANL5',
+        player_side: 'left',
+        player_team: 'pigs',
+        player_name: 'Lefty',
+        match_mode: 3,
+        map_id: 'volcano',
+        last_event: 'boost'
+      },
+      timestamp: '2026-07-07T01:02:03.000Z'
+    });
+  });
+
+  it('posts gameplay analytics from the backend to Xtremepush hit/event', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ success: true, code: 200 }), { status: 200 }));
+    const sender = createXtremepushSender({ appToken: 'token-for-test', apiBase: 'https://api.example.test/base/', fetcher, logger: { warn: vi.fn() } });
+
+    await expect(sender.send(event)).resolves.toBe(true);
+    expect(fetcher).toHaveBeenCalledWith('https://api.example.test/base/hit/event', expect.objectContaining({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' }
+    }));
+    const calls = fetcher.mock.calls as unknown as [string, RequestInit][];
+    const body = JSON.parse(calls[0][1].body as string);
+    expect(body).toMatchObject({ apptoken: 'token-for-test', user_id: 'socket-123', event: 'abilityUsed' });
+  });
+
+  it('disables cleanly when the backend app token is missing', async () => {
+    const fetcher = vi.fn();
+    const sender = createXtremepushSender({ appToken: '', fetcher });
+
+    expect(sender.enabled).toBe(false);
+    await expect(sender.send(event)).resolves.toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
