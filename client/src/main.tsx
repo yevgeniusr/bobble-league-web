@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
 import { trackAnalyticsEvent } from './analytics';
+import { AudioSettings, audioManager, loadAudioSettings, saveAudioSettings } from './audio';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
 
@@ -42,6 +43,7 @@ function App() {
   const [roomCode, setRoomCode] = React.useState('');
   const [error, setError] = React.useState('');
   const [conn, setConn] = React.useState<'connected' | 'reconnecting'>('connected');
+  const [audioSettings, setAudioSettings] = React.useState<AudioSettings>(() => loadAudioSettings());
   const stateRef = React.useRef<GameState | null>(null);
   const nameRef = React.useRef(name);
   stateRef.current = state;
@@ -69,6 +71,21 @@ function App() {
   }, []);
 
   React.useEffect(() => {
+    audioManager.setSettings(audioSettings);
+    saveAudioSettings(audioSettings);
+  }, [audioSettings]);
+
+  React.useEffect(() => {
+    const unlock = () => { void audioManager.unlock(); };
+    const clickSfx = (e: MouseEvent) => {
+      if ((e.target as HTMLElement | null)?.closest('button,select,input')) audioManager.play('uiClick', { volume: 0.55 });
+    };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('click', clickSfx, true);
+    return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('click', clickSfx, true); };
+  }, []);
+
+  React.useEffect(() => {
     if (state?.mapId) setMapId(state.mapId);
   }, [state?.mapId]);
 
@@ -78,6 +95,8 @@ function App() {
     const t = setTimeout(() => setError(''), 6000);
     return () => clearTimeout(t);
   }, [error]);
+
+  const patchAudio = (patch: Partial<AudioSettings>) => setAudioSettings(s => ({ ...s, ...patch }));
 
   function createRoom() {
     localStorage.setItem('babble:name', name);
@@ -115,6 +134,7 @@ function App() {
               <p className="fieldLabel">Host a match</p>
               <label>Game length <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage: 1 goal / 30 turns</option><option value={3}>Qualifier: 3 goals / 90 turns</option><option value={5}>Champion: 5 goals / 150 turns</option></select></label>
               <label>Map <select className="mapSelect" value={mapId} onChange={e=>setMapId(e.target.value as MapId)}>{MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label}: {MAPS[id].shortLabel === 'Stadium' ? 'classic' : MAPS[id].shortLabel.toLowerCase()}</option>)}</select></label>
+              <AudioControls settings={audioSettings} onChange={patchAudio}/>
               <button className="primary" onClick={createRoom}>Create room</button>
             </div>
             <div className="lobbyDivider"><span>or</span></div>
@@ -128,7 +148,7 @@ function App() {
         </section>
       </div>
     </section>}
-    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} error={error} onDismissError={()=>setError('')} onLeave={()=>{ socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
+    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
   </main>;
 }
@@ -215,15 +235,54 @@ export function abilityMode(type: BoxType): 'place' | 'babble' | 'point' | 'inst
   return 'instant';
 }
 
-function GameScreen({ state, you, mode, setMode, mapId, setMapId, error, onDismissError, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; error: string; onDismissError: ()=>void; onLeave: ()=>void }) {
+function AudioControls({ settings, onChange }: { settings: AudioSettings; onChange: (patch: Partial<AudioSettings>) => void }) {
+  return <div className="audioControls" aria-label="Audio settings">
+    <b>Audio</b>
+    <label>Music <span>{Math.round(settings.musicVolume * 100)}%</span><input type="range" min="0" max="1" step="0.01" value={settings.musicVolume} onChange={e=>onChange({ musicVolume: Number(e.target.value) })}/></label>
+    <label>SFX <span>{Math.round(settings.sfxVolume * 100)}%</span><input type="range" min="0" max="1" step="0.01" value={settings.sfxVolume} onChange={e=>onChange({ sfxVolume: Number(e.target.value) })}/></label>
+  </div>;
+}
+
+function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings, onAudioChange, error, onDismissError, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; audioSettings: AudioSettings; onAudioChange: (patch: Partial<AudioSettings>)=>void; error: string; onDismissError: ()=>void; onLeave: ()=>void }) {
   const [placing, setPlacing] = React.useState<PlacingGhost | null>(null);
   const [aiming, setAiming] = React.useState<AbilityAim | null>(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [burst, setBurst] = React.useState<{ kind: 'goal' | 'gameOver'; side: PlayerSide | null; nonce: number } | null>(null);
+  const prevRef = React.useRef<GameState | null>(null);
+
+  React.useEffect(() => {
+    const prev = prevRef.current;
+    if (prev) {
+      const scoreChanged = state.score.left !== prev.score.left || state.score.right !== prev.score.right;
+      const scoredSide: PlayerSide | null = state.score.left > prev.score.left ? 'left' : state.score.right > prev.score.right ? 'right' : null;
+      if (scoreChanged) {
+        audioManager.play('goal', { force: true });
+        setBurst({ kind: 'goal', side: scoredSide, nonce: Date.now() });
+      }
+      if (state.winner && state.winner !== prev.winner) {
+        window.setTimeout(() => audioManager.play('gameOver', { force: true }), scoreChanged ? 650 : 0);
+        window.setTimeout(() => setBurst({ kind: 'gameOver', side: state.winner, nonce: Date.now() }), scoreChanged ? 500 : 0);
+      }
+      const prevBumperAt = Math.max(0, ...prev.bumperEvents.map(e => e.at));
+      if (state.bumperEvents.some(e => e.at > prevBumperAt)) audioManager.play(state.bigBumpersUntilTurn && state.bigBumpersUntilTurn >= state.turn ? 'megaBumper' : 'bumper');
+      const invTotal = (s: GameState) => s.powerPlayInventories.left.length + s.powerPlayInventories.right.length;
+      if (invTotal(state) > invTotal(prev)) audioManager.play('boxPickup');
+    }
+    prevRef.current = state;
+  }, [state]);
+
+  React.useEffect(() => {
+    if (!burst) return;
+    const t = window.setTimeout(() => setBurst(null), burst.kind === 'gameOver' ? 4200 : 2400);
+    return () => window.clearTimeout(t);
+  }, [burst]);
+
   return <section className="gameShell">
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
     <TopHud state={state} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>
-    {menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
+    {menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={onAudioChange} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
     <BottomActionBar state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
+    {burst && <CelebrationOverlay key={`${burst.kind}-${burst.nonce}`} kind={burst.kind} side={burst.side} state={state}/>}
     {error && <section className="panel error" role="alert" title="Click to dismiss" onClick={onDismissError}>{error}<span className="errorClose"> ✕</span></section>}
   </section>;
 }
@@ -234,6 +293,19 @@ function TeamScorePill({ state, side }: { state: GameState; side: PlayerSide }) 
     <span className="pillTeam" style={{ background: team.primary, color: team.secondary }}>{team.emoji}</span>
     <b>{side === 'left' ? 'Left' : 'Right'}</b>
     <span className="pillScore">{state.score[side]}</span>
+  </div>;
+}
+
+function CelebrationOverlay({ kind, side, state }: { kind: 'goal' | 'gameOver'; side: PlayerSide | null; state: GameState }) {
+  const team = side ? TEAMS[state.sideTeams[side]] : null;
+  const label = kind === 'goal' ? 'GOOOAL!' : state.winner ? `${team?.label ?? state.winner} wins!` : 'Game over!';
+  return <div className={`celebrationOverlay ${kind}`} aria-live="polite">
+    <div className="confetti" aria-hidden="true">{Array.from({ length: 22 }, (_, i) => <span key={i} style={{ '--i': i } as React.CSSProperties}/>)}</div>
+    <div className="celebrationCard" style={team ? { borderColor: team.primary, color: team.secondary } : undefined}>
+      <span className="celebrationEmoji">{kind === 'goal' ? '⚽✨' : '🏆ฅ'}</span>
+      <strong>{label}</strong>
+      <small>{kind === 'goal' ? `${side === 'left' ? 'Left' : 'Right'} side scored!` : `${state.score.left} - ${state.score.right}`}</small>
+    </div>
   </div>;
 }
 
@@ -258,7 +330,7 @@ function TopHud({ state, menuOpen, onToggleMenu }: { state: GameState; menuOpen:
 
 // Everything app-like (room sharing, players/teams, match admin) lives behind
 // the ⚙ menu so the live match screen stays board-first.
-function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, onLeave, onClose }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; onLeave: ()=>void; onClose: ()=>void }) {
+function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, audioSettings, onAudioChange, onLeave, onClose }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; audioSettings: AudioSettings; onAudioChange: (patch: Partial<AudioSettings>)=>void; onLeave: ()=>void; onClose: ()=>void }) {
   const [copied, setCopied] = React.useState<'code' | 'invite' | null>(null);
   const copy = (text: string, kind: 'code' | 'invite') => {
     navigator.clipboard?.writeText(text).then(() => { setCopied(kind); setTimeout(() => setCopied(null), 1600); }).catch(() => {});
@@ -294,6 +366,10 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, onLeave, onC
         </div>; })}
     </section>
     <section className="menuSection">
+      <b>Audio</b>
+      <AudioControls settings={audioSettings} onChange={onAudioChange}/>
+    </section>
+    <section className="menuSection">
       <b>Match</b>
       <label>Map
         <select className="mapSelect" value={state.phase === 'lobby' ? mapId : state.mapId} disabled={state.phase !== 'lobby'} onChange={e => { const next = e.target.value as MapId; setMapId(next); socket.emit('room:map', next); }}>
@@ -327,7 +403,7 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
     if (!me) return;
     const m = abilityMode(type);
     if (m === 'place') { setAiming(null); setPlacing({ type: type as FieldObjectType, pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: me.side === 'left' ? 0 : Math.PI }); return; }
-    if (m === 'instant') { setAiming(null); setPlacing(null); socket.emit('player:power', { type }); return; }
+    if (m === 'instant') { setAiming(null); setPlacing(null); audioManager.play('abilityUse'); socket.emit('player:power', { type }); return; }
     setPlacing(null);
     setAiming(aiming?.type === type ? null : { type, mode: m });
   };
@@ -354,7 +430,7 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
         }) : <small className="noPlays">No Power Plays — grab a ? box</small>)}
       </div>
       <div className="barRight">
-        {me && state.phase === 'planning' && <button type="button" className={ready ? 'readyBtn selected' : 'readyBtn'} disabled={ready} title="Vote to finish planning now. Changing your aim or using a Power Play clears your vote." onClick={()=>socket.emit('player:ready')}>
+        {me && state.phase === 'planning' && <button type="button" className={ready ? 'readyBtn selected' : 'readyBtn'} disabled={ready} title="Vote to finish planning now. Changing your aim or using a Power Play clears your vote." onClick={()=>{ audioManager.play('ready'); socket.emit('player:ready'); }}>
           {ready ? 'Ready' : 'Ready / Finish Turn'} {readyCount}/{readyTotal}
         </button>}
         {aiming && <><small>{POWER_ICONS[aiming.type]} Targeting {BOX_TYPES[aiming.type].label} · {aiming.mode === 'babble' ? 'click a babblehead' : 'click a field spot'} · Esc cancels</small><button type="button" onClick={()=>setAiming(null)}>Cancel</button></>}
@@ -448,12 +524,14 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
     if (aiming) {
       // ability targeting: the very next click applies the ability immediately
       if (aiming.mode === 'point') {
+        audioManager.play('abilityUse');
         socket.emit('player:power', { type: aiming.type, position: p });
         setAiming(null);
         return;
       }
       const target = state.babbles.find(b => Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 20);
       if (target) {
+        audioManager.play('abilityUse');
         socket.emit('player:power', { type: aiming.type, targetBabbleId: target.id });
         setAiming(null);
       }
@@ -511,6 +589,7 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
   };
   const up = () => {
     if (mode?.kind === 'place' && placing) {
+      audioManager.play('abilityUse');
       socket.emit('player:power', { type: placing.type, position: mode.anchor, angle: mode.angle });
       setPlacing(null);
     } else if (mode?.kind === 'rotatePad') {
@@ -520,7 +599,11 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
       const dy = mode.start.y - mode.current.y;
       const pull = Math.hypot(dx, dy);
       // a click with no pull is ignored so a launch is never wasted by accident
-      if (pull >= 8) socket.emit('player:launch', { babbleId: mode.babbleId, aimAngle: Math.atan2(dy, dx), impulse: Math.min(900, Math.max(1, pull * 6)) });
+      if (pull >= 8) {
+        audioManager.play('launch');
+        audioManager.play('ballKick', { volume: 0.45 });
+        socket.emit('player:launch', { babbleId: mode.babbleId, aimAngle: Math.atan2(dy, dx), impulse: Math.min(900, Math.max(1, pull * 6)) });
+      }
     }
     // always drop the pointer mode: a stale mode must never block later launches
     setMode(null);
