@@ -318,6 +318,7 @@ function TopHud({ state, menuOpen, onToggleMenu }: { state: GameState; menuOpen:
     <TeamScorePill state={state} side="left"/>
     <div className="matchStatus">
       <b>{MAPS[state.mapId].shortLabel} · {state.config.length} · first to {state.config.goalTarget}</b>
+      <span className="timerBadge" aria-label={`${secs} seconds remaining`}><strong>{secs}</strong><em>sec</em></span>
       <small>turn {state.turn}/{state.config.maxTurns} · {state.phase} · {secs}s · aimed {Object.keys(state.pendingIntents).length}/{state.babbles.length}</small>
     </div>
     <div className="topRight">
