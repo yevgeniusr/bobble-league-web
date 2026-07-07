@@ -175,11 +175,16 @@ function formatXtremepushTimestamp(value: unknown) {
 }
 
 function userIdFor(payload: AnalyticsPayload) {
-  const direct = stringOrNull(payload.playerId) ?? stringOrNull(payload.holderId);
-  if (direct) return direct;
+  // Xtremepush docs say `user_id` is the external user ID and auto-creates
+  // that profile if missing. Socket IDs were technically unique, but ephemeral
+  // and hard to find in the dashboard. Prefer stable, human-readable Babble IDs.
+  const playerName = stringOrNull(payload.playerName);
+  if (playerName) return `babble-player:${slug(playerName)}`;
+  const holderId = stringOrNull(payload.holderId);
+  if (holderId) return `babble-player:${slug(holderId)}`;
   const roomCode = stringOrNull(payload.roomCode) ?? 'unknown-room';
   const side = stringOrNull(payload.scoringSide);
-  return side ? `room:${roomCode}:side:${side}` : `room:${roomCode}`;
+  return side ? `babble-room:${slug(roomCode)}:side:${side}` : `babble-room:${slug(roomCode)}`;
 }
 
 function userAttributesFor(payload: AnalyticsPayload) {
@@ -197,4 +202,8 @@ function userAttributesFor(payload: AnalyticsPayload) {
 
 function stringOrNull(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function slug(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'unknown';
 }

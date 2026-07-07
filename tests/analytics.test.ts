@@ -194,12 +194,12 @@ describe('Xtremepush backend hit-event sender', () => {
   it('builds the documented /hit/event body with app token, user_id, event, value, attributes, and timestamp', () => {
     expect(buildHitEventBody('token-for-test', event)).toMatchObject({
       apptoken: 'token-for-test',
-      user_id: 'socket-123',
+      user_id: 'babble-player:lefty',
       event: 'abilityUsed',
       value: {
         roomCode: 'ANL5',
         abilityType: 'boost',
-        babbleUserId: 'socket-123'
+        babbleUserId: 'babble-player:lefty'
       },
       user_attributes: {
         room_code: 'ANL5',
@@ -226,7 +226,7 @@ describe('Xtremepush backend hit-event sender', () => {
     }));
     const calls = fetcher.mock.calls as unknown as [string, RequestInit][];
     const body = JSON.parse(calls[0][1].body as string);
-    expect(body).toMatchObject({ apptoken: 'token-for-test', user_id: 'socket-123', event: 'abilityUsed', async: false });
+    expect(body).toMatchObject({ apptoken: 'token-for-test', user_id: 'babble-player:lefty', event: 'abilityUsed', async: false });
     expect(sender.debugSnapshot()).toMatchObject({ enabled: true, attempted: 1, succeeded: 1, failed: 0 });
   });
 
