@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec, normalizeMapId } from '../../shared/types';
-import { BALL_MAX_HEIGHT, ballRestHeight } from '../../shared/airborne';
+import { BALL_MAX_HEIGHT, babbleRestHeight, ballRestHeight } from '../../shared/airborne';
 
 export type WorldXZ = { x: number; z: number };
 export type PlacingGhost = { type: FieldObjectType; pos: Vec; angle: number };
@@ -572,7 +572,8 @@ export class BabbleLeague3DRenderer {
     this.blobShadow(w.x, w.z, babbleContactShadowRadius(b.radius), ghosted ? 0.08 : 0.18);
 
     const eventHop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'babble', b.id, Date.now())?.at ?? -1e12)) / 1000) * 0.24;
-    const hop = Math.max(Number.isFinite(b.height) ? b.height : 0, eventHop);
+    const physicsHop = Number.isFinite(b.height) ? Math.max(0, b.height - babbleRestHeight(b.radius)) : 0;
+    const hop = Math.max(physicsHop, eventHop);
     const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
     const sideCol = b.side === 'left' ? 0xe25a4c : 0x5147a8;
     const base = babbleContactBaseMetrics(b.radius);

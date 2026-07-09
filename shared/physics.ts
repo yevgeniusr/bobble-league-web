@@ -1,29 +1,25 @@
-// Rapier 2D physics core for Babble League.
+// Rapier 3D physics core for Babble League.
 //
-// This module owns rigid-body integration and collision response during the
-// resolving phase: ball + babblehead movement/damping, ball<->babble and
-// babble<->babble impacts, arena walls with open goal mouths, and placed
-// "block" walls. Game-feel rules (corner bumper boosts, boost pads, sticky
-// goo, ramp launches, box pickups, goal detection, settle/end-turn) stay in
-// shared/game.ts as explicit, readable rule code layered on top.
+// Coordinate mapping is intentionally explicit and stable:
+//   field x -> Rapier world x
+//   field y -> Rapier world z
+//   height  -> Rapier world y
 //
-// Engine choice: @dimforge/rapier2d-deterministic-compat. The -compat build
-// inlines the WASM blob as base64 so it loads in plain Node (tsx, vitest,
-// Docker) without bundler wiring; the -deterministic build gives
-// cross-platform reproducible results, which keeps the authoritative server
-// simulation stable and replayable.
-//
-// The GameState remains the single source of truth: each GameState owns one
-// persistent Rapier world (cached in a WeakMap). Every tick we write the
-// state's positions/velocities into the world, reconcile anything power plays
-// or tests changed between ticks (teleports, radius changes, ghosting, placed
-// blocks), step once, and copy positions/velocities back. Persisting the
-// world avoids per-tick allocation churn while keeping GameState mutations
-// (from rules, power plays and tests) unconditionally authoritative. Servers
-// should call freePhysics(state) when discarding a room to release WASM
-// memory promptly.
-import RAPIER from '@dimforge/rapier2d-deterministic-compat';
+// GameState remains the protocol/source-of-truth boundary. Each tick writes
+// public state into a persistent Rapier world, steps true 3D gravity/contacts,
+// then projects field-plane position/velocity plus vertical height/velocity
+// back to the public state shape.
+import RAPIER from '@dimforge/rapier3d-deterministic-compat';
 import type { BallImpactObservation } from './airborne';
+import {
+  BALL_MAX_HEIGHT,
+  BABBLE_GRAVITY,
+  babbleRestHeight,
+  ballGravity,
+  ballRestHeight,
+  normalizeBabbleVertical,
+  normalizeBallVertical
+} from './airborne';
 import { FIELD, GameState, MAPS, PlayerSide, Vec, normalizeMapId } from './types';
 import { PHYSICS_CONFIG } from './physicsConfig';
 
@@ -31,10 +27,11 @@ import { PHYSICS_CONFIG } from './physicsConfig';
 export const PX_PER_METER = 50;
 
 // Convert the legacy per-tick velocity drags (applied at 30Hz) into continuous
-// linear damping so the tabletop deceleration feel is preserved exactly.
+// linear damping so the tabletop deceleration feel is preserved.
 const LEGACY_TICK_HZ = 30;
 const dampingFromDrag = (dragPerTick: number) => -Math.log(dragPerTick) * LEGACY_TICK_HZ;
-// Controlled local tuning: stronger damping cuts high-speed chaos and gliding.
+
+const WORLD_GRAVITY = BABBLE_GRAVITY;
 const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
 const tune = (state: GameState, key: keyof typeof PHYSICS_CONFIG) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
 const dragTune = (state: GameState, key: 'babbleDragPerTick' | 'ballDragPerTick' | 'beachBallDragPerTick') =>
@@ -44,7 +41,7 @@ const dragTune = (state: GameState, key: 'babbleDragPerTick' | 'ballDragPerTick'
 const G_BALL = 0x0001;
 const G_BABBLE = 0x0002;
 const G_GHOST = 0x0004; // ghosted babbles: pass through ball, babbles, blocks
-const G_ARENA = 0x0008; // outer walls
+const G_ARENA = 0x0008; // floor + outer walls
 const G_MOUTH = 0x0010; // goal-mouth strips: stop babbles, let the ball in
 const G_BLOCK = 0x0020; // placed Block power-play walls
 const G_BACK = 0x0040; // goal back walls behind the mouth (ball only)
@@ -58,13 +55,17 @@ const BLOCK_GROUPS = groups(G_BLOCK, G_BALL | G_BABBLE);
 const BACK_GROUPS = groups(G_BACK, G_BALL);
 
 const WALL_HALF_THICKNESS = 1; // meters (50px): thick walls + CCD stop tunneling
+const WALL_HALF_HEIGHT = 2.5;
+const FLOOR_HALF_THICKNESS = 0.25;
 const BLOCK_HALF_LEN = 60 / PX_PER_METER;
 const BLOCK_HALF_THICKNESS = 14 / PX_PER_METER;
+const BLOCK_HALF_HEIGHT = WALL_HALF_HEIGHT;
+const REST_EPS = 0.004;
 
 // -compat builds expose an async init that instantiates the inlined WASM.
 // Top-level await: server/tests wait for it once at module load. The browser
 // bundle never imports this module.
-await RAPIER.init();
+await (RAPIER.init as (options?: unknown) => Promise<void>)({});
 
 interface BabbleEntry {
   body: RAPIER.RigidBody;
@@ -97,9 +98,6 @@ type BabbleImpactSnapshot = {
   vel: Vec;
 };
 
-// Release the Rapier world backing a GameState. WeakMap lets abandoned test
-// states be garbage collected, but the WASM-side memory is only reclaimed by
-// an explicit free, so servers call this when deleting a room.
 export function freePhysics(state: GameState) {
   const cache = caches.get(state);
   if (!cache) return;
@@ -124,30 +122,18 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
 
   world.step(events);
 
-  // Copy authoritative positions/velocities back into GameState so the
-  // Socket.IO protocol, renderer, and rule code stay engine-agnostic.
-  const bp = cache.ballBody.translation();
-  const bv = cache.ballBody.linvel();
-  state.ball.pos.x = bp.x * PX_PER_METER;
-  state.ball.pos.y = bp.y * PX_PER_METER;
-  state.ball.vel.x = bv.x * PX_PER_METER;
-  state.ball.vel.y = bv.y * PX_PER_METER;
-  for (const b of state.babbles) {
-    const body = cache.babbles.get(b.id)!.body;
-    const p = body.translation();
-    const v = body.linvel();
-    b.pos.x = p.x * PX_PER_METER;
-    b.pos.y = p.y * PX_PER_METER;
-    b.vel.x = v.x * PX_PER_METER;
-    b.vel.y = v.y * PX_PER_METER;
-  }
+  projectBall(state, cache.ballBody);
+  for (const b of state.babbles) projectBabble(b, cache.babbles.get(b.id)!.body);
 
   // Ball possession. A babble still pressed against the ball (dribbling)
   // fires its collision event only once in a persistent world, so first
-  // credit any babble overlapping the ball after the step...
+  // credit any non-ghosted babble overlapping the ball after the step.
   for (const b of state.babbles) {
     if (cache.babbles.get(b.id)!.ghosted) continue;
-    const gap = Math.hypot(b.pos.x - state.ball.pos.x, b.pos.y - state.ball.pos.y) - b.radius - state.ball.radius;
+    const planar = Math.hypot(b.pos.x - state.ball.pos.x, b.pos.y - state.ball.pos.y);
+    const vertical = (state.ball.height ?? ballRestHeight(state.ball.radius)) - (b.height ?? babbleRestHeight(b.radius));
+    const contactRadius = (ballColliderRadius(state.ball.radius) + babbleColliderRadius(b.radius)) * PX_PER_METER;
+    const gap = Math.hypot(planar, vertical * PX_PER_METER) - contactRadius;
     if (gap <= 2) recordBallTouch(state, b.id, b.side); // 2px: restitution separates ~2px/tick
   }
   // ...then let fresh impacts this tick take precedence (a fast bounce can
@@ -189,21 +175,22 @@ function getCache(state: GameState): PhysicsCache {
 }
 
 function buildCache(state: GameState): PhysicsCache {
-  const world = new RAPIER.World({ x: 0, y: 0 });
+  const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
+  world.maxCcdSubsteps = 4;
   buildArena(world, state);
   const beachy = isBeachy(state);
   const ballBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setLinearDamping(beachy ? dampingFromDrag(dragTune(state, 'beachBallDragPerTick')) : dampingFromDrag(dragTune(state, 'ballDragPerTick')))
+      .setAngularDamping(0.45)
+      .setGravityScale(ballGravity(beachy) / WORLD_GRAVITY)
       .setCanSleep(false)
-      .lockRotations()
   );
   // The beach ball grows but keeps its mass, so it floats farther, not heavier.
   const ballCollider = world.createCollider(
-      RAPIER.ColliderDesc.ball(state.ball.radius / PX_PER_METER)
-      .setFriction(0)
+    RAPIER.ColliderDesc.ball(ballColliderRadius(state.ball.radius))
+      .setFriction(0.18)
       .setRestitution(tune(state, 'ballRestitution'))
-      .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max)
       .setDensity(ballDensity(state, state.ball.radius))
       .setCollisionGroups(BALL_GROUPS)
       .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
@@ -215,12 +202,13 @@ function buildCache(state: GameState): PhysicsCache {
     const body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setLinearDamping(dampingFromDrag(dragTune(state, 'babbleDragPerTick')))
+        .setAngularDamping(4)
         .setCanSleep(false)
         .lockRotations()
     );
     const collider = world.createCollider(
-      RAPIER.ColliderDesc.ball(b.radius / PX_PER_METER)
-        .setFriction(0)
+      RAPIER.ColliderDesc.ball(babbleColliderRadius(b.radius))
+        .setFriction(0.12)
         .setRestitution(tune(state, 'babbleRestitution'))
         .setDensity(tune(state, 'babbleDensity'))
         .setCollisionGroups(ghosted ? GHOST_GROUPS : BABBLE_GROUPS),
@@ -243,7 +231,10 @@ function buildCache(state: GameState): PhysicsCache {
   };
 }
 
-const ballDensity = (state: GameState, radius: number) => tune(state, 'ballDensityBase') * (FIELD.ballRadius / radius) ** 2;
+const ballDensity = (state: GameState, radius: number) =>
+  tune(state, 'ballDensityBase') * (ballColliderRadius(FIELD.ballRadius) / ballColliderRadius(radius)) ** 3;
+const ballColliderRadius = (radius: number) => ballRestHeight(radius);
+const babbleColliderRadius = (radius: number) => babbleRestHeight(radius);
 
 const isGhosted = (state: GameState, babble: GameState['babbles'][number]) =>
   babble.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn);
@@ -253,16 +244,20 @@ const isGhosted = (state: GameState, babble: GameState['babbles'][number]) =>
 // so bodies are re-synced from state every tick, not just on changes.
 function syncBall(state: GameState, cache: PhysicsCache) {
   const body = cache.ballBody;
-  body.setTranslation({ x: state.ball.pos.x / PX_PER_METER, y: state.ball.pos.y / PX_PER_METER }, true);
-  body.setLinvel({ x: state.ball.vel.x / PX_PER_METER, y: state.ball.vel.y / PX_PER_METER }, true);
-  body.enableCcd(Math.hypot(state.ball.vel.x, state.ball.vel.y) > CCD_MIN_SPEED);
+  const vertical = normalizeBallVertical(state.ball.radius, state.ball.height, state.ball.verticalVelocity);
+  state.ball.height = vertical.height;
+  state.ball.verticalVelocity = vertical.verticalVelocity;
+  body.setTranslation(fieldToWorld(state.ball.pos, state.ball.height), true);
+  body.setLinvel(fieldVelocityToWorld(state.ball.vel, state.ball.verticalVelocity), true);
+  body.enableCcd(Math.hypot(state.ball.vel.x, state.ball.vel.y, state.ball.verticalVelocity * PX_PER_METER) > CCD_MIN_SPEED);
   const beachy = isBeachy(state);
   if (beachy !== cache.beachy) {
     body.setLinearDamping(beachy ? dampingFromDrag(dragTune(state, 'beachBallDragPerTick')) : dampingFromDrag(dragTune(state, 'ballDragPerTick')));
+    body.setGravityScale(ballGravity(beachy) / WORLD_GRAVITY, true);
     cache.beachy = beachy;
   }
   if (state.ball.radius !== cache.ballRadius) {
-    cache.ballCollider.setRadius(state.ball.radius / PX_PER_METER);
+    cache.ballCollider.setRadius(ballColliderRadius(state.ball.radius));
     cache.ballCollider.setDensity(ballDensity(state, state.ball.radius));
     cache.ballRadius = state.ball.radius;
   }
@@ -275,16 +270,19 @@ function syncBabble(
   touchable: Map<number, BabbleImpactSnapshot>
 ) {
   const entry = cache.babbles.get(babble.id)!;
-  entry.body.setTranslation({ x: babble.pos.x / PX_PER_METER, y: babble.pos.y / PX_PER_METER }, true);
-  entry.body.setLinvel({ x: babble.vel.x / PX_PER_METER, y: babble.vel.y / PX_PER_METER }, true);
-  entry.body.enableCcd(Math.hypot(babble.vel.x, babble.vel.y) > CCD_MIN_SPEED);
+  const vertical = normalizeBabbleVertical(babble.height, babble.verticalVelocity, babble.radius);
+  babble.height = vertical.height;
+  babble.verticalVelocity = vertical.verticalVelocity;
+  entry.body.setTranslation(fieldToWorld(babble.pos, babble.height), true);
+  entry.body.setLinvel(fieldVelocityToWorld(babble.vel, babble.verticalVelocity), true);
+  entry.body.enableCcd(Math.hypot(babble.vel.x, babble.vel.y, babble.verticalVelocity * PX_PER_METER) > CCD_MIN_SPEED);
   const ghosted = isGhosted(state, babble);
   if (ghosted !== entry.ghosted) {
     entry.collider.setCollisionGroups(ghosted ? GHOST_GROUPS : BABBLE_GROUPS);
     entry.ghosted = ghosted;
   }
   if (babble.radius !== entry.radius) {
-    entry.collider.setRadius(babble.radius / PX_PER_METER);
+    entry.collider.setRadius(babbleColliderRadius(babble.radius));
     entry.radius = babble.radius;
   }
   if (!ghosted) touchable.set(entry.collider.handle, {
@@ -293,6 +291,59 @@ function syncBabble(
     pos: { ...babble.pos },
     vel: { ...babble.vel }
   });
+}
+
+function projectBall(state: GameState, body: RAPIER.RigidBody) {
+  const p = body.translation();
+  const v = body.linvel();
+  state.ball.pos.x = p.x * PX_PER_METER;
+  state.ball.pos.y = p.z * PX_PER_METER;
+  state.ball.vel.x = v.x * PX_PER_METER;
+  state.ball.vel.y = v.z * PX_PER_METER;
+  const rest = ballRestHeight(state.ball.radius);
+  let height = p.y;
+  let vy = v.y;
+  if (height <= rest + REST_EPS && vy <= 0) {
+    height = rest;
+    vy = 0;
+    body.setTranslation({ x: p.x, y: rest, z: p.z }, true);
+    body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
+  } else if (height >= BALL_MAX_HEIGHT && vy > 0) {
+    height = BALL_MAX_HEIGHT;
+    vy = 0;
+    body.setTranslation({ x: p.x, y: BALL_MAX_HEIGHT, z: p.z }, true);
+    body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
+  }
+  state.ball.height = Math.max(rest, Math.min(BALL_MAX_HEIGHT, height));
+  state.ball.verticalVelocity = vy;
+}
+
+function projectBabble(babble: GameState['babbles'][number], body: RAPIER.RigidBody) {
+  const p = body.translation();
+  const v = body.linvel();
+  babble.pos.x = p.x * PX_PER_METER;
+  babble.pos.y = p.z * PX_PER_METER;
+  babble.vel.x = v.x * PX_PER_METER;
+  babble.vel.y = v.z * PX_PER_METER;
+  const rest = babbleRestHeight(babble.radius);
+  let height = p.y;
+  let vy = v.y;
+  if (height <= rest + REST_EPS && vy <= 0) {
+    height = rest;
+    vy = 0;
+    body.setTranslation({ x: p.x, y: rest, z: p.z }, true);
+    body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
+  }
+  babble.height = Math.max(rest, height);
+  babble.verticalVelocity = vy;
+}
+
+function fieldToWorld(pos: Vec, height: number): RAPIER.Vector {
+  return { x: pos.x / PX_PER_METER, y: height, z: pos.y / PX_PER_METER };
+}
+
+function fieldVelocityToWorld(vel: Vec, verticalVelocity: number): RAPIER.Vector {
+  return { x: vel.x / PX_PER_METER, y: verticalVelocity, z: vel.y / PX_PER_METER };
 }
 
 function ballBabbleImpact(
@@ -328,13 +379,30 @@ function ballBabbleImpact(
   };
 }
 
-function fixedCuboid(world: RAPIER.World, x: number, y: number, hx: number, hy: number, collisionGroups: number, restitution: number) {
-  const desc = RAPIER.ColliderDesc.cuboid(hx, hy)
-    .setTranslation(x, y)
-    .setFriction(0)
+function fixedCuboid(
+  world: RAPIER.World,
+  x: number,
+  y: number,
+  z: number,
+  hx: number,
+  hy: number,
+  hz: number,
+  collisionGroups: number,
+  restitution: number,
+  friction = 0,
+  rotation?: RAPIER.Rotation
+) {
+  let desc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+    .setTranslation(x, y, z)
+    .setFriction(friction)
     .setRestitution(restitution)
     .setCollisionGroups(collisionGroups);
+  if (rotation) desc = desc.setRotation(rotation);
   world.createCollider(desc);
+}
+
+function yawRotation(angle: number): RAPIER.Rotation {
+  return { x: 0, y: Math.sin(angle / 2), z: 0, w: Math.cos(angle / 2) };
 }
 
 function buildArena(world: RAPIER.World, state: GameState) {
@@ -345,20 +413,29 @@ function buildArena(world: RAPIER.World, state: GameState) {
   const goalDepth = FIELD.goalDepth / PX_PER_METER;
   const t = WALL_HALF_THICKNESS;
   const wallRestitution = tune(state, 'wallRestitution');
+  const wallY = WALL_HALF_HEIGHT;
+  const floorX = w / 2;
+  const floorZ = h / 2;
+  const floorHx = w / 2 + goalDepth + 2 * t;
+  const floorHz = h / 2 + 2 * t;
+
+  // Floor top is y=0. Spheres therefore rest at world y == radius.
+  fixedCuboid(world, floorX, -FLOOR_HALF_THICKNESS, floorZ, floorHx, FLOOR_HALF_THICKNESS, floorHz, ARENA_GROUPS, 0, 0.22);
+
   // Top and bottom rails (overhang past the corners so nothing slips out).
-  fixedCuboid(world, w / 2, -t, w / 2 + 2 * t + goalDepth, t, ARENA_GROUPS, wallRestitution);
-  fixedCuboid(world, w / 2, h + t, w / 2 + 2 * t + goalDepth, t, ARENA_GROUPS, wallRestitution);
+  fixedCuboid(world, w / 2, wallY, -t, w / 2 + 2 * t + goalDepth, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
+  fixedCuboid(world, w / 2, wallY, h + t, w / 2 + 2 * t + goalDepth, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
   for (const side of ['left', 'right'] as const) {
     const x = side === 'left' ? -t : w + t;
     // Solid wall segments above and below the goal mouth.
-    fixedCuboid(world, x, mouthTop / 2, t, mouthTop / 2, ARENA_GROUPS, wallRestitution);
-    fixedCuboid(world, x, (mouthBottom + h) / 2, t, (h - mouthBottom) / 2, ARENA_GROUPS, wallRestitution);
+    fixedCuboid(world, x, wallY, mouthTop / 2, t, WALL_HALF_HEIGHT, mouthTop / 2, ARENA_GROUPS, wallRestitution);
+    fixedCuboid(world, x, wallY, (mouthBottom + h) / 2, t, WALL_HALF_HEIGHT, (h - mouthBottom) / 2, ARENA_GROUPS, wallRestitution);
     // The mouth strip stops babbleheads on the goal line but lets the ball
-    // through so goals score reliably and nothing bounces back off a "gate".
-    fixedCuboid(world, x, (mouthTop + mouthBottom) / 2, t, (mouthBottom - mouthTop) / 2, MOUTH_GROUPS, wallRestitution);
+    // through so goals score reliably and nothing bounces back off a gate.
+    fixedCuboid(world, x, wallY, (mouthTop + mouthBottom) / 2, t, WALL_HALF_HEIGHT, (mouthBottom - mouthTop) / 2, MOUTH_GROUPS, wallRestitution);
     // Back of the net: keeps a flying ball inside the gate pocket.
     const backX = side === 'left' ? -goalDepth - t : w + goalDepth + t;
-    fixedCuboid(world, backX, (mouthTop + mouthBottom) / 2, t, (mouthBottom - mouthTop) / 2 + t, BACK_GROUPS, wallRestitution);
+    fixedCuboid(world, backX, wallY, (mouthTop + mouthBottom) / 2, t, WALL_HALF_HEIGHT, (mouthBottom - mouthTop) / 2 + t, BACK_GROUPS, wallRestitution);
   }
 }
 
@@ -370,12 +447,10 @@ function syncBlocks(state: GameState, cache: PhysicsCache) {
   if (key === cache.blocksKey) return;
   for (const c of cache.blockColliders) cache.world.removeCollider(c, false);
   cache.blockColliders = active.map(o =>
-    // Same capsule footprint as the legacy segment wall (halfLen 60, radius 14).
-    // Rapier capsules extend along +y, so rotate by angle - PI/2.
     cache.world.createCollider(
-      RAPIER.ColliderDesc.capsule(BLOCK_HALF_LEN, BLOCK_HALF_THICKNESS)
-        .setTranslation(o.pos.x / PX_PER_METER, o.pos.y / PX_PER_METER)
-        .setRotation(o.angle - Math.PI / 2)
+      RAPIER.ColliderDesc.cuboid(BLOCK_HALF_LEN, BLOCK_HALF_HEIGHT, BLOCK_HALF_THICKNESS)
+        .setTranslation(o.pos.x / PX_PER_METER, BLOCK_HALF_HEIGHT, o.pos.y / PX_PER_METER)
+        .setRotation(yawRotation(-o.angle))
         .setFriction(0)
         .setRestitution(tune(state, 'blockRestitution'))
         .setCollisionGroups(BLOCK_GROUPS)
