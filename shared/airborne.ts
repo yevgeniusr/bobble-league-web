@@ -11,8 +11,10 @@ export const BALL_LANDING_REST_VELOCITY = 0.42;
 export const BALL_RAMP_VERTICAL_VELOCITY = 3.25;
 export const BEACH_BALL_RAMP_VERTICAL_VELOCITY = 4.1;
 
-export const BABBLE_REST_HEIGHT = 0;
-export const BABBLE_MAX_HEIGHT = 0.58;
+const PX_PER_METER = 50;
+
+export const BABBLE_REST_HEIGHT = 0.5;
+export const BABBLE_MAX_HEIGHT = 1.03;
 export const BABBLE_GRAVITY = 9.5;
 export const BABBLE_LANDING_REST_VELOCITY = 0.35;
 export const BABBLE_RAMP_VERTICAL_VELOCITY = 2.15;
@@ -34,6 +36,10 @@ const finiteOr = (v: number | undefined, fallback: number) => Number.isFinite(v)
 
 export function ballRestHeight(radius: number = FIELD.ballRadius): number {
   return BALL_REST_HEIGHT * clamp(radius / FIELD.ballRadius, 1, 2);
+}
+
+export function babbleRestHeight(radius: number = FIELD.babbleRadius): number {
+  return Math.max(BABBLE_REST_HEIGHT, radius / PX_PER_METER);
 }
 
 export function ballGravity(beachy: boolean): number {
@@ -64,7 +70,7 @@ export function ballImpactLiftVelocity(impacts: readonly BallImpactObservation[]
   for (let i = 0; i < impacts.length; i++) {
     for (let j = i + 1; j < impacts.length; j++) {
       const dot = impacts[i].normal.x * impacts[j].normal.x + impacts[i].normal.y * impacts[j].normal.y;
-      if (dot < -0.45) oppositionBonus = Math.max(oppositionBonus, beachy ? 0.78 : 0.36);
+      if (dot < -0.45) oppositionBonus = Math.max(oppositionBonus, beachy ? 0.78 : 0.42);
     }
   }
   return base + multiBonus + oppositionBonus;
@@ -98,15 +104,17 @@ export function integrateBallVertical(
   return { height, verticalVelocity };
 }
 
-export function normalizeBabbleVertical(height?: number, verticalVelocity?: number) {
+export function normalizeBabbleVertical(height?: number, verticalVelocity?: number, radius: number = FIELD.babbleRadius) {
+  const rest = babbleRestHeight(radius);
   return {
-    height: clamp(finiteOr(height, BABBLE_REST_HEIGHT), BABBLE_REST_HEIGHT, BABBLE_MAX_HEIGHT),
+    height: clamp(finiteOr(height, rest), rest, BABBLE_MAX_HEIGHT),
     verticalVelocity: finiteOr(verticalVelocity, 0)
   };
 }
 
-export function integrateBabbleVertical(height: number | undefined, verticalVelocity: number | undefined, dt: number) {
-  const normalized = normalizeBabbleVertical(height, verticalVelocity);
+export function integrateBabbleVertical(height: number | undefined, verticalVelocity: number | undefined, dt: number, radius: number = FIELD.babbleRadius) {
+  const rest = babbleRestHeight(radius);
+  const normalized = normalizeBabbleVertical(height, verticalVelocity, radius);
   let h = normalized.height;
   let v = normalized.verticalVelocity;
   if (dt <= 0) return { height: h, verticalVelocity: v };
@@ -116,8 +124,8 @@ export function integrateBabbleVertical(height: number | undefined, verticalVelo
     h = BABBLE_MAX_HEIGHT;
     if (v > 0) v = 0;
   }
-  if (h <= BABBLE_REST_HEIGHT) {
-    h = BABBLE_REST_HEIGHT;
+  if (h <= rest) {
+    h = rest;
     if (v < -BABBLE_LANDING_REST_VELOCITY) v = -v * 0.2;
     else v = 0;
   }

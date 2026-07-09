@@ -37,15 +37,13 @@ import { PHYSICS_CONFIG } from './physicsConfig';
 import type { BallImpactObservation } from './airborne';
 import {
   BABBLE_RAMP_VERTICAL_VELOCITY,
-  BABBLE_REST_HEIGHT,
   BEACH_BALL_RAMP_VERTICAL_VELOCITY,
   BALL_MAX_HEIGHT,
   BALL_RAMP_VERTICAL_VELOCITY,
   BALL_REST_HEIGHT,
   ballImpactLiftVelocity,
   ballRestHeight,
-  integrateBabbleVertical,
-  integrateBallVertical,
+  babbleRestHeight,
   normalizeBabbleVertical,
   normalizeBallVertical
 } from './airborne';
@@ -54,9 +52,10 @@ export type Rng = () => number;
 export const blankInput: PlayerInput = { up: false, down: false, left: false, right: false, kick: false };
 
 const TICK_MS = 1000 / 30;
-// Body integration, damping, wall/block collisions and ball/babble impacts now
-// run in Rapier 2D (see shared/physics.ts). The rule layer below keeps the
-// tabletop feel knobs: strong pull impulse and lively bumpers/pads/ramps.
+// Body integration, damping, 3D gravity/floor contacts, wall/block collisions
+// and ball/babble impacts run in Rapier 3D (see shared/physics.ts). The rule
+// layer below keeps the tabletop feel knobs: strong pull impulse and lively
+// bumpers/pads/ramps.
 export const BABBLE_IMPULSE_SCALE = PHYSICS_CONFIG.babbleImpulseScale;
 export const BOX_LIFETIME_TURNS = 3;
 export const SETTLE_SPEED = PHYSICS_CONFIG.settleSpeed;
@@ -171,7 +170,7 @@ function syncBallVerticalDefaults(state: GameState) {
 }
 
 function syncBabbleVerticalDefaults(babble: BabbleState) {
-  const v = normalizeBabbleVertical(babble.height, babble.verticalVelocity);
+  const v = normalizeBabbleVertical(babble.height, babble.verticalVelocity, babble.radius);
   babble.height = v.height;
   babble.verticalVelocity = v.verticalVelocity;
 }
@@ -373,14 +372,14 @@ export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> 
   // Authoritative rolling spin uses the pre-step velocity so the visual roll
   // matches the distance the ball is about to travel this tick.
   updateBallSpin(state, dt);
-  // Rapier 2D handles integration, damping, arena walls (with open goal
-  // mouths), placed blocks and every ball/babble collision.
+  // Rapier 3D handles integration, damping, gravity/floor contacts, arena
+  // walls (with open goal mouths), placed blocks and every ball/babble
+  // collision.
   const physicsResult = stepPhysics(state, dt);
   clampAllSpeeds(state);
   applyBallImpactLift(state, physicsResult.ballBabbleImpacts);
   resolveFieldObjects(state, dt, now);
   resolveCornerBumpers(state, now);
-  integrateAirborne(state, dt);
   applyLowSpeedBrake(state);
   collectBoxesForBabbles(state, now);
   const goal = detectGoal(state);
@@ -589,7 +588,7 @@ function buildBabbles(state: GameState) {
         side,
         pos: { x: 0, y: 0 },
         vel: { x: 0, y: 0 },
-        height: BABBLE_REST_HEIGHT,
+        height: babbleRestHeight(FIELD.babbleRadius),
         verticalVelocity: 0,
         radius: FIELD.babbleRadius,
         effects: [],
@@ -620,9 +619,9 @@ function placeFormation(state: GameState, side: PlayerSide) {
     if (!babble) return;
     babble.pos = { x: baseX + offset.x * sign, y: FIELD.height / 2 + offset.y };
     babble.vel = { x: 0, y: 0 };
-    babble.height = BABBLE_REST_HEIGHT;
-    babble.verticalVelocity = 0;
     babble.radius = FIELD.babbleRadius;
+    babble.height = babbleRestHeight(babble.radius);
+    babble.verticalVelocity = 0;
   });
 }
 
@@ -683,17 +682,6 @@ function launchBabbleHop(state: GameState, babbleId: string | undefined, vertica
   if (!babble) return;
   syncBabbleVerticalDefaults(babble);
   babble.verticalVelocity = Math.max(babble.verticalVelocity, verticalVelocity);
-}
-
-function integrateAirborne(state: GameState, dt: number) {
-  const ball = integrateBallVertical(state.ball, state.ball.radius, dt, beachBallActive(state));
-  state.ball.height = ball.height;
-  state.ball.verticalVelocity = ball.verticalVelocity;
-  for (const b of state.babbles) {
-    const next = integrateBabbleVertical(b.height, b.verticalVelocity, dt);
-    b.height = next.height;
-    b.verticalVelocity = next.verticalVelocity;
-  }
 }
 
 export function bigBumpersActive(state: GameState) {
@@ -874,11 +862,11 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, n
     case 'stickyGoo': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'stickyGoo', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: 0, untilTurn: state.turn + 1 }); break;
     case 'ramp': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'ramp', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? -Math.PI / 4, untilTurn: state.turn + 1 }); break;
     case 'block': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'block', owner: side, pos: use.position ?? { x: side === 'left' ? 85 : FIELD.width - 85, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
-    case 'bigHead': if (target) { target.radius = FIELD.babbleRadius * 1.45; addBabbleEffect(target, 'bigHead', state.turn + 1); } break;
+    case 'bigHead': if (target) { target.radius = FIELD.babbleRadius * 1.45; target.height = Math.max(babbleRestHeight(target.radius), target.height); addBabbleEffect(target, 'bigHead', state.turn + 1); } break;
     case 'ghosted': if (target) addBabbleEffect(target, 'ghosted', state.turn + 1); break;
     case 'yellowCard': if (target) addBabbleEffect(target, 'yellowCard', state.turn); break;
-    case 'redCard': if (target) { target.vel = { x: 0, y: 0 }; target.height = BABBLE_REST_HEIGHT; target.verticalVelocity = 0; addBabbleEffect(target, 'redCard', state.turn); addBabbleEffect(target, 'ghosted', state.turn); } break;
-    case 'movePlayer': if (target) { target.pos = safeFieldPos(use.position, { x: side === 'left' ? FIELD.width * 0.42 : FIELD.width * 0.58, y: FIELD.height / 2 }, target.radius); target.vel = { x: 0, y: 0 }; target.height = BABBLE_REST_HEIGHT; target.verticalVelocity = 0; } break;
+    case 'redCard': if (target) { target.vel = { x: 0, y: 0 }; target.height = babbleRestHeight(target.radius); target.verticalVelocity = 0; addBabbleEffect(target, 'redCard', state.turn); addBabbleEffect(target, 'ghosted', state.turn); } break;
+    case 'movePlayer': if (target) { target.pos = safeFieldPos(use.position, { x: side === 'left' ? FIELD.width * 0.42 : FIELD.width * 0.58, y: FIELD.height / 2 }, target.radius); target.vel = { x: 0, y: 0 }; target.height = babbleRestHeight(target.radius); target.verticalVelocity = 0; } break;
   }
 }
 
@@ -890,7 +878,10 @@ function addBabbleEffect(babble: BabbleState, type: BoxType, untilTurn: number) 
 function expireTurnEffects(state: GameState) {
   for (const b of state.babbles) {
     b.effects = b.effects.filter(e => e.untilTurn >= state.turn);
-    if (!b.effects.some(e => e.type === 'bigHead')) b.radius = FIELD.babbleRadius;
+    if (!b.effects.some(e => e.type === 'bigHead')) {
+      b.radius = FIELD.babbleRadius;
+      b.height = Math.max(babbleRestHeight(b.radius), b.height);
+    }
   }
   state.fieldObjects = state.fieldObjects.filter(o => o.untilTurn >= state.turn);
   if (state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn < state.turn) state.swappedGoalsUntilTurn = null;
@@ -975,7 +966,7 @@ function resetForPlanning(state: GameState, _rng: Rng) {
   state.ball.lastTouchedPlayerId = null;
   for (const b of state.babbles) {
     b.vel = { x: 0, y: 0 };
-    b.height = BABBLE_REST_HEIGHT;
+    b.height = babbleRestHeight(b.radius);
     b.verticalVelocity = 0;
   }
   state.bumperEvents = [];
@@ -986,7 +977,8 @@ function resetForPlanning(state: GameState, _rng: Rng) {
 function allSettled(state: GameState) {
   const speeds = [Math.hypot(state.ball.vel.x, state.ball.vel.y), ...state.babbles.map(b => Math.hypot(b.vel.x, b.vel.y))];
   const ballRested = Math.abs(state.ball.verticalVelocity) < 0.05 && state.ball.height <= ballRestHeight(state.ball.radius) + 0.015;
-  return ballRested && speeds.every(s => s < tune(state, 'settleSpeed'));
+  const babblesRested = state.babbles.every(b => Math.abs(b.verticalVelocity) < 0.05 && b.height <= babbleRestHeight(b.radius) + 0.015);
+  return ballRested && babblesRested && speeds.every(s => s < tune(state, 'settleSpeed'));
 }
 
 function anchorPosition(anchor: BoxState['anchor'], rng: Rng): Vec {

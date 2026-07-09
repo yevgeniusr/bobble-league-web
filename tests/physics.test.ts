@@ -1,11 +1,12 @@
-// Focused tests for the Rapier 2D physics core (shared/physics.ts) as wired
+// Focused tests for the Rapier 3D physics core (shared/physics.ts) as wired
 // into the shared rules (shared/game.ts): goal scoring, wall/gate handling,
 // body collisions, ghosting, blocks, boxes, ramps/boosts, settling, and a
 // full 8-betabot scripted match completing by goal.
 import { describe, expect, it } from 'vitest';
 import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, MAX_SPEED, startGame, stepGame } from '../shared/game';
+import { stepPhysics } from '../shared/physics';
 import { FIELD, GameState, PlayerSide, Vec } from '../shared/types';
-import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT, ballRestHeight } from '../shared/airborne';
+import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT, babbleRestHeight, ballRestHeight } from '../shared/airborne';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
@@ -161,6 +162,28 @@ describe('Rapier physics: walls and body collisions', () => {
     expect(s.ball.lastTouchedPlayerId).toBe('r');
   });
 
+  it('keeps crediting dribbles at the 3D sphere contact distance', () => {
+    const s = setup();
+    park(s, ['right-1']);
+    const b = s.babbles.find(x => x.id === 'right-1')!;
+    const physicalContact = (ballRestHeight(s.ball.radius) + babbleRestHeight(b.radius)) * 50 - 1;
+    b.pos = { x: 500 - physicalContact, y: 310 };
+    b.vel = { x: 0, y: 0 };
+    s.ball.pos = { x: 500, y: 310 };
+    s.ball.vel = { x: 0, y: 0 };
+    stepPhysics(s, 1 / 30);
+    expect(s.ball.lastTouchedBy).toBe('right');
+    s.ball.lastTouchedBy = null;
+    s.ball.lastTouchedBabbleId = null;
+    s.ball.lastTouchedPlayerId = null;
+
+    stepPhysics(s, 1 / 30);
+
+    expect(s.ball.lastTouchedBy).toBe('right');
+    expect(s.ball.lastTouchedBabbleId).toBe('right-1');
+    expect(s.ball.lastTouchedPlayerId).toBe('r');
+  });
+
   it('bounces babbleheads off each other without overlap', () => {
     const s = setup();
     park(s, ['left-1', 'right-1']);
@@ -210,9 +233,65 @@ describe('Rapier physics: walls and body collisions', () => {
     expect(b.vel.x).toBeLessThan(0);
     expect(b.pos.x).toBeLessThan(600 - 14);
   });
+
+  it('deflects an airborne ball off a placed block wall', () => {
+    const s = setup();
+    park(s);
+    s.ball.pos = { x: 470, y: 310 };
+    s.ball.vel = { x: 750, y: 0 };
+    s.ball.height = 1.4;
+    s.ball.verticalVelocity = 0;
+    s.fieldObjects = [{ id: 'blk', type: 'block', owner: 'right', pos: { x: 600, y: 310 }, angle: Math.PI / 2, untilTurn: 99 }];
+
+    run(s, 20);
+
+    expect(s.ball.vel.x).toBeLessThan(0);
+    expect(s.ball.pos.x).toBeLessThan(600 - 14);
+  });
 });
 
 describe('Rapier physics: power-play interplay', () => {
+  it('projects ball height and vertical velocity directly from the Rapier 3D body', () => {
+    const s = setup();
+    park(s);
+    const startHeight = ballRestHeight(s.ball.radius) + 1;
+    s.ball.pos = { x: 550, y: 150 };
+    s.ball.vel = { x: 0, y: 0 };
+    s.ball.height = startHeight;
+    s.ball.verticalVelocity = 0;
+
+    stepPhysics(s, 1 / 30);
+
+    expect(s.ball.height).toBeLessThan(startHeight);
+    expect(s.ball.height).toBeGreaterThan(ballRestHeight(s.ball.radius));
+    expect(s.ball.verticalVelocity).toBeLessThan(-0.05);
+  });
+
+  it('projects babble height from the Rapier 3D sphere center while gravity lands it on the floor', () => {
+    const s = setup();
+    park(s, ['left-1']);
+    const b = s.babbles.find(x => x.id === 'left-1')!;
+    const restHeight = babbleRestHeight(b.radius);
+    b.pos = { x: 550, y: 310 };
+    b.vel = { x: 0, y: 0 };
+    b.height = restHeight + 0.35;
+    b.verticalVelocity = 0;
+    s.ball.pos = { x: 900, y: 100 };
+    s.ball.vel = { x: 0, y: 0 };
+    s.ball.height = ballRestHeight(s.ball.radius);
+    s.ball.verticalVelocity = 0;
+
+    stepPhysics(s, 1 / 30);
+
+    expect(b.height).toBeLessThan(restHeight + 0.35);
+    expect(b.verticalVelocity).toBeLessThan(-0.05);
+
+    for (let i = 0; i < 120; i++) stepPhysics(s, 1 / 30);
+
+    expect(b.height).toBeCloseTo(restHeight, 3);
+    expect(b.verticalVelocity).toBeCloseTo(0, 3);
+  });
+
   it('keeps a flat ball at the authoritative rest height without drifting', () => {
     const s = setup();
     park(s);
@@ -285,8 +364,10 @@ describe('Rapier physics: power-play interplay', () => {
 
     const normal = runImpact(false);
     const beachy = runImpact(true);
+    expect(normal.maxHeight).toBeGreaterThan(0.78);
+    expect(normal.maxHeight).toBeLessThan(1.25);
     expect(beachy.maxHeight).toBeGreaterThan(normal.maxHeight + 0.85);
-    expect(beachy.maxHeight).toBeGreaterThan(2.1);
+    expect(beachy.maxHeight).toBeGreaterThan(2.45);
     expect(beachy.maxHeight).toBeLessThanOrEqual(BALL_MAX_HEIGHT);
     expect(beachy.airborneTicks).toBeGreaterThan(normal.airborneTicks + 8);
   });
