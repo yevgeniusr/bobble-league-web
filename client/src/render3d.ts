@@ -23,6 +23,11 @@ export function babbleContactShadowRadius(radiusField: number): number {
   return fieldRadiusToWorld(radiusField) * 1.16;
 }
 
+export function babbleContactBaseMetrics(radiusField: number): { radius: number; topRadius: number; height: number } {
+  const radius = fieldRadiusToWorld(radiusField);
+  return { radius, topRadius: radius * 0.88, height: 0.16 };
+}
+
 export function babbleIndicatorRingRadius(radiusField: number, kind: 'control' | 'target' | 'ghost'): number {
   const radius = fieldRadiusToWorld(radiusField);
   if (kind === 'target') return radius + 0.34;
@@ -35,12 +40,21 @@ export function bumperVisualRadii(mapId: MapId, powered = false): { collider: nu
   const collider = fieldRadiusToWorld(powered ? map.layout.bigBumperRadius : map.layout.bumperRadius);
   return {
     collider,
-    socket: collider + (powered ? 0.18 : 0.16),
-    base: collider + (powered ? 0.1 : 0.06),
+    socket: collider + (powered ? 0.12 : 0.1),
+    base: collider + (powered ? 0.08 : 0.04),
     drum: collider * 0.94,
     cap: collider * 0.9,
     dome: collider * 0.46,
     energyRing: collider
+  };
+}
+
+export function bumperVisualFootprint(mapId: MapId, powered = false): { collider: number; maxRoundBaseRadius: number; rectangularPlateLongestSide: number } {
+  const radii = bumperVisualRadii(mapId, powered);
+  return {
+    collider: radii.collider,
+    maxRoundBaseRadius: Math.max(radii.socket, radii.base),
+    rectangularPlateLongestSide: 0
   };
 }
 
@@ -392,6 +406,20 @@ export class BabbleLeague3DRenderer {
         const spike = this.mesh(g, new THREE.ConeGeometry(0.24, 0.72, 6), this.mat(0x1f0b08, 0.7, { flat: true, emissive: 0x3b1006 }), x + side * 0.22, 3.15, s * halfGoal, true);
         spike.rotation.x = Math.PI;
       }
+    } else if (theme.gateStyle === 'orbital') {
+      for (const s of [-1, 1] as const) {
+        const orbit = new THREE.Mesh(this.geo('goalOrbitalPostRing', () => new THREE.TorusGeometry(0.42, 0.035, 8, 40)), frameTint);
+        orbit.position.set(x, 1.78, s * halfGoal);
+        orbit.rotation.y = Math.PI / 2;
+        orbit.castShadow = true;
+        g.add(orbit);
+      }
+      const mouthOrbit = new THREE.Mesh(this.geo('goalOrbitalMouthRing', () => new THREE.TorusGeometry(1, 0.025, 8, 64)), mouthTint);
+      mouthOrbit.position.set(x - side * 0.08, TURF_Y + 0.08, 0);
+      mouthOrbit.rotation.y = Math.PI / 2;
+      mouthOrbit.scale.set(halfGoal * 0.16, halfGoal * 0.82, halfGoal * 0.82);
+      mouthOrbit.castShadow = false;
+      g.add(mouthOrbit);
     }
   }
 
@@ -433,15 +461,19 @@ export class BabbleLeague3DRenderer {
     const radii = bumperVisualRadii(mapId, false);
     const sx = Math.sign(x) || 1;
     const sz = Math.sign(z) || 1;
-    // Corner socket integrated into the raised rim, so the bumper reads as
-    // part of the board corner rather than a loose cylinder on turf.
-    this.mesh(g, new THREE.BoxGeometry(radii.socket * 1.72, 0.2, radii.socket * 1.12), this.mat(theme.bumperCap, 0.42), x + sx * radii.socket * 0.28, 1.09, z, true);
-    this.mesh(g, new THREE.BoxGeometry(radii.socket * 1.12, 0.2, radii.socket * 1.72), this.mat(theme.bumperCap, 0.42), x, 1.09, z + sz * radii.socket * 0.28, true);
-    this.mesh(g, new THREE.CylinderGeometry(radii.base * 0.94, radii.socket, 0.18, 44), this.mat(theme.bumperBase, 0.55), x, 1.12, z, true);
+    // Round contact socket only: rectangular plates read as stray artifacts
+    // around circular bumpers, especially near the corner rim.
+    this.mesh(g, new THREE.CylinderGeometry(radii.socket, radii.socket, 0.14, 48), this.mat(theme.bumperCap, 0.42), x, 1.08, z, true);
+    this.mesh(g, new THREE.CylinderGeometry(radii.base, radii.base, 0.18, 48), this.mat(theme.bumperBase, 0.55), x, 1.14, z, true);
     this.mesh(g, new THREE.CylinderGeometry(radii.collider * 0.92, radii.base, 0.28, 44), this.mat(theme.frameDark, 0.5), x, 1.24, z, true);
     this.mesh(g, new THREE.CylinderGeometry(radii.drum * 0.94, radii.drum, 0.42, 44), this.mat(theme.bumperDrum, 0.4, { emissive: mapId === 'moon' ? 0x12334a : mapId === 'volcano' ? 0x54140c : 0 }), x, 1.56, z, true);
     this.mesh(g, new THREE.CylinderGeometry(radii.cap, radii.cap, 0.1, 44), this.mat(theme.plinth, 0.35), x, 1.8, z, true);
     this.mesh(g, new THREE.SphereGeometry(radii.dome, 28, 16), this.mat(theme.bumperCap, 0.3, { emissive: mapId === 'volcano' ? 0x7a2e08 : 0x12304a }), x, 1.9, z, true);
+    const rimRing = new THREE.Mesh(this.geo(`bumperSocketRing:${mapId}`, () => new THREE.TorusGeometry(1, 0.035, 8, 48)), this.mat(theme.frameDark, 0.42));
+    rimRing.position.set(x, TURF_Y + 0.08, z);
+    rimRing.rotation.x = Math.PI / 2;
+    rimRing.scale.setScalar(radii.socket);
+    g.add(rimRing);
     if (mapId === 'moon') {
       for (const a of [Math.PI * 0.18, Math.PI * 0.86, Math.PI * 1.54]) {
         this.mesh(g, new THREE.SphereGeometry(0.07, 12, 8), this.mat(theme.bumperDrum, 0.35, { emissive: 0x12334a }), x + Math.cos(a) * radii.collider * 0.82, TURF_Y + 0.12, z + Math.sin(a) * radii.collider * 0.82);
@@ -451,6 +483,13 @@ export class BabbleLeague3DRenderer {
         const rock = this.mesh(g, new THREE.ConeGeometry(0.18, 0.45, 5), this.mat(0x1f0b08, 0.76, { flat: true }), x + Math.cos(a) * radii.socket, 1.35, z + Math.sin(a) * radii.socket, true);
         rock.rotation.x = Math.PI;
       }
+    } else if (mapId === 'saturn') {
+      const orbit = new THREE.Mesh(this.geo('saturnBumperOrbit', () => new THREE.TorusGeometry(1, 0.025, 8, 64)),
+        new THREE.MeshBasicMaterial({ color: theme.accent, transparent: true, opacity: 0.58 }));
+      orbit.position.set(x + sx * radii.collider * 0.1, TURF_Y + 0.11, z + sz * radii.collider * 0.1);
+      orbit.rotation.x = Math.PI / 2;
+      orbit.scale.set(radii.collider * 1.25, radii.collider * 0.78, 1);
+      g.add(orbit);
     }
   }
 
@@ -510,9 +549,11 @@ export class BabbleLeague3DRenderer {
     const hop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'babble', b.id, Date.now())?.at ?? -1e12)) / 1000);
     const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
     const sideCol = b.side === 'left' ? 0xe25a4c : 0x5147a8;
-    // pedestal base
-    this.mesh(grp, new THREE.CylinderGeometry(r * 1.05, r * 1.3, 0.22, 36), bmat(sideCol, 0.45), 0, TURF_Y + 0.12, 0, solid);
-    this.mesh(grp, new THREE.CylinderGeometry(r * 0.85, r * 1.05, 0.2, 36), bmat(0xfff3be, 0.4), 0, TURF_Y + 0.32, 0, solid);
+    const base = babbleContactBaseMetrics(b.radius);
+    // Small solid contact skirt: its footprint matches the authoritative
+    // physics radius, while selection rings remain separate affordances.
+    this.mesh(grp, new THREE.CylinderGeometry(base.topRadius, base.radius, base.height, 36), bmat(sideCol, 0.45), 0, TURF_Y + base.height / 2, 0, solid);
+    this.mesh(grp, new THREE.CylinderGeometry(r * 0.72, r * 0.78, 0.18, 36), bmat(0xfff3be, 0.4), 0, TURF_Y + 0.25, 0, solid);
     // torso in team colors
     const torso = this.mesh(grp, new THREE.SphereGeometry(r * 0.62, 28, 18), bmat(team.primary, 0.4), 0, TURF_Y + 0.6, 0, solid);
     torso.scale.set(1, 1.15, 0.9);
@@ -961,6 +1002,33 @@ export class BabbleLeague3DRenderer {
         g.strokeStyle = 'rgba(254,215,170,.45)';
         g.lineWidth = 3;
         g.stroke();
+      }
+    } else if (theme.pattern === 'rings') {
+      g.save();
+      g.translate(c.width / 2, c.height / 2);
+      g.rotate(-0.18);
+      for (const [rx, ry, alpha] of [[330, 88, 0.5], [250, 62, 0.42], [145, 38, 0.36]] as const) {
+        g.strokeStyle = `rgba(246,211,101,${alpha})`;
+        g.lineWidth = 10;
+        g.beginPath();
+        g.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+        g.stroke();
+        g.strokeStyle = `rgba(125,211,252,${alpha * 0.58})`;
+        g.lineWidth = 3;
+        g.beginPath();
+        g.ellipse(0, 0, rx + 22, ry + 7, 0, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.restore();
+      for (const [x, y, r] of [[214, 135, 18], [812, 370, 16], [520, 257, 32]] as const) {
+        const grad = g.createRadialGradient(x - r * 0.25, y - r * 0.35, r * 0.1, x, y, r);
+        grad.addColorStop(0, 'rgba(255,238,186,.82)');
+        grad.addColorStop(0.65, 'rgba(216,168,72,.44)');
+        grad.addColorStop(1, 'rgba(42,23,64,.24)');
+        g.fillStyle = grad;
+        g.beginPath();
+        g.arc(x, y, r, 0, Math.PI * 2);
+        g.fill();
       }
     }
     g.strokeStyle = theme.line;

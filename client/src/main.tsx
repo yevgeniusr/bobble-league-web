@@ -10,6 +10,12 @@ import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
 const socket: Sock = io();
+const MAP_SELECT_HINTS: Record<MapId, string> = {
+  stadium: 'classic',
+  moon: 'low gravity',
+  volcano: 'lava',
+  saturn: 'heavy rings'
+};
 
 // Developer console API (no cheat UI ships in the app). Available in dev
 // builds, with ?dev=1, or after localStorage.setItem('babble:devtools', '1').
@@ -134,7 +140,7 @@ function App() {
             <div className="lobbyCol">
               <p className="fieldLabel">Host a match</p>
               <label>Game length <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage: 1 goal / 30 turns</option><option value={3}>Qualifier: 3 goals / 90 turns</option><option value={5}>Champion: 5 goals / 150 turns</option></select></label>
-              <label>Map <select className="mapSelect" value={mapId} onChange={e=>setMapId(e.target.value as MapId)}>{MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label}: {MAPS[id].shortLabel === 'Stadium' ? 'classic' : MAPS[id].shortLabel.toLowerCase()}</option>)}</select></label>
+              <label>Map <select className="mapSelect" value={mapId} onChange={e=>setMapId(e.target.value as MapId)}>{MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label}: {MAP_SELECT_HINTS[id]}</option>)}</select></label>
               <AudioControls settings={audioSettings} onChange={patchAudio}/>
               <button className="primary" onClick={createRoom}>Create room</button>
             </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, MAPS, MAP_IDS, RampEvent } from '../shared/types';
-import { babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, latestRampEvent, mapBumperWorldPositions, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, latestRampEvent, mapBumperWorldPositions, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 
 describe('3D renderer coordinate mapping', () => {
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
@@ -35,6 +35,11 @@ describe('3D renderer coordinate mapping', () => {
 
   it('keeps babble contact shadows and control rings close to the real babble radius', () => {
     const radius = fieldRadiusToWorld(FIELD.babbleRadius);
+    const base = babbleContactBaseMetrics(FIELD.babbleRadius);
+    expect(base.radius).toBeCloseTo(radius);
+    expect(base.topRadius).toBeLessThanOrEqual(base.radius);
+    expect(base.height).toBeLessThanOrEqual(0.18);
+
     const shadow = babbleContactShadowRadius(FIELD.babbleRadius);
     expect(shadow).toBeGreaterThan(radius);
     expect(shadow).toBeLessThanOrEqual(radius * 1.22);
@@ -55,6 +60,9 @@ describe('3D renderer coordinate mapping', () => {
       expect(big.collider).toBeCloseTo(fieldRadiusToWorld(MAPS[mapId].layout.bigBumperRadius));
       expect(normal.energyRing).toBeCloseTo(normal.collider);
       expect(big.energyRing).toBeCloseTo(big.collider);
+      const footprint = bumperVisualFootprint(mapId);
+      expect(footprint.rectangularPlateLongestSide).toBe(0);
+      expect(footprint.maxRoundBaseRadius).toBeLessThanOrEqual(normal.collider + 0.12);
       expect(normal.drum).toBeGreaterThanOrEqual(normal.collider * 0.88);
       expect(normal.drum).toBeLessThanOrEqual(normal.collider * 1.04);
       expect(big.drum).toBeGreaterThanOrEqual(big.collider * 0.88);

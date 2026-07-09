@@ -4,9 +4,9 @@ export const FIELD = {
   goalDepth: 34,
   goalY: 205,
   goalHeight: 210,
-  playerRadius: 24,
-  babbleRadius: 24,
-  ballRadius: 14,
+  playerRadius: 18,
+  babbleRadius: 18,
+  ballRadius: 22,
   boxSize: 34
 } as const;
 
@@ -70,17 +70,18 @@ export type BoxAnchor = 'topMid' | 'bottomMid' | 'midLeft' | 'midRight';
 export const RAMP_HALF_LEN = 60;
 export const RAMP_HALF_WIDTH = 34;
 
-export const BUMPER_RADIUS = 36;
-export const BIG_BUMPER_RADIUS = 52;
+export const BUMPER_RADIUS = 44;
+export const BIG_BUMPER_RADIUS = 60;
+const STADIUM_BUMPER_OFFSET = 58;
 export const BUMPERS: readonly Vec[] = [
-  { x: 92, y: 92 },
-  { x: FIELD.width - 92, y: 92 },
-  { x: 92, y: FIELD.height - 92 },
-  { x: FIELD.width - 92, y: FIELD.height - 92 }
+  { x: STADIUM_BUMPER_OFFSET, y: STADIUM_BUMPER_OFFSET },
+  { x: FIELD.width - STADIUM_BUMPER_OFFSET, y: STADIUM_BUMPER_OFFSET },
+  { x: STADIUM_BUMPER_OFFSET, y: FIELD.height - STADIUM_BUMPER_OFFSET },
+  { x: FIELD.width - STADIUM_BUMPER_OFFSET, y: FIELD.height - STADIUM_BUMPER_OFFSET }
 ] as const;
 
-export type MapId = 'stadium' | 'moon' | 'volcano';
-export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano'] as const;
+export type MapId = 'stadium' | 'moon' | 'volcano' | 'saturn';
+export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano', 'saturn'] as const;
 
 export type MapPhysicsMultipliers = {
   babbleImpulseScale: number;
@@ -135,8 +136,8 @@ export type MapConfig = {
     leftGoal: number;
     rightGoal: number;
     accent: string;
-    pattern: 'stadium' | 'craters' | 'lava';
-    gateStyle: 'classic' | 'sciFi' | 'volcanic';
+    pattern: 'stadium' | 'craters' | 'lava' | 'rings';
+    gateStyle: 'classic' | 'sciFi' | 'volcanic' | 'orbital';
   };
   physics: MapPhysicsMultipliers;
 };
@@ -338,6 +339,70 @@ export const MAPS: Record<MapId, MapConfig> = {
       blockRestitution: 1.18,
       babbleDensity: 0.94,
       ballDensityBase: 0.84
+    }
+  },
+  saturn: {
+    id: 'saturn',
+    label: 'Saturn',
+    shortLabel: 'Saturn',
+    description: 'A heavy orbital arena with ring markings, satellite bumpers, and dense slow-carry collisions.',
+    layout: {
+      bumpers: [
+        { x: FIELD.width / 2 - 300, y: FIELD.height / 2 - 132 },
+        { x: FIELD.width / 2 + 300, y: FIELD.height / 2 - 132 },
+        { x: FIELD.width / 2 - 300, y: FIELD.height / 2 + 132 },
+        { x: FIELD.width / 2 + 300, y: FIELD.height / 2 + 132 },
+        { x: FIELD.width / 2, y: FIELD.height / 2 - 210 },
+        { x: FIELD.width / 2, y: FIELD.height / 2 + 210 }
+      ],
+      bumperRadius: 34,
+      bigBumperRadius: 54,
+      boxSpawnAnchors: ['topMid', 'bottomMid', 'midLeft', 'midRight']
+    },
+    theme: {
+      sky: 0x100b20,
+      fog: 0x241235,
+      tableLeft: 0x2b1740,
+      tableRight: 0x151426,
+      plinth: 0xf5dfaa,
+      frame: 0xd8a848,
+      frameDark: 0x76532f,
+      fieldBase: 0x3f5572,
+      stripeA: '#596f8d',
+      stripeB: '#3f5572',
+      line: 'rgba(255,235,173,.84)',
+      bumperBase: 0x72533a,
+      bumperDrum: 0x8bd3dd,
+      bumperCap: 0xf6d365,
+      leftGoal: 0x7dd3fc,
+      rightGoal: 0xf9a8d4,
+      accent: '#f6d365',
+      pattern: 'rings',
+      gateStyle: 'orbital'
+    },
+    physics: {
+      ...PHYSICS_1X,
+      babbleImpulseScale: 0.86,
+      maxSpeed: 0.88,
+      settleSpeed: 0.82,
+      lowSpeedBrakeThreshold: 0.72,
+      lowSpeedBrakeFactor: 1.04,
+      bumperBoost: 1.02,
+      bumperMinExitBall: 0.96,
+      bumperMinExitBabble: 0.96,
+      bigBumperBoostMult: 0.96,
+      bigBumperRestitution: 0.98,
+      boostPadAccel: 0.92,
+      rampLaunchSpeed: 0.9,
+      babbleDragPerTick: 1.045,
+      ballDragPerTick: 1.04,
+      beachBallDragPerTick: 1.018,
+      babbleRestitution: 0.96,
+      ballRestitution: 0.98,
+      wallRestitution: 0.96,
+      blockRestitution: 0.95,
+      babbleDensity: 3.25,
+      ballDensityBase: 3.1
     }
   }
 } as const;

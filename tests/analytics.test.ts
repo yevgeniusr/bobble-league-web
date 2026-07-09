@@ -245,13 +245,13 @@ describe('Xtremepush backend hit-event sender', () => {
     expect(sender.debugSnapshot()).toMatchObject({ enabled: true, attempted: 1, succeeded: 1, failed: 0, profilesAttempted: 1, profilesSucceeded: 1, profilesFailed: 0 });
   });
 
-  it('defaults backend analytics to the Xtremepush demo API host', async () => {
+  it('defaults backend analytics to the Xtremepush external API host', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ success: true, code: 200 }), { status: 200 }));
     const sender = createXtremepushSender({ appToken: 'token-for-test', fetcher, logger: { warn: vi.fn() } });
 
     await expect(sender.send(event)).resolves.toBe(true);
-    expect(fetcher).toHaveBeenNthCalledWith(1, 'https://api.demo.xtremepush.com/api/external/import/profile', expect.any(Object));
-    expect(fetcher).toHaveBeenNthCalledWith(2, 'https://api.demo.xtremepush.com/api/external/hit/event', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'https://external-api.xtremepush.com/api/external/import/profile', expect.any(Object));
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'https://external-api.xtremepush.com/api/external/hit/event', expect.any(Object));
   });
 
   it('disables cleanly when the backend app token is missing', async () => {

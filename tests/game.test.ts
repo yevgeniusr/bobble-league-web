@@ -39,7 +39,35 @@ describe('classic Babble League shared rules', () => {
     expect(s.mapId).toBe('stadium');
     expect(s.config.mapId).toBe('stadium');
     expect(s.config.boxSpawnAnchors).toEqual(['topMid', 'bottomMid']);
-    expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano']);
+    expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano', 'saturn']);
+  });
+
+  it('uses a larger normal ball and smaller physics babbles', () => {
+    expect(FIELD.ballRadius).toBe(22);
+    expect(FIELD.babbleRadius).toBe(18);
+    expect(FIELD.playerRadius).toBe(FIELD.babbleRadius);
+
+    const s = createInitialState('SIZE', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    expect(s.ball.radius).toBe(FIELD.ballRadius);
+    for (const babble of s.babbles) expect(babble.radius).toBe(FIELD.babbleRadius);
+  });
+
+  it('defines Saturn as a selectable ring-themed heavy map', () => {
+    const otherMapIds = MAP_IDS.filter(id => id !== 'saturn');
+    const maxOtherBabbleDensity = Math.max(...otherMapIds.map(id => MAPS[id].physics.babbleDensity));
+    const maxOtherBallDensity = Math.max(...otherMapIds.map(id => MAPS[id].physics.ballDensityBase));
+
+    expect(MAPS.saturn.label).toBe('Saturn');
+    expect(MAPS.saturn.shortLabel).toBe('Saturn');
+    expect(MAPS.saturn.theme.pattern).toBe('rings');
+    expect(MAPS.saturn.theme.gateStyle).toBe('orbital');
+    expect(MAPS.saturn.layout.bumpers.length).toBeGreaterThanOrEqual(4);
+    expect(MAPS.saturn.physics.babbleDensity).toBeGreaterThanOrEqual(maxOtherBabbleDensity * 3);
+    expect(MAPS.saturn.physics.ballDensityBase).toBeGreaterThanOrEqual(maxOtherBallDensity * 3);
   });
 
   it('allows map changes only in the lobby and preserves the selected map through kickoff', () => {
@@ -433,6 +461,19 @@ describe('classic Babble League shared rules', () => {
     expect(corners).toEqual(['LB', 'LT', 'RB', 'RT']);
   });
 
+  it('places stadium bumpers tight enough to walls that no ball-sized path fits behind them', () => {
+    const stadium = MAPS.stadium.layout;
+    expect(stadium.bumpers).toEqual(BUMPERS);
+    for (const bumper of stadium.bumpers) {
+      const gapToVerticalWall = Math.min(bumper.x, FIELD.width - bumper.x) - stadium.bumperRadius;
+      const gapToHorizontalWall = Math.min(bumper.y, FIELD.height - bumper.y) - stadium.bumperRadius;
+      expect(gapToVerticalWall).toBeLessThanOrEqual(FIELD.ballRadius);
+      expect(gapToHorizontalWall).toBeLessThanOrEqual(FIELD.ballRadius);
+      expect(stadium.bumperRadius + FIELD.ballRadius).toBeGreaterThanOrEqual(Math.min(bumper.x, FIELD.width - bumper.x));
+      expect(stadium.bumperRadius + FIELD.ballRadius).toBeGreaterThanOrEqual(Math.min(bumper.y, FIELD.height - bumper.y));
+    }
+  });
+
   it('bumpers boost the ball on impact and emit a hit event for the client animation', () => {
     const s = createInitialState('BUMP', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
@@ -529,8 +570,10 @@ describe('classic Babble League shared rules', () => {
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
     s.powerPlayInventories.left.push({ type: 'beachBall', availableTurn: 1 });
+    const normalRadius = s.ball.radius;
     expect(usePowerPlay(s, 'l', { type: 'beachBall' }, 1000)).toBe(true);
     expect(s.ball.radius).toBeGreaterThan(FIELD.ballRadius);
+    expect(s.ball.radius).toBeCloseTo(normalRadius * 1.6);
     expect(s.beachBallUntilTurn).toBe(1);
     for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
     for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: 0, impulse: 1 }, 1000);
