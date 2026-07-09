@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec, normalizeMapId } from '../../shared/types';
+import { BALL_MAX_HEIGHT, ballRestHeight } from '../../shared/airborne';
 
 export type WorldXZ = { x: number; z: number };
 export type PlacingGhost = { type: FieldObjectType; pos: Vec; angle: number };
@@ -75,6 +76,24 @@ export function goalVisualMetrics(): { leftGoalLineX: number; rightGoalLineX: nu
 // roll always matches travel direction (field x -> world x, field y -> world z).
 export function ballSpinToRotation(spin: Vec): { x: number; z: number } {
   return { x: spin.y, z: -spin.x };
+}
+
+export function ballRenderElevation(ball: { radius: number; height?: number }): {
+  centerYAboveTurf: number;
+  shadowYAboveTurf: number;
+  shadowRadius: number;
+  shadowOpacity: number;
+} {
+  const rest = ballRestHeight(ball.radius);
+  const height = Number.isFinite(ball.height) ? Math.min(BALL_MAX_HEIGHT, Math.max(rest, ball.height!)) : rest;
+  const separation = Math.max(0, height - rest);
+  const r = fieldRadiusToWorld(ball.radius);
+  return {
+    centerYAboveTurf: height,
+    shadowYAboveTurf: 0.025,
+    shadowRadius: r * (1.12 + Math.min(0.55, separation * 0.22)),
+    shadowOpacity: Math.max(0.04, 0.16 - separation * 0.065)
+  };
 }
 
 // True rolling: incremental rotation about the axis perpendicular to travel.
@@ -522,9 +541,9 @@ export class BabbleLeague3DRenderer {
     }));
   }
 
-  private blobShadow(x: number, z: number, r: number, opacity = 0.18) {
+  private blobShadow(x: number, z: number, r: number, opacity = 0.18, yAboveTurf = 0.025) {
     const m = new THREE.Mesh(this.geo('blob', () => new THREE.CircleGeometry(1, 48)), this.contactShadowMaterial(opacity));
-    m.position.set(x, TURF_Y + 0.025, z);
+    m.position.set(x, TURF_Y + yAboveTurf, z);
     m.rotation.x = -Math.PI / 2;
     m.scale.set(r, r * 0.72, 1);
     m.receiveShadow = false;
@@ -546,7 +565,8 @@ export class BabbleLeague3DRenderer {
     const solid = !ghosted;
     this.blobShadow(w.x, w.z, babbleContactShadowRadius(b.radius), ghosted ? 0.08 : 0.18);
 
-    const hop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'babble', b.id, Date.now())?.at ?? -1e12)) / 1000);
+    const eventHop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'babble', b.id, Date.now())?.at ?? -1e12)) / 1000) * 0.24;
+    const hop = Math.max(Number.isFinite(b.height) ? b.height : 0, eventHop);
     const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
     const sideCol = b.side === 'left' ? 0xe25a4c : 0x5147a8;
     const base = babbleContactBaseMetrics(b.radius);
@@ -624,10 +644,9 @@ export class BabbleLeague3DRenderer {
       }
     }
     this.lastBallPos = { x: p.x, y: p.y };
-    this.blobShadow(w.x, w.z, r * 1.12, 0.16);
-    // ramp launch hop: the ball visibly pops off the wedge lip
-    const hop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'ball', undefined, Date.now())?.at ?? -1e12)) / 1000);
-    const grp = new THREE.Group(); grp.position.set(w.x, TURF_Y + r + 0.06 + hop, w.z);
+    const elevation = ballRenderElevation(state.ball);
+    this.blobShadow(w.x, w.z, elevation.shadowRadius, elevation.shadowOpacity, elevation.shadowYAboveTurf);
+    const grp = new THREE.Group(); grp.position.set(w.x, TURF_Y + elevation.centerYAboveTurf, w.z);
     grp.quaternion.copy(this.ballQuat);
     this.dynamic.add(grp);
     const ball = this.mesh(grp, new THREE.SphereGeometry(r, 36, 24), this.mat(0xfdfdfa, 0.3), 0, 0, 0, true);

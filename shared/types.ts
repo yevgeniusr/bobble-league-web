@@ -431,13 +431,23 @@ export type BabbleState = {
   side: PlayerSide;
   pos: Vec;
   vel: Vec;
+  height: number;
+  verticalVelocity: number;
   radius: number;
   effects: ActiveEffect[];
   lastLaunchedTurn: number;
 };
 // spin accumulates rolling rotation (radians) derived from authoritative movement:
 // spin.x from travel along field x, spin.y from travel along field y.
-export type BallState = { pos: Vec; vel: Vec; radius: number; lastTouchedBy?: PlayerSide | null; spin?: Vec };
+export type BallState = {
+  pos: Vec;
+  vel: Vec;
+  height: number;
+  verticalVelocity: number;
+  radius: number;
+  lastTouchedBy?: PlayerSide | null;
+  spin?: Vec;
+};
 export type BoxState = { id: string; type: BoxType; anchor: BoxAnchor; pos: Vec; spawnedAt: number; untilTurn?: number };
 export type FieldObjectType = 'boost' | 'stickyGoo' | 'ramp' | 'block';
 export const FIELD_OBJECT_TYPES: readonly FieldObjectType[] = ['boost', 'stickyGoo', 'ramp', 'block'] as const;

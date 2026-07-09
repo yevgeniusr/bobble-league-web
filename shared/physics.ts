@@ -23,7 +23,8 @@
 // should call freePhysics(state) when discarding a room to release WASM
 // memory promptly.
 import RAPIER from '@dimforge/rapier2d-deterministic-compat';
-import { FIELD, GameState, MAPS, PlayerSide, normalizeMapId } from './types';
+import type { BallImpactObservation } from './airborne';
+import { FIELD, GameState, MAPS, PlayerSide, Vec, normalizeMapId } from './types';
 import { PHYSICS_CONFIG } from './physicsConfig';
 
 // Rapier is tuned for meter-scale numbers; the field is 1100x620 px.
@@ -87,6 +88,14 @@ interface PhysicsCache {
 }
 
 const caches = new WeakMap<GameState, PhysicsCache>();
+export type PhysicsStepResult = { ballBabbleImpacts: BallImpactObservation[] };
+
+type BabbleImpactSnapshot = {
+  id: string;
+  side: PlayerSide;
+  pos: Vec;
+  vel: Vec;
+};
 
 // Release the Rapier world backing a GameState. WeakMap lets abandoned test
 // states be garbage collected, but the WASM-side memory is only reclaimed by
@@ -99,13 +108,18 @@ export function freePhysics(state: GameState) {
   caches.delete(state);
 }
 
-export function stepPhysics(state: GameState, dt: number) {
+export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
   const cache = getCache(state);
   const { world, events } = cache;
+  const result: PhysicsStepResult = { ballBabbleImpacts: [] };
   world.timestep = dt;
   syncBlocks(state, cache);
   syncBall(state, cache);
-  const touchable = new Map<number, PlayerSide>();
+  const ballPreStep = {
+    pos: { ...state.ball.pos },
+    vel: { ...state.ball.vel }
+  };
+  const touchable = new Map<number, BabbleImpactSnapshot>();
   for (const b of state.babbles) syncBabble(state, cache, b, touchable);
 
   world.step(events);
@@ -143,9 +157,14 @@ export function stepPhysics(state: GameState, dt: number) {
     if (!started) return;
     const other = h1 === ballHandle ? h2 : h2 === ballHandle ? h1 : null;
     if (other === null) return;
-    const side = touchable.get(other);
-    if (side) state.ball.lastTouchedBy = side;
+    const babble = touchable.get(other);
+    if (babble) {
+      state.ball.lastTouchedBy = babble.side;
+      const impact = ballBabbleImpact(ballPreStep, babble);
+      if (impact) result.ballBabbleImpacts.push(impact);
+    }
   });
+  return result;
 }
 
 const isBeachy = (state: GameState) =>
@@ -247,7 +266,7 @@ function syncBabble(
   state: GameState,
   cache: PhysicsCache,
   babble: GameState['babbles'][number],
-  touchable: Map<number, PlayerSide>
+  touchable: Map<number, BabbleImpactSnapshot>
 ) {
   const entry = cache.babbles.get(babble.id)!;
   entry.body.setTranslation({ x: babble.pos.x / PX_PER_METER, y: babble.pos.y / PX_PER_METER }, true);
@@ -262,7 +281,45 @@ function syncBabble(
     entry.collider.setRadius(babble.radius / PX_PER_METER);
     entry.radius = babble.radius;
   }
-  if (!ghosted) touchable.set(entry.collider.handle, babble.side);
+  if (!ghosted) touchable.set(entry.collider.handle, {
+    id: babble.id,
+    side: babble.side,
+    pos: { ...babble.pos },
+    vel: { ...babble.vel }
+  });
+}
+
+function ballBabbleImpact(
+  ball: { pos: Vec; vel: Vec },
+  babble: BabbleImpactSnapshot
+): BallImpactObservation | null {
+  const dx = ball.pos.x - babble.pos.x;
+  const dy = ball.pos.y - babble.pos.y;
+  const dist = Math.hypot(dx, dy);
+  const rvx = ball.vel.x - babble.vel.x;
+  const rvy = ball.vel.y - babble.vel.y;
+  let nx = 1;
+  let ny = 0;
+  if (dist > 0.0001) {
+    nx = dx / dist;
+    ny = dy / dist;
+  } else {
+    const rel = Math.hypot(rvx, rvy);
+    if (rel > 0.0001) {
+      nx = -rvx / rel;
+      ny = -rvy / rel;
+    }
+  }
+  const closing = Math.max(0, -(rvx * nx + rvy * ny));
+  const relativeSpeed = Math.hypot(rvx, rvy);
+  const impactSpeed = Math.max(closing, relativeSpeed * 0.35);
+  if (impactSpeed < 1) return null;
+  return {
+    babbleId: babble.id,
+    side: babble.side,
+    impactSpeed,
+    normal: { x: nx, y: ny }
+  };
 }
 
 function fixedCuboid(world: RAPIER.World, x: number, y: number, hx: number, hy: number, collisionGroups: number, restitution: number) {

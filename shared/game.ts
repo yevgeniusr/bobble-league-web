@@ -32,6 +32,21 @@ import {
 import { buildAbilityUsedEvent, buildBoxPickupEvent, buildGoalScoredEvent, recordAnalyticsEvent } from './analytics';
 import { stepPhysics } from './physics';
 import { PHYSICS_CONFIG } from './physicsConfig';
+import type { BallImpactObservation } from './airborne';
+import {
+  BABBLE_RAMP_VERTICAL_VELOCITY,
+  BABBLE_REST_HEIGHT,
+  BEACH_BALL_RAMP_VERTICAL_VELOCITY,
+  BALL_MAX_HEIGHT,
+  BALL_RAMP_VERTICAL_VELOCITY,
+  BALL_REST_HEIGHT,
+  ballImpactLiftVelocity,
+  ballRestHeight,
+  integrateBabbleVertical,
+  integrateBallVertical,
+  normalizeBabbleVertical,
+  normalizeBallVertical
+} from './airborne';
 
 export type Rng = () => number;
 export const blankInput: PlayerInput = { up: false, down: false, left: false, right: false, kick: false };
@@ -69,6 +84,7 @@ export const BOOST_PAD_ACCEL = PHYSICS_CONFIG.boostPadAccel;
 // Ramp wedge: movers riding up the slope get redirected along the ramp
 // direction and launched off the lip at a minimum exit speed.
 export const RAMP_LAUNCH_SPEED = PHYSICS_CONFIG.rampLaunchSpeed;
+export { BALL_MAX_HEIGHT, BALL_REST_HEIGHT, ballRestHeight } from './airborne';
 export { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from './types';
 
 export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: MapId = 'stadium'): GameState {
@@ -93,7 +109,7 @@ export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: 
     formationSelectionTurn: null,
     formations: { left: 'forward', right: 'forward' },
     babbles: [],
-    ball: { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } },
+    ball: ballState(),
     boxes: [],
     fieldObjects: [],
     bumperEvents: [],
@@ -124,6 +140,27 @@ function matchConfig(mode: GameMode, mapId: MapId) {
 
 const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
 const tune = (state: GameState, key: keyof typeof PHYSICS_CONFIG) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
+const ballState = (vel: Vec = { x: 0, y: 0 }) => ({
+  pos: { x: FIELD.width / 2, y: FIELD.height / 2 },
+  vel,
+  height: BALL_REST_HEIGHT,
+  verticalVelocity: 0,
+  radius: FIELD.ballRadius,
+  lastTouchedBy: null,
+  spin: { x: 0, y: 0 }
+});
+
+function syncBallVerticalDefaults(state: GameState) {
+  const v = normalizeBallVertical(state.ball.radius, state.ball.height, state.ball.verticalVelocity);
+  state.ball.height = v.height;
+  state.ball.verticalVelocity = v.verticalVelocity;
+}
+
+function syncBabbleVerticalDefaults(babble: BabbleState) {
+  const v = normalizeBabbleVertical(babble.height, babble.verticalVelocity);
+  babble.height = v.height;
+  babble.verticalVelocity = v.verticalVelocity;
+}
 
 export function setMap(state: GameState, mapId: MapId) {
   const selectedMap = normalizeMapId(mapId);
@@ -131,7 +168,7 @@ export function setMap(state: GameState, mapId: MapId) {
   if (state.mapId === selectedMap) return true;
   state.mapId = selectedMap;
   state.config = matchConfig(state.mode, selectedMap);
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
+  state.ball = ballState();
   state.boxes = [];
   state.bumperEvents = [];
   state.rampEvents = [];
@@ -230,7 +267,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.readyPlayerIds = [];
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
+  state.ball = ballState({ x: (rng() - 0.5) * 20, y: 0 });
   buildBabbles(state);
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
@@ -258,7 +295,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.readyPlayerIds = [];
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: (rng() - 0.5) * 20, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
+  state.ball = ballState({ x: (rng() - 0.5) * 20, y: 0 });
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   for (const p of Object.values(state.players)) p.score = 0;
@@ -317,16 +354,19 @@ export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> 
   }
   if (state.phase !== 'resolving') return;
   const dt = dtMs / 1000;
+  syncAirborneDefaults(state);
   expireTurnEffects(state);
   // Authoritative rolling spin uses the pre-step velocity so the visual roll
   // matches the distance the ball is about to travel this tick.
   updateBallSpin(state, dt);
   // Rapier 2D handles integration, damping, arena walls (with open goal
   // mouths), placed blocks and every ball/babble collision.
-  stepPhysics(state, dt);
+  const physicsResult = stepPhysics(state, dt);
   clampAllSpeeds(state);
+  applyBallImpactLift(state, physicsResult.ballBabbleImpacts);
   resolveFieldObjects(state, dt, now);
   resolveCornerBumpers(state, now);
+  integrateAirborne(state, dt);
   applyLowSpeedBrake(state);
   collectBoxesForBabbles(state, now);
   const goal = detectGoal(state);
@@ -510,7 +550,19 @@ function buildBabbles(state: GameState) {
       if (playerIds.length === 0) return;
       state.players[playerIds[i % playerIds.length]].controlledBabbleIds.push(babbleId);
     });
-    for (let i = 0; i < 4; i++) state.babbles.push({ id: ids[i], side, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, radius: FIELD.babbleRadius, effects: [], lastLaunchedTurn: 0 });
+    for (let i = 0; i < 4; i++) {
+      state.babbles.push({
+        id: ids[i],
+        side,
+        pos: { x: 0, y: 0 },
+        vel: { x: 0, y: 0 },
+        height: BABBLE_REST_HEIGHT,
+        verticalVelocity: 0,
+        radius: FIELD.babbleRadius,
+        effects: [],
+        lastLaunchedTurn: 0
+      });
+    }
     placeFormation(state, side);
   }
 }
@@ -534,6 +586,8 @@ function placeFormation(state: GameState, side: PlayerSide) {
     if (!babble) return;
     babble.pos = { x: baseX + offset.x * sign, y: FIELD.height / 2 + offset.y };
     babble.vel = { x: 0, y: 0 };
+    babble.height = BABBLE_REST_HEIGHT;
+    babble.verticalVelocity = 0;
     babble.radius = FIELD.babbleRadius;
   });
 }
@@ -563,6 +617,48 @@ function applyLowSpeedBrake(state: GameState) {
       vel.x *= factor;
       vel.y *= factor;
     }
+  }
+}
+
+function syncAirborneDefaults(state: GameState) {
+  syncBallVerticalDefaults(state);
+  for (const b of state.babbles) syncBabbleVerticalDefaults(b);
+}
+
+function beachBallActive(state: GameState) {
+  return state.beachBallUntilTurn !== null && state.beachBallUntilTurn >= state.turn;
+}
+
+function applyBallImpactLift(state: GameState, impacts: readonly BallImpactObservation[]) {
+  const lift = ballImpactLiftVelocity(impacts, beachBallActive(state));
+  if (lift > 0) state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, lift);
+  for (const impact of impacts) {
+    const hop = Math.max(0, Math.min(BABBLE_RAMP_VERTICAL_VELOCITY * 0.82, (impact.impactSpeed - 260) / 420));
+    if (hop > 0) launchBabbleHop(state, impact.babbleId, hop);
+  }
+}
+
+function launchBallAirborne(state: GameState, verticalVelocity: number) {
+  syncBallVerticalDefaults(state);
+  state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, verticalVelocity);
+}
+
+function launchBabbleHop(state: GameState, babbleId: string | undefined, verticalVelocity: number) {
+  if (!babbleId) return;
+  const babble = state.babbles.find(b => b.id === babbleId);
+  if (!babble) return;
+  syncBabbleVerticalDefaults(babble);
+  babble.verticalVelocity = Math.max(babble.verticalVelocity, verticalVelocity);
+}
+
+function integrateAirborne(state: GameState, dt: number) {
+  const ball = integrateBallVertical(state.ball, state.ball.radius, dt, beachBallActive(state));
+  state.ball.height = ball.height;
+  state.ball.verticalVelocity = ball.verticalVelocity;
+  for (const b of state.babbles) {
+    const next = integrateBabbleVertical(b.height, b.verticalVelocity, dt);
+    b.height = next.height;
+    b.verticalVelocity = next.verticalVelocity;
   }
 }
 
@@ -644,7 +740,11 @@ function resolveFieldObjects(state: GameState, dt: number, now = Date.now()) {
       } else if (o.type === 'stickyGoo') {
         if (dist(m.pos, o.pos) <= 80 + m.radius) { m.vel.x *= 0.93; m.vel.y *= 0.93; }
       } else if (o.type === 'ramp') {
-        if (!m.ghosted && resolveRamp(m.pos, m.vel, m.radius, o.pos, o.angle, rampLaunchSpeed, maxSpeed) === 'launch') pushRampEvent(state, o.pos, m.mover, m.moverId, now);
+        if (!m.ghosted && resolveRamp(m.pos, m.vel, m.radius, o.pos, o.angle, rampLaunchSpeed, maxSpeed) === 'launch') {
+          if (m.mover === 'ball') launchBallAirborne(state, beachBallActive(state) ? BEACH_BALL_RAMP_VERTICAL_VELOCITY : BALL_RAMP_VERTICAL_VELOCITY);
+          else launchBabbleHop(state, m.moverId, BABBLE_RAMP_VERTICAL_VELOCITY);
+          pushRampEvent(state, o.pos, m.mover, m.moverId, now);
+        }
       }
     }
   }
@@ -717,10 +817,19 @@ function safeFieldPos(p: Vec | undefined, fallback: Vec, margin: number): Vec {
 function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, now: number) {
   const target = (use.targetBabbleId && state.babbles.find(b => b.id === use.targetBabbleId)) || state.babbles.find(b => b.side === side);
   switch (use.type) {
-    case 'beachBall': state.ball.radius = FIELD.ballRadius * 1.6; state.beachBallUntilTurn = state.turn; state.ball.vel.x *= 1.25; state.ball.vel.y *= 1.25; break;
+    case 'beachBall':
+      state.ball.radius = FIELD.ballRadius * 1.6;
+      state.beachBallUntilTurn = state.turn;
+      state.ball.height = Math.max(ballRestHeight(state.ball.radius), state.ball.height);
+      state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, BEACH_BALL_RAMP_VERTICAL_VELOCITY * 0.45);
+      state.ball.vel.x *= 1.25;
+      state.ball.vel.y *= 1.25;
+      break;
     case 'moveBall':
       state.ball.pos = safeFieldPos(use.position, { x: FIELD.width / 2, y: FIELD.height / 2 }, state.ball.radius);
       state.ball.vel = { x: 0, y: 0 };
+      state.ball.height = ballRestHeight(state.ball.radius);
+      state.ball.verticalVelocity = 0;
       state.ball.lastTouchedBy = null;
       break;
     case 'swapGoals': state.swappedGoalsUntilTurn = state.turn + 1; break;
@@ -731,7 +840,7 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, n
     case 'block': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'block', owner: side, pos: use.position ?? { x: side === 'left' ? 85 : FIELD.width - 85, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
     case 'bigHead': if (target) { target.radius = FIELD.babbleRadius * 1.45; addBabbleEffect(target, 'bigHead', state.turn + 1); } break;
     case 'ghosted': if (target) addBabbleEffect(target, 'ghosted', state.turn + 1); break;
-    case 'movePlayer': if (target) { target.pos = safeFieldPos(use.position, { x: side === 'left' ? FIELD.width * 0.42 : FIELD.width * 0.58, y: FIELD.height / 2 }, target.radius); target.vel = { x: 0, y: 0 }; } break;
+    case 'movePlayer': if (target) { target.pos = safeFieldPos(use.position, { x: side === 'left' ? FIELD.width * 0.42 : FIELD.width * 0.58, y: FIELD.height / 2 }, target.radius); target.vel = { x: 0, y: 0 }; target.height = BABBLE_REST_HEIGHT; target.verticalVelocity = 0; } break;
   }
 }
 
@@ -751,6 +860,8 @@ function expireTurnEffects(state: GameState) {
   if (state.beachBallUntilTurn !== null && state.beachBallUntilTurn < state.turn) {
     state.beachBallUntilTurn = null;
     state.ball.radius = FIELD.ballRadius;
+    state.ball.height = ballRestHeight(state.ball.radius);
+    state.ball.verticalVelocity = 0;
   }
 }
 
@@ -787,7 +898,7 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
     return;
   }
   recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, ballPosition, now }));
-  state.ball = { pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, vel: { x: 0, y: 0 }, radius: FIELD.ballRadius, lastTouchedBy: null, spin: { x: 0, y: 0 } };
+  state.ball = ballState();
   placeFormation(state, 'left');
   placeFormation(state, 'right');
   endTurn(state, now, rng, true);
@@ -817,8 +928,14 @@ function resetForPlanning(state: GameState, _rng: Rng) {
   // Babble League turns are tabletop turns: pieces stay where physics resolved,
   // but no momentum carries into the next planning turn.
   state.ball.vel = { x: 0, y: 0 };
+  state.ball.height = ballRestHeight(state.ball.radius);
+  state.ball.verticalVelocity = 0;
   state.ball.lastTouchedBy = null;
-  for (const b of state.babbles) b.vel = { x: 0, y: 0 };
+  for (const b of state.babbles) {
+    b.vel = { x: 0, y: 0 };
+    b.height = BABBLE_REST_HEIGHT;
+    b.verticalVelocity = 0;
+  }
   state.bumperEvents = [];
   state.rampEvents = [];
   state.kickoffAt = Date.now();
@@ -826,7 +943,8 @@ function resetForPlanning(state: GameState, _rng: Rng) {
 
 function allSettled(state: GameState) {
   const speeds = [Math.hypot(state.ball.vel.x, state.ball.vel.y), ...state.babbles.map(b => Math.hypot(b.vel.x, b.vel.y))];
-  return speeds.every(s => s < tune(state, 'settleSpeed'));
+  const ballRested = Math.abs(state.ball.verticalVelocity) < 0.05 && state.ball.height <= ballRestHeight(state.ball.radius) + 0.015;
+  return ballRested && speeds.every(s => s < tune(state, 'settleSpeed'));
 }
 
 function anchorPosition(anchor: BoxState['anchor'], rng: Rng): Vec {

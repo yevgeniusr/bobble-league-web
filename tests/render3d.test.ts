@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, MAPS, MAP_IDS, RampEvent } from '../shared/types';
-import { babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, latestRampEvent, mapBumperWorldPositions, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { ballRenderElevation, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, latestRampEvent, mapBumperWorldPositions, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT } from '../shared/airborne';
 
 describe('3D renderer coordinate mapping', () => {
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
@@ -94,6 +95,26 @@ describe('3D renderer coordinate mapping', () => {
     const rollY = ballSpinToRotation({ x: 0, y: 0.8 });
     expect(rollY.x).toBeCloseTo(0.8);
     expect(rollY.z).toBeCloseTo(0);
+  });
+
+  it('renders elevated balls above a turf-anchored shadow', () => {
+    const rest = ballRenderElevation({ radius: FIELD.ballRadius, height: BALL_REST_HEIGHT });
+    const high = ballRenderElevation({ radius: FIELD.ballRadius, height: BALL_REST_HEIGHT + 1.1 });
+
+    expect(rest.centerYAboveTurf).toBeCloseTo(BALL_REST_HEIGHT);
+    expect(rest.shadowYAboveTurf).toBeLessThan(0.04);
+    expect(high.centerYAboveTurf).toBeGreaterThan(rest.centerYAboveTurf + 1);
+    expect(high.shadowYAboveTurf).toBe(rest.shadowYAboveTurf);
+    expect(high.shadowOpacity).toBeLessThan(rest.shadowOpacity);
+    expect(high.shadowRadius).toBeGreaterThan(rest.shadowRadius);
+  });
+
+  it('scales beach-ball render height up to the original giant-ball range', () => {
+    const beach = ballRenderElevation({ radius: FIELD.ballRadius * 1.6, height: BALL_MAX_HEIGHT });
+
+    expect(beach.centerYAboveTurf).toBeCloseTo(BALL_MAX_HEIGHT);
+    expect(beach.shadowRadius).toBeGreaterThan(fieldRadiusToWorld(FIELD.ballRadius * 1.6));
+    expect(beach.shadowOpacity).toBeLessThan(0.1);
   });
 
   it('rolls the ball about the axis perpendicular to its actual travel delta', () => {
