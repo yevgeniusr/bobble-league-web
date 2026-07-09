@@ -148,7 +148,7 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
   for (const b of state.babbles) {
     if (cache.babbles.get(b.id)!.ghosted) continue;
     const gap = Math.hypot(b.pos.x - state.ball.pos.x, b.pos.y - state.ball.pos.y) - b.radius - state.ball.radius;
-    if (gap <= 2) state.ball.lastTouchedBy = b.side; // 2px: restitution separates ~2px/tick
+    if (gap <= 2) recordBallTouch(state, b.id, b.side); // 2px: restitution separates ~2px/tick
   }
   // ...then let fresh impacts this tick take precedence (a fast bounce can
   // separate within one step and would be missed by the overlap scan).
@@ -159,12 +159,18 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
     if (other === null) return;
     const babble = touchable.get(other);
     if (babble) {
-      state.ball.lastTouchedBy = babble.side;
+      recordBallTouch(state, babble.id, babble.side);
       const impact = ballBabbleImpact(ballPreStep, babble);
       if (impact) result.ballBabbleImpacts.push(impact);
     }
   });
   return result;
+}
+
+function recordBallTouch(state: GameState, babbleId: string, side: PlayerSide) {
+  state.ball.lastTouchedBy = side;
+  state.ball.lastTouchedBabbleId = babbleId;
+  state.ball.lastTouchedPlayerId = Object.values(state.players).find(p => p.side === side && p.controlledBabbleIds.includes(babbleId))?.id ?? null;
 }
 
 const isBeachy = (state: GameState) =>

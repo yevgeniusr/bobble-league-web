@@ -1,5 +1,6 @@
 import {
   BIG_BUMPER_RADIUS,
+  BOX_SELECTION_WEIGHTS,
   BOX_TYPE_IDS,
   BOX_TYPES,
   BUMPER_RADIUS,
@@ -27,6 +28,7 @@ import {
   TeamId,
   TurnIntent,
   Vec,
+  normalizeBoxType,
   normalizeMapId
 } from './types';
 import { buildAbilityUsedEvent, buildBoxPickupEvent, buildGoalScoredEvent, recordAnalyticsEvent } from './analytics';
@@ -87,6 +89,18 @@ export const RAMP_LAUNCH_SPEED = PHYSICS_CONFIG.rampLaunchSpeed;
 export { BALL_MAX_HEIGHT, BALL_REST_HEIGHT, ballRestHeight } from './airborne';
 export { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from './types';
 
+const ballAtKickoff = (vel: Vec = { x: 0, y: 0 }) => ({
+  pos: { x: FIELD.width / 2, y: FIELD.height / 2 },
+  vel,
+  height: BALL_REST_HEIGHT,
+  verticalVelocity: 0,
+  radius: FIELD.ballRadius,
+  lastTouchedBy: null,
+  lastTouchedBabbleId: null,
+  lastTouchedPlayerId: null,
+  spin: { x: 0, y: 0 }
+});
+
 export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: MapId = 'stadium'): GameState {
   const length = GAME_LENGTHS[mode];
   const selectedMap = normalizeMapId(mapId);
@@ -109,7 +123,7 @@ export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: 
     formationSelectionTurn: null,
     formations: { left: 'forward', right: 'forward' },
     babbles: [],
-    ball: ballState(),
+    ball: ballAtKickoff(),
     boxes: [],
     fieldObjects: [],
     bumperEvents: [],
@@ -168,7 +182,7 @@ export function setMap(state: GameState, mapId: MapId) {
   if (state.mapId === selectedMap) return true;
   state.mapId = selectedMap;
   state.config = matchConfig(state.mode, selectedMap);
-  state.ball = ballState();
+  state.ball = ballAtKickoff();
   state.boxes = [];
   state.bumperEvents = [];
   state.rampEvents = [];
@@ -267,7 +281,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.readyPlayerIds = [];
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
-  state.ball = ballState({ x: (rng() - 0.5) * 20, y: 0 });
+  state.ball = ballAtKickoff({ x: (rng() - 0.5) * 20, y: 0 });
   buildBabbles(state);
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
@@ -295,7 +309,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.readyPlayerIds = [];
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
-  state.ball = ballState({ x: (rng() - 0.5) * 20, y: 0 });
+  state.ball = ballAtKickoff({ x: (rng() - 0.5) * 20, y: 0 });
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   for (const p of Object.values(state.players)) p.score = 0;
@@ -391,11 +405,16 @@ function beginResolving(state: GameState, now: number) {
   for (const intent of Object.values(state.pendingIntents)) {
     const babble = state.babbles.find(b => b.id === intent.babbleId);
     if (!babble) continue;
+    if (babble.effects.some(e => e.type === 'redCard' && e.untilTurn >= state.turn)) {
+      babble.vel = { x: 0, y: 0 };
+      continue;
+    }
     const boost = babble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
     const bigHead = babble.effects.some(e => e.type === 'bigHead' && e.untilTurn >= state.turn) ? 1.3 : 1;
+    const yellowCard = babble.effects.some(e => e.type === 'yellowCard' && e.untilTurn >= state.turn) ? 0.55 : 1;
     const impulseScale = tune(state, 'babbleImpulseScale');
-    babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * impulseScale;
-    babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * impulseScale;
+    babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * yellowCard * impulseScale;
+    babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * yellowCard * impulseScale;
     babble.lastLaunchedTurn = state.turn;
   }
   state.phase = 'resolving';
@@ -445,15 +464,18 @@ export function collectPowerBox(state: GameState, babble: BabbleState, now = Dat
 export function usePowerPlay(state: GameState, playerId: string, use: PowerPlayUse, now = Date.now()) {
   const player = state.players[playerId];
   if (!player || !player.connected) return false;
+  const type = normalizeBoxType(use.type);
+  if (!type) return false;
+  const canonicalUse: PowerPlayUse = { ...use, type };
   const inventory = state.powerPlayInventories[player.side];
   // players may only spend the box they personally hold (legacy holder-less items stay usable)
-  const itemIndex = inventory.findIndex(item => item.type === use.type && item.availableTurn <= state.turn && (!item.holderId || item.holderId === playerId));
+  const itemIndex = inventory.findIndex(item => item.type === type && item.availableTurn <= state.turn && (!item.holderId || item.holderId === playerId));
   if (itemIndex < 0) return false;
   inventory.splice(itemIndex, 1);
-  applyPowerPlay(state, player.side, use, now);
-  recordAnalyticsEvent(state, buildAbilityUsedEvent(state, playerId, use, now));
+  applyPowerPlay(state, player.side, canonicalUse, now);
+  recordAnalyticsEvent(state, buildAbilityUsedEvent(state, playerId, canonicalUse, now));
   clearReadyVote(state, playerId);
-  pushEvent(state, `${player.name} used ${BOX_TYPES[use.type].label}.`);
+  pushEvent(state, `${player.name} used ${BOX_TYPES[type].label}.`);
   return true;
 }
 
@@ -496,13 +518,14 @@ function ownedRotatable(state: GameState, playerId: string, id: string) {
 
 // Cheat panel: grant exactly one testing copy of a Power Play. Repeated clicks
 // never duplicate an unused cheat item; using it up allows granting again.
-export function grantCheatBox(state: GameState, playerIdOrSide: string | PlayerSide, type: BoxType) {
+export function grantCheatBox(state: GameState, playerIdOrSide: string | PlayerSide, type: PowerPlayUse['type']) {
   const side = playerIdOrSide === 'left' || playerIdOrSide === 'right' ? playerIdOrSide : state.players[playerIdOrSide]?.side;
-  if (!side || !BOX_TYPE_IDS.includes(type)) return false;
-  if (state.powerPlayInventories[side].some(item => item.type === type)) return false;
+  const normalized = normalizeBoxType(type);
+  if (!side || !normalized) return false;
+  if (state.powerPlayInventories[side].some(item => item.type === normalized)) return false;
   const holderId = playerIdOrSide === 'left' || playerIdOrSide === 'right' ? undefined : playerIdOrSide;
-  state.powerPlayInventories[side].push({ type, availableTurn: state.turn, holderId });
-  pushEvent(state, `CHEAT MODE: ${side} granted one ${BOX_TYPES[type].label} for testing. All users are warned.`);
+  state.powerPlayInventories[side].push({ type: normalized, availableTurn: state.turn, holderId });
+  pushEvent(state, `CHEAT MODE: ${side} granted one ${BOX_TYPES[normalized].label} for testing. All users are warned.`);
   return true;
 }
 
@@ -526,7 +549,7 @@ export function redactStateFor(state: GameState, viewerId: string): GameState {
 export function spawnBox(state: GameState, now = Date.now(), rng: Rng = Math.random): BoxState {
   const anchors = state.config.boxSpawnAnchors.length ? state.config.boxSpawnAnchors : mapOf(state).layout.boxSpawnAnchors;
   const anchor = anchors[Math.floor(rng() * anchors.length)] ?? 'topMid';
-  const type = BOX_TYPE_IDS[Math.floor(rng() * BOX_TYPE_IDS.length)] ?? 'beachBall';
+  const type = weightedBoxType(rng);
   const box: BoxState = {
     id: `box-${state.nextBoxId++}`,
     type,
@@ -538,6 +561,16 @@ export function spawnBox(state: GameState, now = Date.now(), rng: Rng = Math.ran
   state.boxes = [box];
   pushEvent(state, `Mystery box spawned on the ${anchor === 'topMid' ? 'top' : 'bottom'} lane.`);
   return box;
+}
+
+function weightedBoxType(rng: Rng): BoxType {
+  const total = BOX_TYPE_IDS.reduce((sum, type) => sum + BOX_SELECTION_WEIGHTS[type], 0);
+  let roll = rng() * total;
+  for (const type of BOX_TYPE_IDS) {
+    roll -= BOX_SELECTION_WEIGHTS[type];
+    if (roll <= 0) return type;
+  }
+  return BOX_TYPE_IDS.at(-1) ?? 'beachBall';
 }
 
 function buildBabbles(state: GameState) {
@@ -577,6 +610,7 @@ function placeFormation(state: GameState, side: PlayerSide) {
     option: [{ x: 80, y: -120 }, { x: 80, y: 0 }, { x: 80, y: 120 }, { x: -35, y: 0 }],
     slant: [{ x: 95, y: -135 }, { x: 45, y: -45 }, { x: -5, y: 45 }, { x: -55, y: 135 }],
     zone: [{ x: 40, y: -135 }, { x: 80, y: -45 }, { x: 80, y: 45 }, { x: 40, y: 135 }],
+    wall: [{ x: 0, y: -135 }, { x: 0, y: -45 }, { x: 0, y: 45 }, { x: 0, y: 135 }],
     box: [{ x: 35, y: -95 }, { x: 105, y: -95 }, { x: 35, y: 95 }, { x: 105, y: 95 }],
     rush: [{ x: 110, y: -80 }, { x: 110, y: 80 }, { x: -5, y: -80 }, { x: -5, y: 80 }]
   };
@@ -798,7 +832,7 @@ function collectPowerBoxWithBall(state: GameState, now: number) {
   if (!side) return;
   const index = state.boxes.findIndex(box => dist(box.pos, state.ball.pos) <= state.ball.radius + FIELD.boxSize / 2);
   if (index < 0) return;
-  const holder = freeHolderFor(state, side);
+  const holder = freeHolderFor(state, side, state.ball.lastTouchedBabbleId ?? undefined);
   if (!holder) return;
   const [box] = state.boxes.splice(index, 1);
   const replaced = state.powerPlayInventories[side].find(i => i.holderId === holder.id);
@@ -831,6 +865,8 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, n
       state.ball.height = ballRestHeight(state.ball.radius);
       state.ball.verticalVelocity = 0;
       state.ball.lastTouchedBy = null;
+      state.ball.lastTouchedBabbleId = null;
+      state.ball.lastTouchedPlayerId = null;
       break;
     case 'swapGoals': state.swappedGoalsUntilTurn = state.turn + 1; break;
     case 'bigBumpers': state.bigBumpersUntilTurn = state.turn; break;
@@ -840,6 +876,8 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, n
     case 'block': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'block', owner: side, pos: use.position ?? { x: side === 'left' ? 85 : FIELD.width - 85, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
     case 'bigHead': if (target) { target.radius = FIELD.babbleRadius * 1.45; addBabbleEffect(target, 'bigHead', state.turn + 1); } break;
     case 'ghosted': if (target) addBabbleEffect(target, 'ghosted', state.turn + 1); break;
+    case 'yellowCard': if (target) addBabbleEffect(target, 'yellowCard', state.turn); break;
+    case 'redCard': if (target) { target.vel = { x: 0, y: 0 }; target.height = BABBLE_REST_HEIGHT; target.verticalVelocity = 0; addBabbleEffect(target, 'redCard', state.turn); addBabbleEffect(target, 'ghosted', state.turn); } break;
     case 'movePlayer': if (target) { target.pos = safeFieldPos(use.position, { x: side === 'left' ? FIELD.width * 0.42 : FIELD.width * 0.58, y: FIELD.height / 2 }, target.radius); target.vel = { x: 0, y: 0 }; target.height = BABBLE_REST_HEIGHT; target.verticalVelocity = 0; } break;
   }
 }
@@ -885,6 +923,8 @@ function detectGoal(state: GameState): PlayerSide | null {
 
 function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rng: Rng) {
   const lastTouchedBy = state.ball.lastTouchedBy;
+  const lastTouchedBabbleId = state.ball.lastTouchedBabbleId;
+  const lastTouchedPlayerId = state.ball.lastTouchedPlayerId;
   const ballPosition = { ...state.ball.pos };
   state.score[scorer] += 1;
   state.readyPlayerIds = [];
@@ -894,11 +934,11 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
     state.phase = 'finished';
     state.winner = scorer;
     pushEvent(state, `${scorer} wins first-to-${state.mode}!`);
-    recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, ballPosition, now }));
+    recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, lastTouchedBabbleId, lastTouchedPlayerId, ballPosition, now }));
     return;
   }
-  recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, ballPosition, now }));
-  state.ball = ballState();
+  recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, lastTouchedBabbleId, lastTouchedPlayerId, ballPosition, now }));
+  state.ball = ballAtKickoff();
   placeFormation(state, 'left');
   placeFormation(state, 'right');
   endTurn(state, now, rng, true);
@@ -931,6 +971,8 @@ function resetForPlanning(state: GameState, _rng: Rng) {
   state.ball.height = ballRestHeight(state.ball.radius);
   state.ball.verticalVelocity = 0;
   state.ball.lastTouchedBy = null;
+  state.ball.lastTouchedBabbleId = null;
+  state.ball.lastTouchedPlayerId = null;
   for (const b of state.babbles) {
     b.vel = { x: 0, y: 0 };
     b.height = BABBLE_REST_HEIGHT;

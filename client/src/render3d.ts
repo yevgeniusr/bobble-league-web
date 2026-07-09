@@ -134,6 +134,12 @@ export function babbleGhosted(effects: readonly ActiveEffect[] | undefined, turn
   return !!effects?.some(e => e.type === 'ghosted' && e.untilTurn >= turn);
 }
 
+export function babbleCardEffect(effects: readonly ActiveEffect[] | undefined, turn: number): 'yellowCard' | 'redCard' | null {
+  if (effects?.some(e => e.type === 'redCard' && e.untilTurn >= turn)) return 'redCard';
+  if (effects?.some(e => e.type === 'yellowCard' && e.untilTurn >= turn)) return 'yellowCard';
+  return null;
+}
+
 export const GOAL_COLORS = { left: 0x4a5ad6, right: 0xf05d48 } as const;
 export function goalDisplayColors(swapped: boolean): { left: number; right: number } {
   return swapped ? { left: GOAL_COLORS.right, right: GOAL_COLORS.left } : { left: GOAL_COLORS.left, right: GOAL_COLORS.right };
@@ -604,6 +610,20 @@ export class BabbleLeague3DRenderer {
       const tag = this.text('👻 GHOSTED', 24, '#e9d5ff');
       tag.position.set(w.x, TURF_Y + 2.65 + bobY, w.z);
       this.dynamic.add(tag);
+    }
+    const card = babbleCardEffect(b.effects, state.turn);
+    if (card) {
+      const red = card === 'redCard';
+      const color = red ? 0xef4444 : 0xfacc15;
+      const label = red ? 'RED CARD' : 'YELLOW CARD';
+      const marker = new THREE.Group();
+      marker.position.set(w.x, TURF_Y + 2.95 + bobY, w.z);
+      marker.rotation.y = Math.sin(t * 1.8) * 0.25;
+      this.dynamic.add(marker);
+      this.mesh(marker, new THREE.BoxGeometry(0.38, 0.56, 0.04), this.mat(color, 0.32, { emissive: red ? 0x4a0808 : 0x4a3a08 }), 0, 0, 0);
+      const text = this.text(label, 20, red ? '#fecaca' : '#fef3c7');
+      text.position.set(w.x, TURF_Y + 3.38 + bobY, w.z);
+      this.dynamic.add(text);
     }
     // team emoji badge on the chest (hidden while ghosted so the see-through body reads clearly)
     if (!ghosted) {

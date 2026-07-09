@@ -34,32 +34,75 @@ export const GAME_LENGTHS: Record<GameMode, { length: GameLength; maxTurns: 30 |
   5: { length: 'champion', maxTurns: 150 }
 };
 
-export type FormationId = 'forward' | 'option' | 'slant' | 'zone' | 'box' | 'rush';
+export type FormationId = 'forward' | 'option' | 'slant' | 'zone' | 'wall' | 'box' | 'rush';
 export const FORMATIONS: Record<FormationId, { label: string; description: string }> = {
   forward: { label: 'Forward', description: 'Four attackers press high.' },
   option: { label: 'Option', description: 'Three attackers and a safety.' },
   slant: { label: 'Slant', description: 'Aggressive diagonal push toward boxes.' },
   zone: { label: 'Zone', description: 'Balanced lanes with one defender.' },
+  wall: { label: 'Wall', description: 'Four defenders form a tight vertical wall.' },
   box: { label: 'Box', description: 'Four defenders packed near goal.' },
   rush: { label: 'Rush', description: 'Two attackers and two defenders.' }
 };
 export const FORMATION_IDS = Object.keys(FORMATIONS) as FormationId[];
 
 export const BOX_TYPES = {
-  beachBall: { label: 'Beach Ball', color: '#facc15', category: 'instant', durationTurns: 1, description: 'Enlarge and lighten the ball for this turn.' },
-  moveBall: { label: 'Move Ball', color: '#fb923c', category: 'instant', durationTurns: 0, description: 'Teleport the ball to any spot you click.' },
-  swapGoals: { label: 'Swap Goals', color: '#e879f9', category: 'instant', durationTurns: 1, description: 'Flip scoring direction for one turn.' },
-  bigBumpers: { label: 'Big Bumpers', color: '#f97316', category: 'instant', durationTurns: 1, description: 'Corner bumpers grow stronger for one turn.' },
-  boost: { label: 'Boost', color: '#38bdf8', category: 'field', durationTurns: 1, description: 'Place a directional boost pad.' },
-  stickyGoo: { label: 'Sticky Goo', color: '#84cc16', category: 'field', durationTurns: 1, description: 'Place a sticky slow zone.' },
-  ramp: { label: 'Ramp', color: '#a78bfa', category: 'field', durationTurns: 1, description: 'Place a ramp deflector.' },
-  block: { label: 'Block', color: '#94a3b8', category: 'field', durationTurns: 1, description: 'Place a temporary wall.' },
-  bigHead: { label: 'Big Head', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead grows and kicks harder.' },
-  ghosted: { label: 'Ghosted', color: '#d8b4fe', category: 'babble', durationTurns: 1, description: 'Target babblehead passes through babbleheads and boxes.' },
-  movePlayer: { label: 'Move Player', color: '#fde047', category: 'babble', durationTurns: 0, description: 'Move a target babblehead back toward center field.' }
+  beachBall: { label: 'Beach Ball', targetId: 'giantball', color: '#facc15', category: 'instant', durationTurns: 1, description: 'Enlarge and lighten the ball for this turn.' },
+  moveBall: { label: 'Move Ball', targetId: 'moveball', color: '#fb923c', category: 'instant', durationTurns: 0, description: 'Teleport the ball to any spot you click.' },
+  swapGoals: { label: 'Swap Goals', targetId: 'goalswap', color: '#e879f9', category: 'instant', durationTurns: 1, description: 'Flip scoring direction for one turn.' },
+  bigBumpers: { label: 'Big Bumpers', targetId: 'bumppadboost', color: '#f97316', category: 'instant', durationTurns: 1, description: 'Corner bumpers grow stronger for one turn.' },
+  boost: { label: 'Boost', targetId: 'boost', color: '#38bdf8', category: 'field', durationTurns: 1, description: 'Place a directional boost pad.' },
+  stickyGoo: { label: 'Sticky Goo', targetId: 'sticky', color: '#84cc16', category: 'field', durationTurns: 1, description: 'Place a sticky slow zone.' },
+  ramp: { label: 'Ramp', targetId: 'ramp', color: '#a78bfa', category: 'field', durationTurns: 1, description: 'Place a ramp deflector.' },
+  block: { label: 'Block', targetId: 'block', color: '#94a3b8', category: 'field', durationTurns: 1, description: 'Place a temporary wall.' },
+  bigHead: { label: 'Big Head', targetId: 'bighead', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead grows and kicks harder.' },
+  ghosted: { label: 'Ghosted', targetId: 'ghost', color: '#d8b4fe', category: 'babble', durationTurns: 1, description: 'Target babblehead passes through babbleheads and boxes.' },
+  movePlayer: { label: 'Move Player', targetId: 'moveplayer', color: '#fde047', category: 'babble', durationTurns: 0, description: 'Move a target babblehead back toward center field.' },
+  yellowCard: { label: 'Yellow Card', targetId: 'yellowcard', color: '#facc15', category: 'babble', durationTurns: 1, description: 'Target babblehead gets a weak launch for one turn.' },
+  redCard: { label: 'Red Card', targetId: 'redcard', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead is stunned and ghosted for one turn.' }
 } as const;
 export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
+
+export const BOX_TYPE_ALIASES = {
+  giantball: 'beachBall',
+  bumppadboost: 'bigBumpers',
+  sticky: 'stickyGoo',
+  ghost: 'ghosted',
+  goalswap: 'swapGoals',
+  bighead: 'bigHead',
+  yellowcard: 'yellowCard',
+  redcard: 'redCard'
+} as const satisfies Record<string, BoxType>;
+export type BoxTypeAlias = keyof typeof BOX_TYPE_ALIASES;
+export type BoxTypeInput = BoxType | BoxTypeAlias;
+
+export const BOX_SELECTION_WEIGHTS: Record<BoxType, number> = {
+  beachBall: 130,
+  moveBall: 80,
+  swapGoals: 65,
+  bigBumpers: 126,
+  boost: 120,
+  stickyGoo: 129,
+  ramp: 140,
+  block: 129,
+  bigHead: 109,
+  ghosted: 129,
+  movePlayer: 80,
+  yellowCard: 140,
+  redCard: 123
+};
+
+export function normalizeBoxType(type: unknown): BoxType | null {
+  if (BOX_TYPE_IDS.includes(type as BoxType)) return type as BoxType;
+  if (typeof type !== 'string') return null;
+  return BOX_TYPE_ALIASES[type.toLowerCase() as BoxTypeAlias] ?? null;
+}
+
+export function boxTargetPowerId(type: unknown): string | null {
+  const normalized = normalizeBoxType(type);
+  return normalized ? BOX_TYPES[normalized].targetId : null;
+}
 
 export type Vec = { x: number; y: number };
 export type BoxAnchor = 'topMid' | 'bottomMid' | 'midLeft' | 'midRight';
@@ -446,6 +489,8 @@ export type BallState = {
   verticalVelocity: number;
   radius: number;
   lastTouchedBy?: PlayerSide | null;
+  lastTouchedBabbleId?: string | null;
+  lastTouchedPlayerId?: string | null;
   spin?: Vec;
 };
 export type BoxState = { id: string; type: BoxType; anchor: BoxAnchor; pos: Vec; spawnedAt: number; untilTurn?: number };
@@ -460,7 +505,7 @@ export type RampEvent = { pos: Vec; at: number; mover: 'ball' | 'babble'; moverI
 export type RoomPhase = 'lobby' | 'formationSelect' | 'planning' | 'resolving' | 'goal' | 'finished';
 export type ChatEvent = { at: number; message: string };
 export type TurnIntent = { babbleId: string; aimAngle: number; impulse: number };
-export type PowerPlayUse = { type: BoxType; targetBabbleId?: string; position?: Vec; angle?: number };
+export type PowerPlayUse = { type: BoxTypeInput; targetBabbleId?: string; position?: Vec; angle?: number };
 // holderId: the specific player carrying this box. Each player may hold at most
 // one box (server-enforced); teammates can see holders, opponents cannot.
 export type InventoryItem = { type: BoxType; availableTurn: number; holderId?: string };
@@ -525,7 +570,7 @@ export type ClientToServerEvents = {
   // Dev/test-only hooks (window.__babbleDev). Rejected by production servers
   // unless ENABLE_CHEATS=true.
   'player:cheatBoxes': () => void;
-  'player:cheatBox': (payload: { type: BoxType }) => void;
+  'player:cheatBox': (payload: { type: BoxTypeInput }) => void;
   'room:leave': () => void;
   'game:start': () => void;
   'game:reset': (mode: GameMode) => void;

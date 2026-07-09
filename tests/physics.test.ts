@@ -132,6 +132,8 @@ describe('Rapier physics: walls and body collisions', () => {
     expect(s.ball.vel.x).toBeGreaterThan(300); // light ball rockets ahead
     expect(s.ball.vel.x).toBeGreaterThan(b.vel.x); // faster than the babble
     expect(s.ball.lastTouchedBy).toBe('left');
+    expect(s.ball.lastTouchedBabbleId).toBe('left-1');
+    expect(s.ball.lastTouchedPlayerId).toBe('l');
   });
 
   it('keeps crediting a dribbling babble after attribution is wiped mid-contact', () => {
@@ -147,10 +149,16 @@ describe('Rapier physics: walls and body collisions', () => {
     s.ball.vel = { x: 0, y: 0 };
     run(s, 1);
     expect(s.ball.lastTouchedBy).toBe('right'); // first touch registered
+    expect(s.ball.lastTouchedBabbleId).toBe('right-1');
+    expect(s.ball.lastTouchedPlayerId).toBe('r');
     s.ball.lastTouchedBy = null; // wiped mid-dribble
+    s.ball.lastTouchedBabbleId = null;
+    s.ball.lastTouchedPlayerId = null;
     run(s, 10, 1033, () => { b.vel = { x: 300, y: 0 }; }); // keep pressing
     expect(s.ball.vel.x).toBeGreaterThan(50); // ball is being pushed along
     expect(s.ball.lastTouchedBy).toBe('right'); // dribble re-credited
+    expect(s.ball.lastTouchedBabbleId).toBe('right-1');
+    expect(s.ball.lastTouchedPlayerId).toBe('r');
   });
 
   it('bounces babbleheads off each other without overlap', () => {

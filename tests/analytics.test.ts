@@ -45,6 +45,7 @@ describe('Xtremepush gameplay analytics payloads', () => {
       playerSide: 'left',
       playerTeam: 'pigs',
       abilityType: 'boost',
+      targetPowerId: 'boost',
       holderId: 'left-socket',
       position: { x: 500, y: 300 },
       angle: 0.25,
@@ -81,10 +82,12 @@ describe('Xtremepush gameplay analytics payloads', () => {
       pickupMethod: 'babble',
       boxId: 'box-rich',
       abilityType: 'bigHead',
+      targetPowerId: 'bighead',
       boxAnchor: 'topMid',
       position: babble.pos,
       availableTurn: 2,
-      replacedAbilityType: 'ghosted'
+      replacedAbilityType: 'ghosted',
+      replacedTargetPowerId: 'ghost'
     });
   });
 
@@ -98,6 +101,8 @@ describe('Xtremepush gameplay analytics payloads', () => {
     state.ball.pos = { x: FIELD.width + FIELD.goalDepth, y: FIELD.goalY + FIELD.goalHeight / 2 };
     state.ball.vel = { x: 20, y: 0 };
     state.ball.lastTouchedBy = 'right';
+    state.ball.lastTouchedBabbleId = 'right-1';
+    state.ball.lastTouchedPlayerId = 'right-socket';
 
     stepGame(state, {}, 4000, seq([0.5]));
 
@@ -109,6 +114,9 @@ describe('Xtremepush gameplay analytics payloads', () => {
       concedingSide: 'right',
       lastTouchedBy: 'right',
       lastTouchedTeam: 'tigers',
+      lastTouchedBabbleId: 'right-1',
+      lastTouchedPlayerId: 'right-socket',
+      lastTouchedPlayerTeam: 'tigers',
       score: { left: 1, right: 0 },
       phase: 'finished',
       winner: 'left'
