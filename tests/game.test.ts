@@ -29,7 +29,7 @@ import {
   stepGame,
   usePowerPlay
 } from '../shared/game';
-import { BOX_TYPE_IDS, BUMPERS, FIELD, MAPS, MAP_IDS, MapId } from '../shared/types';
+import { BOX_SELECTION_WEIGHTS, BOX_TYPE_IDS, BOX_TYPES, BUMPERS, FIELD, FORMATION_IDS, FORMATIONS, MAPS, MAP_IDS, MapId, normalizeBoxType } from '../shared/types';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
@@ -118,6 +118,22 @@ describe('classic Babble League shared rules', () => {
     expect(s.babbles.filter(b => b.side === 'right')).toHaveLength(4);
     expect(s.babbles.find(b => b.id === 'left-1')?.pos.x).toBeGreaterThan(250);
     expect(s.babbles.find(b => b.id === 'right-1')?.pos.x).toBeGreaterThan(FIELD.width - 260);
+  });
+
+  it('exposes the original wall formation while preserving box and rush compatibility', () => {
+    const s = createInitialState('WALL', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+
+    expect(FORMATION_IDS).toEqual(expect.arrayContaining(['wall', 'box', 'rush']));
+    expect(FORMATIONS.wall.label).toBe('Wall');
+    expect(applyFormation(s, 'left', 'wall')).toBe(true);
+    startGame(s, seq([0.5]));
+
+    const left = s.babbles.filter(b => b.side === 'left').sort((a, b) => a.id.localeCompare(b.id));
+    expect(s.formations.left).toBe('wall');
+    expect(new Set(left.map(b => Math.round(b.pos.x / 5) * 5)).size).toBe(1);
+    expect(left.map(b => b.pos.y)).toEqual([...left.map(b => b.pos.y)].sort((a, b) => a - b));
   });
 
   it('uses drag/launch intents and resolves turn-based physics back to planning', () => {
@@ -407,13 +423,40 @@ describe('classic Babble League shared rules', () => {
     expect(s.players.r.team).toBe('tigers');
   });
 
-  it('defines all eleven researched power plays as box types', () => {
+  it('defines original-log power aliases and card powers as box type metadata', () => {
     expect(BOX_TYPE_IDS).toEqual(expect.arrayContaining([
       'beachBall', 'moveBall', 'swapGoals', 'bigBumpers',
       'boost', 'stickyGoo', 'ramp', 'block',
-      'bigHead', 'ghosted', 'movePlayer'
+      'bigHead', 'ghosted', 'movePlayer',
+      'yellowCard', 'redCard'
     ]));
-    expect(BOX_TYPE_IDS).toHaveLength(11);
+    expect(BOX_TYPES.beachBall.targetId).toBe('giantball');
+    expect(BOX_TYPES.bigBumpers.targetId).toBe('bumppadboost');
+    expect(BOX_TYPES.stickyGoo.targetId).toBe('sticky');
+    expect(BOX_TYPES.ghosted.targetId).toBe('ghost');
+    expect(BOX_TYPES.swapGoals.targetId).toBe('goalswap');
+    expect(BOX_TYPES.bigHead.targetId).toBe('bighead');
+    expect(BOX_TYPES.yellowCard.targetId).toBe('yellowcard');
+    expect(BOX_TYPES.redCard.targetId).toBe('redcard');
+    expect(BOX_TYPES.yellowCard.category).toBe('babble');
+    expect(BOX_TYPES.redCard.category).toBe('babble');
+    expect(normalizeBoxType('giantball')).toBe('beachBall');
+    expect(normalizeBoxType('bumppadboost')).toBe('bigBumpers');
+    expect(normalizeBoxType('sticky')).toBe('stickyGoo');
+    expect(normalizeBoxType('ghost')).toBe('ghosted');
+    expect(normalizeBoxType('goalswap')).toBe('swapGoals');
+    expect(normalizeBoxType('bighead')).toBe('bigHead');
+    expect(normalizeBoxType('yellowcard')).toBe('yellowCard');
+    expect(normalizeBoxType('redcard')).toBe('redCard');
+    expect(BOX_TYPE_IDS).toHaveLength(13);
+  });
+
+  it('uses original-log-inspired box selection weights', () => {
+    expect(BOX_SELECTION_WEIGHTS.swapGoals).toBeLessThan(BOX_SELECTION_WEIGHTS.ramp);
+    expect(BOX_SELECTION_WEIGHTS.swapGoals).toBeLessThan(BOX_SELECTION_WEIGHTS.yellowCard);
+    expect(BOX_SELECTION_WEIGHTS.ramp).toBeGreaterThanOrEqual(BOX_SELECTION_WEIGHTS.boost);
+    expect(BOX_SELECTION_WEIGHTS.yellowCard).toBeGreaterThanOrEqual(BOX_SELECTION_WEIGHTS.boost);
+    expect(BOX_SELECTION_WEIGHTS.redCard).toBeGreaterThan(0);
   });
 
   it('distributes four babbles across four teammates and resolves when all eight are aimed', () => {
@@ -591,6 +634,61 @@ describe('classic Babble League shared rules', () => {
     s.powerPlayInventories.left.push({ type: 'bigBumpers', availableTurn: 1 });
     expect(usePowerPlay(s, 'l', { type: 'bigBumpers' }, 1000)).toBe(true);
     expect(s.bigBumpersUntilTurn).toBe(1);
+  });
+
+  it('accepts target-style power ids as aliases for server-side use', () => {
+    const s = createInitialState('ALIAS', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+
+    s.powerPlayInventories.left.push({ type: 'beachBall', availableTurn: 1, holderId: 'l' });
+    expect(usePowerPlay(s, 'l', { type: 'giantball' as never }, 1000)).toBe(true);
+    expect(s.beachBallUntilTurn).toBe(1);
+
+    s.powerPlayInventories.left.push({ type: 'bigBumpers', availableTurn: 1, holderId: 'l' });
+    expect(usePowerPlay(s, 'l', { type: 'bumppadboost' as never }, 1100)).toBe(true);
+    expect(s.bigBumpersUntilTurn).toBe(1);
+  });
+
+  it('yellow card weakens a targeted babble launch for one turn', () => {
+    const run = (carded: boolean) => {
+      const s = createInitialState(carded ? 'YELLOW' : 'NOCARD', 3);
+      addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+      addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+      startGame(s, seq([0.5]));
+      if (carded) {
+        s.powerPlayInventories.left.push({ type: 'yellowCard', availableTurn: 1, holderId: 'l' });
+        expect(usePowerPlay(s, 'l', { type: 'yellowcard' as never, targetBabbleId: 'right-2' }, 1000)).toBe(true);
+        expect(s.babbles.find(b => b.id === 'right-2')?.effects.map(e => e.type)).toContain('yellowCard');
+      }
+      expect(launchBabble(s, 'r', { babbleId: 'right-2', aimAngle: Math.PI, impulse: 500 }, 1001)).toBe(true);
+      expect(setPlayerReady(s, 'l', 1002)).toBe(true);
+      expect(setPlayerReady(s, 'r', 1003)).toBe(true);
+      return Math.abs(s.babbles.find(b => b.id === 'right-2')!.vel.x);
+    };
+
+    expect(run(true)).toBeLessThan(run(false) * 0.7);
+  });
+
+  it('red card stuns a targeted babble and marks it ghosted for clear feedback', () => {
+    const s = createInitialState('RED', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'redCard', availableTurn: 1, holderId: 'l' });
+
+    expect(usePowerPlay(s, 'l', { type: 'redcard' as never, targetBabbleId: 'right-2' }, 1000)).toBe(true);
+    expect(s.babbles.find(b => b.id === 'right-2')?.effects.map(e => e.type)).toEqual(expect.arrayContaining(['redCard', 'ghosted']));
+    expect(s.events.some(e => /red card/i.test(e.message))).toBe(true);
+
+    expect(launchBabble(s, 'r', { babbleId: 'right-2', aimAngle: Math.PI, impulse: 500 }, 1001)).toBe(true);
+    expect(setPlayerReady(s, 'l', 1002)).toBe(true);
+    expect(setPlayerReady(s, 'r', 1003)).toBe(true);
+
+    const target = s.babbles.find(b => b.id === 'right-2')!;
+    expect(target.vel).toEqual({ x: 0, y: 0 });
+    expect(target.lastLaunchedTurn).toBe(0);
   });
 
   it('placed rotatable obstacles keep their angle in state and rotate only for their owner', () => {

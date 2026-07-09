@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
-import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
+import { BOX_TYPE_IDS, BOX_TYPES, BoxType, BoxTypeInput, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec, normalizeBoxType } from '../../shared/types';
 import { trackAnalyticsEvent } from './analytics';
 import { AudioSettings, audioManager, loadAudioSettings, saveAudioSettings } from './audio';
 import { buildMatchEndSummary } from './matchEnd';
@@ -28,10 +28,11 @@ const devtoolsEnabled =
 if (devtoolsEnabled) {
   (window as unknown as { __babbleDev?: unknown }).__babbleDev = {
     listTypes: () => [...BOX_TYPE_IDS],
-    grantBox: (type: BoxType) => {
-      if (!BOX_TYPE_IDS.includes(type)) throw new Error(`Unknown box type "${type}". Try listTypes().`);
-      socket.emit('player:cheatBox', { type });
-      return `requested ${type} (server may reject; the whole room is warned)`;
+    grantBox: (type: BoxTypeInput) => {
+      const normalized = normalizeBoxType(type);
+      if (!normalized) throw new Error(`Unknown box type "${type}". Try listTypes().`);
+      socket.emit('player:cheatBox', { type: normalized });
+      return `requested ${normalized} (server may reject; the whole room is warned)`;
     },
     grantAll: () => {
       socket.emit('player:cheatBoxes');
@@ -177,11 +178,12 @@ function AnimeCatMascot() {
   </div>;
 }
 
-const POWER_PREVIEW: readonly BoxType[] = ['beachBall', 'bigBumpers', 'boost', 'stickyGoo', 'ghosted', 'swapGoals'];
+const POWER_PREVIEW: readonly BoxType[] = ['beachBall', 'ramp', 'yellowCard', 'redCard', 'bigBumpers', 'swapGoals'];
 // One icon per Power Play, reused across the lobby preview, HUD buttons and hints.
 const POWER_ICONS: Record<BoxType, string> = {
   beachBall: '🏖', moveBall: '🎯', swapGoals: '🔄', bigBumpers: '💥', boost: '⚡',
-  stickyGoo: '🟢', ramp: '⛰️', block: '🧱', bigHead: '🗣️', ghosted: '👻', movePlayer: '🚚'
+  stickyGoo: '🟢', ramp: '⛰️', block: '🧱', bigHead: '🗣️', ghosted: '👻', movePlayer: '🚚',
+  yellowCard: '🟨', redCard: '🟥'
 };
 
 function ArenaPreview() {
@@ -226,9 +228,6 @@ function AbilityIcon({ type }: { type: BoxType }) {
   return <img className="abilityImg" src={`/assets/abilities/${type}.png`} alt="" draggable={false} onError={() => setFailed(true)}/>;
 }
 
-const PLACEABLE: readonly BoxType[] = ['boost', 'stickyGoo', 'ramp', 'block'];
-const TARGET_BABBLE: readonly BoxType[] = ['bigHead', 'ghosted', 'movePlayer'];
-
 // Ability flow: nothing is targetable until an ability button is clicked.
 // place  -> drag a ghost onto the field (Esc cancels)
 // babble -> click a babblehead to apply immediately (Esc/Cancel aborts)
@@ -236,9 +235,9 @@ const TARGET_BABBLE: readonly BoxType[] = ['bigHead', 'ghosted', 'movePlayer'];
 // instant-> applies on button click
 export type AbilityAim = { type: BoxType; mode: 'babble' | 'point' };
 export function abilityMode(type: BoxType): 'place' | 'babble' | 'point' | 'instant' {
-  if (PLACEABLE.includes(type)) return 'place';
-  if (TARGET_BABBLE.includes(type)) return 'babble';
   if (type === 'moveBall') return 'point';
+  if (BOX_TYPES[type].category === 'field') return 'place';
+  if (BOX_TYPES[type].category === 'babble') return 'babble';
   return 'instant';
 }
 

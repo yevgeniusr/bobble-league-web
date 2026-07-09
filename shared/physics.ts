@@ -105,7 +105,7 @@ export function stepPhysics(state: GameState, dt: number) {
   world.timestep = dt;
   syncBlocks(state, cache);
   syncBall(state, cache);
-  const touchable = new Map<number, PlayerSide>();
+  const touchable = new Map<number, { side: PlayerSide; babbleId: string }>();
   for (const b of state.babbles) syncBabble(state, cache, b, touchable);
 
   world.step(events);
@@ -134,7 +134,7 @@ export function stepPhysics(state: GameState, dt: number) {
   for (const b of state.babbles) {
     if (cache.babbles.get(b.id)!.ghosted) continue;
     const gap = Math.hypot(b.pos.x - state.ball.pos.x, b.pos.y - state.ball.pos.y) - b.radius - state.ball.radius;
-    if (gap <= 2) state.ball.lastTouchedBy = b.side; // 2px: restitution separates ~2px/tick
+    if (gap <= 2) recordBallTouch(state, b.id, b.side); // 2px: restitution separates ~2px/tick
   }
   // ...then let fresh impacts this tick take precedence (a fast bounce can
   // separate within one step and would be missed by the overlap scan).
@@ -143,9 +143,15 @@ export function stepPhysics(state: GameState, dt: number) {
     if (!started) return;
     const other = h1 === ballHandle ? h2 : h2 === ballHandle ? h1 : null;
     if (other === null) return;
-    const side = touchable.get(other);
-    if (side) state.ball.lastTouchedBy = side;
+    const touch = touchable.get(other);
+    if (touch) recordBallTouch(state, touch.babbleId, touch.side);
   });
+}
+
+function recordBallTouch(state: GameState, babbleId: string, side: PlayerSide) {
+  state.ball.lastTouchedBy = side;
+  state.ball.lastTouchedBabbleId = babbleId;
+  state.ball.lastTouchedPlayerId = Object.values(state.players).find(p => p.side === side && p.controlledBabbleIds.includes(babbleId))?.id ?? null;
 }
 
 const isBeachy = (state: GameState) =>
@@ -247,7 +253,7 @@ function syncBabble(
   state: GameState,
   cache: PhysicsCache,
   babble: GameState['babbles'][number],
-  touchable: Map<number, PlayerSide>
+  touchable: Map<number, { side: PlayerSide; babbleId: string }>
 ) {
   const entry = cache.babbles.get(babble.id)!;
   entry.body.setTranslation({ x: babble.pos.x / PX_PER_METER, y: babble.pos.y / PX_PER_METER }, true);
@@ -262,7 +268,7 @@ function syncBabble(
     entry.collider.setRadius(babble.radius / PX_PER_METER);
     entry.radius = babble.radius;
   }
-  if (!ghosted) touchable.set(entry.collider.handle, babble.side);
+  if (!ghosted) touchable.set(entry.collider.handle, { side: babble.side, babbleId: babble.id });
 }
 
 function fixedCuboid(world: RAPIER.World, x: number, y: number, hx: number, hy: number, collisionGroups: number, restitution: number) {

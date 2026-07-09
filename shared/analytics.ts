@@ -10,6 +10,7 @@ import {
   TeamId,
   Vec
 } from './types';
+import { boxTargetPowerId, normalizeBoxType } from './types';
 
 export type AnalyticsEventName = 'abilityUsed' | 'boxPickup' | 'gamePlayer' | 'goalScored';
 export type GamePlayerLifecycle =
@@ -58,6 +59,8 @@ type BoxPickupDetails = {
 type GoalDetails = {
   scoringSide: PlayerSide;
   lastTouchedBy?: PlayerSide | null;
+  lastTouchedBabbleId?: string | null;
+  lastTouchedPlayerId?: string | null;
   ballPosition: Vec;
   now?: number;
 };
@@ -109,6 +112,7 @@ function sideTeam(state: GameState, side: PlayerSide) {
 }
 
 export function buildAbilityUsedEvent(state: GameState, playerId: string, use: PowerPlayUse, now = Date.now()): AnalyticsEvent {
+  const abilityType = normalizeBoxType(use.type) ?? use.type;
   const target = use.targetBabbleId ? state.babbles.find(b => b.id === use.targetBabbleId) : undefined;
   const fieldObject = state.fieldObjects.at(-1);
   return {
@@ -116,7 +120,8 @@ export function buildAbilityUsedEvent(state: GameState, playerId: string, use: P
     payload: {
       ...commonPayload(state, now),
       ...playerFields(state, playerId),
-      abilityType: use.type,
+      abilityType,
+      targetPowerId: boxTargetPowerId(abilityType),
       holderId: playerId,
       targetBabbleId: use.targetBabbleId ?? null,
       targetSide: target?.side ?? null,
@@ -142,15 +147,18 @@ export function buildBoxPickupEvent(state: GameState, details: BoxPickupDetails)
       pickupMethod: details.pickupMethod,
       boxId: details.box.id,
       abilityType: details.box.type,
+      targetPowerId: boxTargetPowerId(details.box.type),
       boxAnchor: details.box.anchor,
       position: { ...details.box.pos },
       availableTurn: state.turn + 1,
-      replacedAbilityType: details.replacedAbilityType ?? null
+      replacedAbilityType: details.replacedAbilityType ?? null,
+      replacedTargetPowerId: boxTargetPowerId(details.replacedAbilityType)
     }
   };
 }
 
 export function buildGoalScoredEvent(state: GameState, details: GoalDetails): AnalyticsEvent {
+  const lastTouchedPlayer = details.lastTouchedPlayerId ? state.players[details.lastTouchedPlayerId] : undefined;
   return {
     name: 'goalScored',
     payload: {
@@ -160,6 +168,9 @@ export function buildGoalScoredEvent(state: GameState, details: GoalDetails): An
       concedingSide: details.scoringSide === 'left' ? 'right' : 'left',
       lastTouchedBy: details.lastTouchedBy ?? null,
       lastTouchedTeam: details.lastTouchedBy ? sideTeam(state, details.lastTouchedBy) : null,
+      lastTouchedBabbleId: details.lastTouchedBabbleId ?? null,
+      lastTouchedPlayerId: details.lastTouchedPlayerId ?? null,
+      lastTouchedPlayerTeam: lastTouchedPlayer?.team ?? null,
       ballPosition: { ...details.ballPosition }
     }
   };

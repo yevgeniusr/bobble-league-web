@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { buildGamePlayerEvent, drainAnalyticsEvents, GamePlayerLifecycle } from '../shared/analytics';
 import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setPlayerReady, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { freePhysics } from '../shared/physics';
-import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId } from '../shared/types';
+import { BOX_TYPES, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId, normalizeBoxType } from '../shared/types';
 import { createXtremepushSender } from './xtremepush';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -106,8 +106,9 @@ io.on('connection', socket => {
 
   socket.on('player:power', use => {
     const room = currentRoom(socket); if (!room) return;
-    if (!use || !BOX_TYPE_IDS.includes(use.type as BoxType)) return;
-    if (!usePowerPlay(room.state, socket.id, use)) socket.emit('room:error', 'That Power Play is not available to you right now.');
+    const type = normalizeBoxType(use?.type);
+    if (!use || !type) return;
+    if (!usePowerPlay(room.state, socket.id, { ...use, type })) socket.emit('room:error', 'That Power Play is not available to you right now.');
     flushAnalytics(room);
     room.lastActiveAt = Date.now();
   });
@@ -166,8 +167,8 @@ io.on('connection', socket => {
   socket.on('player:cheatBox', payload => {
     const room = currentRoom(socket); if (!room) return;
     if (!cheatsEnabled) return socket.emit('room:error', 'Cheats are disabled on this server.');
-    const type = payload?.type as BoxType;
-    if (!BOX_TYPE_IDS.includes(type)) return;
+    const type = normalizeBoxType(payload?.type);
+    if (!type) return;
     const now = Date.now();
     if (now - (socket.data.lastCheatAt ?? 0) < CHEAT_BOX_COOLDOWN_MS) return;
     socket.data.lastCheatAt = now;
