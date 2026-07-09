@@ -4,6 +4,7 @@ import { io, Socket } from 'socket.io-client';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec } from '../../shared/types';
 import { trackAnalyticsEvent } from './analytics';
 import { AudioSettings, audioManager, loadAudioSettings, saveAudioSettings } from './audio';
+import { buildMatchEndSummary } from './matchEnd';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
 
@@ -247,7 +248,7 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings,
   const [placing, setPlacing] = React.useState<PlacingGhost | null>(null);
   const [aiming, setAiming] = React.useState<AbilityAim | null>(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
-  const [burst, setBurst] = React.useState<{ kind: 'goal' | 'gameOver'; side: PlayerSide | null; nonce: number } | null>(null);
+  const [burst, setBurst] = React.useState<{ kind: 'goal'; side: PlayerSide | null; nonce: number } | null>(null);
   const prevRef = React.useRef<GameState | null>(null);
 
   React.useEffect(() => {
@@ -261,7 +262,6 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings,
       }
       if (state.winner && state.winner !== prev.winner) {
         window.setTimeout(() => audioManager.play('gameOver', { force: true }), scoreChanged ? 650 : 0);
-        window.setTimeout(() => setBurst({ kind: 'gameOver', side: state.winner, nonce: Date.now() }), scoreChanged ? 500 : 0);
       }
       const prevBumperAt = Math.max(0, ...prev.bumperEvents.map(e => e.at));
       if (state.bumperEvents.some(e => e.at > prevBumperAt)) audioManager.play(state.bigBumpersUntilTurn && state.bigBumpersUntilTurn >= state.turn ? 'megaBumper' : 'bumper');
@@ -273,15 +273,25 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings,
 
   React.useEffect(() => {
     if (!burst) return;
-    const t = window.setTimeout(() => setBurst(null), burst.kind === 'gameOver' ? 4200 : 2400);
+    const t = window.setTimeout(() => setBurst(null), 2400);
     return () => window.clearTimeout(t);
   }, [burst]);
 
+  React.useEffect(() => {
+    if (state.phase !== 'finished') return;
+    setPlacing(null);
+    setAiming(null);
+    setMenuOpen(false);
+  }, [state.phase]);
+
+  const matchFinished = state.phase === 'finished';
+
   return <section className="gameShell">
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
-    <TopHud state={state} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>
-    {menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={onAudioChange} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
-    <BottomActionBar state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
+    {!matchFinished && <TopHud state={state} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>}
+    {!matchFinished && menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={onAudioChange} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
+    {!matchFinished && <BottomActionBar state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>}
+    {matchFinished && <MatchEndOverlay state={state} onPlayAgain={()=>socket.emit('game:start')} onBackToLobby={()=>socket.emit('game:reset', state.mode)} onLeave={onLeave}/>}
     {burst && <CelebrationOverlay key={`${burst.kind}-${burst.nonce}`} kind={burst.kind} side={burst.side} state={state}/>}
     {error && <section className="panel error" role="alert" title="Click to dismiss" onClick={onDismissError}>{error}<span className="errorClose"> ✕</span></section>}
   </section>;
@@ -296,15 +306,39 @@ function TeamScorePill({ state, side }: { state: GameState; side: PlayerSide }) 
   </div>;
 }
 
-function CelebrationOverlay({ kind, side, state }: { kind: 'goal' | 'gameOver'; side: PlayerSide | null; state: GameState }) {
+function MatchEndOverlay({ state, onPlayAgain, onBackToLobby, onLeave }: { state: GameState; onPlayAgain: ()=>void; onBackToLobby: ()=>void; onLeave: ()=>void }) {
+  const summary = buildMatchEndSummary(state);
+  const leftTeam = TEAMS[state.sideTeams.left];
+  const rightTeam = TEAMS[state.sideTeams.right];
+  return <section className="matchEndLayer" aria-live="polite" aria-label="Match finished">
+    <div className="matchEndCard" role="dialog" aria-modal="false" aria-labelledby="matchEndTitle" style={summary.winnerTeamColor ? { borderColor: summary.winnerTeamColor } : undefined}>
+      <p className="matchEndKicker">Final whistle</p>
+      <h2 id="matchEndTitle">{summary.title}</h2>
+      <p className="matchEndSub">{summary.winnerSideLabel} takes the match</p>
+      <div className="matchEndScore" aria-label={`Final score ${summary.scoreline}`}>
+        <span style={{ background: leftTeam.primary, color: leftTeam.secondary }}><b>Left</b><strong>{state.score.left}</strong></span>
+        <em>vs</em>
+        <span style={{ background: rightTeam.primary, color: rightTeam.secondary }}><b>Right</b><strong>{state.score.right}</strong></span>
+      </div>
+      <dl className="matchEndStats">{summary.stats.map(item => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>
+      <div className="matchEndActions">
+        <button type="button" className="primary" onClick={onPlayAgain}>Play again</button>
+        <button type="button" onClick={onBackToLobby}>Back to lobby</button>
+        <button type="button" onClick={onLeave}>Main menu</button>
+      </div>
+    </div>
+  </section>;
+}
+
+function CelebrationOverlay({ kind, side, state }: { kind: 'goal'; side: PlayerSide | null; state: GameState }) {
   const team = side ? TEAMS[state.sideTeams[side]] : null;
-  const label = kind === 'goal' ? 'GOOOAL!' : state.winner ? `${team?.label ?? state.winner} wins!` : 'Game over!';
+  const label = 'GOOOAL!';
   return <div className={`celebrationOverlay ${kind}`} aria-live="polite">
     <div className="confetti" aria-hidden="true">{Array.from({ length: 22 }, (_, i) => <span key={i} style={{ '--i': i } as React.CSSProperties}/>)}</div>
     <div className="celebrationCard" style={team ? { borderColor: team.primary, color: team.secondary } : undefined}>
-      <span className="celebrationEmoji">{kind === 'goal' ? '⚽✨' : '🏆ฅ'}</span>
+      <span className="celebrationEmoji">⚽✨</span>
       <strong>{label}</strong>
-      <small>{kind === 'goal' ? `${side === 'left' ? 'Left' : 'Right'} side scored!` : `${state.score.left} - ${state.score.right}`}</small>
+      <small>{side === 'left' ? 'Left' : 'Right'} side scored!</small>
     </div>
   </div>;
 }

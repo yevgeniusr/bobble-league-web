@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, MAPS, MAP_IDS, RampEvent } from '../shared/types';
-import { babbleGhosted, ballSpinToRotation, BUMPER_WORLD_POSITIONS, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, latestRampEvent, mapBumperWorldPositions, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, latestRampEvent, mapBumperWorldPositions, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 
 describe('3D renderer coordinate mapping', () => {
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
@@ -31,6 +31,47 @@ describe('3D renderer coordinate mapping', () => {
     }
     expect(mapBumperWorldPositions('moon')).not.toEqual(BUMPER_WORLD_POSITIONS);
     expect(mapBumperWorldPositions('volcano')).not.toEqual(BUMPER_WORLD_POSITIONS);
+  });
+
+  it('keeps babble contact shadows and control rings close to the real babble radius', () => {
+    const radius = fieldRadiusToWorld(FIELD.babbleRadius);
+    const shadow = babbleContactShadowRadius(FIELD.babbleRadius);
+    expect(shadow).toBeGreaterThan(radius);
+    expect(shadow).toBeLessThanOrEqual(radius * 1.22);
+
+    const controlRing = babbleIndicatorRingRadius(FIELD.babbleRadius, 'control');
+    const targetRing = babbleIndicatorRingRadius(FIELD.babbleRadius, 'target');
+    expect(controlRing).toBeGreaterThan(radius);
+    expect(controlRing).toBeLessThanOrEqual(radius + 0.26);
+    expect(targetRing).toBeGreaterThan(controlRing);
+    expect(targetRing).toBeLessThanOrEqual(radius + 0.42);
+  });
+
+  it('derives normal and big bumper visuals from each map collider radius', () => {
+    for (const mapId of MAP_IDS) {
+      const normal = bumperVisualRadii(mapId, false);
+      const big = bumperVisualRadii(mapId, true);
+      expect(normal.collider).toBeCloseTo(fieldRadiusToWorld(MAPS[mapId].layout.bumperRadius));
+      expect(big.collider).toBeCloseTo(fieldRadiusToWorld(MAPS[mapId].layout.bigBumperRadius));
+      expect(normal.energyRing).toBeCloseTo(normal.collider);
+      expect(big.energyRing).toBeCloseTo(big.collider);
+      expect(normal.drum).toBeGreaterThanOrEqual(normal.collider * 0.88);
+      expect(normal.drum).toBeLessThanOrEqual(normal.collider * 1.04);
+      expect(big.drum).toBeGreaterThanOrEqual(big.collider * 0.88);
+      expect(big.drum).toBeLessThanOrEqual(big.collider * 1.04);
+      expect(normal.socket).toBeLessThanOrEqual(normal.collider + 0.22);
+      expect(big.socket).toBeLessThanOrEqual(big.collider + 0.24);
+    }
+  });
+
+  it('derives rectangular goal visuals from the authoritative goal mouth and depth', () => {
+    const metrics = goalVisualMetrics();
+    expect(metrics.leftGoalLineX).toBeCloseTo(-FIELD.width / 100);
+    expect(metrics.rightGoalLineX).toBeCloseTo(FIELD.width / 100);
+    expect(metrics.mouthTopZ).toBeCloseTo(fieldToWorld({ x: 0, y: FIELD.goalY }).z);
+    expect(metrics.mouthBottomZ).toBeCloseTo(fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight }).z);
+    expect(metrics.mouthHalfHeight).toBeCloseTo(fieldRadiusToWorld(FIELD.goalHeight) / 2);
+    expect(metrics.depth).toBeCloseTo(fieldRadiusToWorld(FIELD.goalDepth));
   });
 
   it('derives ball roll rotation from authoritative spin so it matches travel direction', () => {
