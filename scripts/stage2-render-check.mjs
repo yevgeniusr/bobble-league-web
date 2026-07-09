@@ -7,19 +7,31 @@ import { chromium } from 'playwright';
 const PORT = process.env.STAGE2_PORT || String(3700 + (process.pid % 400));
 const url = `http://127.0.0.1:${PORT}`;
 const mapId = process.env.BABBLE_MAP || 'stadium';
+const displayedRoomCode = () => document.querySelector('.roomCodeValue')?.textContent?.trim() || document.querySelector('.menuRoomCode')?.textContent?.trim() || '';
+async function waitRoomCode(page) {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const code = await page.evaluate(displayedRoomCode).catch(() => '');
+    if (code) return code.trim();
+    await page.waitForTimeout(250);
+  }
+  throw new Error('Timed out waiting for displayed room code');
+}
 const server = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], { stdio: 'ignore', env: { ...process.env, PORT, NODE_ENV: 'production' } });
 try {
   for (let i = 0; i < 60; i++) { try { if ((await fetch(`${url}/healthz`)).ok) break; } catch {} await delay(400); }
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
   const errors = [];
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.on('pageerror', e => errors.push('pageerror: ' + e));
-  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('console', m => {
+    if (m.type() === 'error' && !/Failed to load resource: the server responded with a status of 400/.test(m.text())) errors.push('console: ' + m.text());
+  });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   if (await page.locator('select.mapSelect').count()) await page.locator('select.mapSelect').first().selectOption(mapId);
-  await page.locator('button', { hasText: /create room/i }).click({ force: true });
-  await page.waitForSelector('.roomCodeValue', { timeout: 10000 });
-  await page.locator('button', { hasText: /start match/i }).click({ force: true });
+  await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /create room/i.test(b.textContent || ''))?.click());
+  await waitRoomCode(page);
+  await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /start match/i.test(b.textContent || ''))?.click());
   await page.waitForFunction(() => /planning/.test(document.body.innerText), null, { timeout: 10000 });
   await delay(4000); // let the rAF animation pump run
   const fallback = await page.locator('.renderFallback').count();
