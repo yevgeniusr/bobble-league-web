@@ -3,8 +3,9 @@
 // body collisions, ghosting, blocks, boxes, ramps/boosts, settling, and a
 // full 8-betabot scripted match completing by goal.
 import { describe, expect, it } from 'vitest';
-import { addPlayer, createInitialState, launchBabble, MAX_SPEED, startGame, stepGame } from '../shared/game';
+import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, MAX_SPEED, startGame, stepGame } from '../shared/game';
 import { FIELD, GameState, PlayerSide, Vec } from '../shared/types';
+import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT, ballRestHeight } from '../shared/airborne';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
@@ -204,6 +205,84 @@ describe('Rapier physics: walls and body collisions', () => {
 });
 
 describe('Rapier physics: power-play interplay', () => {
+  it('keeps a flat ball at the authoritative rest height without drifting', () => {
+    const s = setup();
+    park(s);
+    s.ball.pos = { x: 550, y: 150 };
+    s.ball.vel = { x: 0, y: 0 };
+
+    run(s, 6);
+
+    expect(s.ball.height).toBeCloseTo(BALL_REST_HEIGHT, 5);
+    expect(s.ball.verticalVelocity).toBe(0);
+  });
+
+  it('adds vertical lift when a babble hard-impacts the ball, then gravity lands it', () => {
+    const s = setup();
+    park(s, ['left-1']);
+    const b = s.babbles.find(x => x.id === 'left-1')!;
+    b.pos = { x: 410, y: 310 };
+    b.vel = { x: 950, y: 0 };
+    s.ball.pos = { x: 465, y: 310 };
+    s.ball.vel = { x: 0, y: 0 };
+    let maxHeight = s.ball.height;
+
+    run(s, 150, 1000, () => { maxHeight = Math.max(maxHeight, s.ball.height); });
+
+    expect(maxHeight).toBeGreaterThan(BALL_REST_HEIGHT + 0.18);
+    expect(s.ball.height).toBeCloseTo(ballRestHeight(s.ball.radius), 5);
+    expect(s.ball.verticalVelocity).toBe(0);
+  });
+
+  it('gives opposing multi-direction ball impacts more lift than one hard impact', () => {
+    const maxLift = (opposed: boolean) => {
+      const s = setup();
+      park(s, opposed ? ['left-1', 'right-1'] : ['left-1']);
+      const left = s.babbles.find(x => x.id === 'left-1')!;
+      left.pos = { x: 490, y: 310 };
+      left.vel = { x: 780, y: 0 };
+      if (opposed) {
+        const right = s.babbles.find(x => x.id === 'right-1')!;
+        right.pos = { x: 610, y: 310 };
+        right.vel = { x: -780, y: 0 };
+      }
+      s.ball.pos = { x: 550, y: 310 };
+      s.ball.vel = { x: 0, y: 0 };
+      let maxHeight = s.ball.height;
+      run(s, 24, 1000, () => { maxHeight = Math.max(maxHeight, s.ball.height); });
+      return maxHeight;
+    };
+
+    expect(maxLift(true)).toBeGreaterThan(maxLift(false) + 0.16);
+  });
+
+  it('lets beach ball impacts pop much higher and float longer than normal impacts', () => {
+    const runImpact = (beachy: boolean) => {
+      const s = setup();
+      park(s, ['left-1']);
+      const b = s.babbles.find(x => x.id === 'left-1')!;
+      if (beachy) { s.beachBallUntilTurn = s.turn; s.ball.radius = FIELD.ballRadius * 1.6; }
+      b.pos = { x: 410, y: 150 };
+      b.vel = { x: 1050, y: 0 };
+      s.ball.pos = { x: 465, y: 150 };
+      s.ball.vel = { x: 0, y: 0 };
+      let maxHeight = s.ball.height;
+      let airborneTicks = 0;
+      run(s, 150, 1000, () => {
+        maxHeight = Math.max(maxHeight, s.ball.height);
+        if (s.ball.height > ballRestHeight(s.ball.radius) + 0.05) airborneTicks++;
+      });
+      return { maxHeight, airborneTicks };
+    };
+
+    const normal = runImpact(false);
+    const beachy = runImpact(true);
+    expect(beachy.maxHeight).toBeGreaterThan(normal.maxHeight + 0.85);
+    expect(beachy.maxHeight).toBeGreaterThan(2.1);
+    expect(beachy.maxHeight).toBeLessThanOrEqual(BALL_MAX_HEIGHT);
+    expect(beachy.airborneTicks).toBeGreaterThan(normal.airborneTicks + 8);
+  });
+
   it('collects a mystery box when a babble drives over it', () => {
     const s = setup();
     park(s, ['left-1']);
@@ -244,6 +323,38 @@ describe('Rapier physics: power-play interplay', () => {
     run(s, 6);
     expect(s.rampEvents.some(e => e.mover === 'babble' && e.moverId === 'left-2')).toBe(true);
     expect(Math.hypot(b.vel.x, b.vel.y)).toBeGreaterThan(500); // visibly launched
+  });
+
+  it('ramps launch the ball through authoritative vertical state', () => {
+    const s = setup();
+    park(s);
+    s.ball.pos = { x: 470, y: 320 };
+    s.ball.vel = { x: 250, y: -40 };
+    s.fieldObjects = [{ id: 'r1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: 99 }];
+
+    run(s, 3);
+
+    expect(s.rampEvents.some(e => e.mover === 'ball')).toBe(true);
+    expect(s.ball.height).toBeGreaterThan(BALL_REST_HEIGHT + 0.2);
+    expect(s.ball.verticalVelocity).toBeGreaterThan(0);
+  });
+
+  it('resets vertical ball state when the beach ball effect expires', () => {
+    const s = setup();
+    park(s);
+    s.beachBallUntilTurn = s.turn;
+    s.ball.radius = FIELD.ballRadius * 1.6;
+    s.ball.height = 2.2;
+    s.ball.verticalVelocity = -0.4;
+    s.resolvingStartedAt = 1000 - MAX_RESOLVE_MS;
+
+    stepGame(s, {}, 1033, seq([0.5]));
+
+    expect(s.phase).toBe('planning');
+    expect(s.turn).toBe(2);
+    expect(s.ball.radius).toBe(FIELD.ballRadius);
+    expect(s.ball.height).toBeCloseTo(BALL_REST_HEIGHT, 5);
+    expect(s.ball.verticalVelocity).toBe(0);
   });
 
   it('makes the beach ball float farther than the regular ball', () => {
