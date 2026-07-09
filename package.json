@@ -16,7 +16,9 @@
     "box-check": "node scripts/box-control-check.mjs",
     "test:watch": "vitest",
     "lint": "eslint . --ext .ts,.tsx",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "analyze:original": "node scripts/analyze-original-logs.mjs",
+    "compare:original": "tsx scripts/compare-original-feel.ts"
   },
   "dependencies": {
     "@dimforge/rapier2d-deterministic-compat": "^0.19.3",
