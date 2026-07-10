@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, MAPS, MAP_IDS } from '../shared/types';
-import { ballRenderElevation, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { authoritativeBallQuaternion, ballRenderElevation, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT } from '../shared/airborne';
 
 describe('3D renderer coordinate mapping', () => {
@@ -95,6 +95,15 @@ describe('3D renderer coordinate mapping', () => {
     const rollY = ballSpinToRotation({ x: 0, y: 0.8 });
     expect(rollY.x).toBeCloseTo(0.8);
     expect(rollY.z).toBeCloseTo(0);
+  });
+
+  it('normalizes authoritative Rapier ball quaternions for full three-axis rendering', () => {
+    const q = authoritativeBallQuaternion({ rotation: { x: 1, y: 2, z: 3, w: 4 } });
+    expect(q).not.toBeNull();
+    expect(Math.hypot(q!.x, q!.y, q!.z, q!.w)).toBeCloseTo(1, 6);
+    expect(q!.y).not.toBe(0); // yaw/twist from glancing impacts is preserved
+    expect(authoritativeBallQuaternion({ rotation: { x: Number.NaN, y: 0, z: 0, w: 1 } })).toBeNull();
+    expect(authoritativeBallQuaternion({})).toBeNull();
   });
 
   it('renders elevated balls above a turf-anchored shadow', () => {

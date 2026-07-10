@@ -105,6 +105,8 @@ export function boxTargetPowerId(type: unknown): string | null {
 }
 
 export type Vec = { x: number; y: number };
+export type Vec3 = { x: number; y: number; z: number };
+export type Quaternion = { x: number; y: number; z: number; w: number };
 export type BoxAnchor = 'topMid' | 'bottomMid' | 'midLeft' | 'midRight';
 
 // Ramp wedge footprint (also used by the client renderer). Kept in types.ts so
@@ -566,6 +568,11 @@ export type BallState = {
   lastTouchedBy?: PlayerSide | null;
   lastTouchedBabbleId?: string | null;
   lastTouchedPlayerId?: string | null;
+  // Rapier's full 3D orientation/spin is authoritative so airborne and
+  // glancing-hit rotation survives networking and renders identically.
+  rotation?: Quaternion;
+  angularVelocity?: Vec3;
+  // Legacy planar roll accumulator retained for protocol compatibility.
   spin?: Vec;
 };
 export type BoxState = { id: string; type: BoxType; anchor: BoxAnchor; pos: Vec; spawnedAt: number; untilTurn?: number };

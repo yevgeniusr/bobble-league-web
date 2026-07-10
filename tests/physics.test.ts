@@ -5,13 +5,13 @@
 import { describe, expect, it } from 'vitest';
 import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, MAX_SPEED, startGame, stepGame } from '../shared/game';
 import { stepPhysics } from '../shared/physics';
-import { FIELD, GameState, PlayerSide, Vec } from '../shared/types';
+import { FIELD, GameState, MapId, PlayerSide, Vec } from '../shared/types';
 import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT, babbleRestHeight, ballRestHeight } from '../shared/airborne';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
-function setup(mode: 1 | 3 = 3) {
-  const s = createInitialState('PHYS', mode);
+function setup(mode: 1 | 3 = 3, mapId: MapId = 'stadium') {
+  const s = createInitialState('PHYS', mode, mapId);
   addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
   addPlayer(s, 'r', 'Righty', 'tigers', 'right');
   startGame(s, seq([0.5]));
@@ -267,6 +267,51 @@ describe('Rapier physics: power-play interplay', () => {
     expect(s.ball.verticalVelocity).toBeLessThan(-0.05);
   });
 
+  it('projects Rapier ball quaternion and three-axis angular velocity into authoritative state', () => {
+    const s = setup();
+    park(s);
+    const ball = s.ball as typeof s.ball & {
+      rotation?: { x: number; y: number; z: number; w: number };
+      angularVelocity?: { x: number; y: number; z: number };
+    };
+    ball.pos = { x: 550, y: 310 };
+    ball.vel = { x: 200, y: -80 };
+    ball.rotation = { x: 0, y: 0, z: 0, w: 1 };
+    ball.angularVelocity = { x: 4, y: 7, z: -3 };
+
+    stepPhysics(s, 1 / 30);
+
+    expect(ball.rotation).toBeDefined();
+    expect(Math.abs(ball.rotation!.x) + Math.abs(ball.rotation!.y) + Math.abs(ball.rotation!.z)).toBeGreaterThan(0.05);
+    expect(ball.angularVelocity).toBeDefined();
+    expect(Math.abs(ball.angularVelocity!.y)).toBeGreaterThan(1);
+    expect(Math.hypot(ball.angularVelocity!.x, ball.angularVelocity!.y, ball.angularVelocity!.z)).toBeLessThan(Math.hypot(4, 7, -3));
+  });
+
+  it('produces original-range yaw and compound rotation from a glancing ball impact', () => {
+    const s = setup(3, 'originalGlide');
+    park(s, ['left-1']);
+    const b = s.babbles.find(x => x.id === 'left-1')!;
+    b.pos = { x: 480, y: 294 };
+    b.vel = { x: 800, y: 0 };
+    s.ball.pos = { x: 550, y: 310 };
+    s.ball.vel = { x: 0, y: 0 };
+    let maxYaw = 0;
+    let maxRotationVector = 0;
+
+    run(s, 12, 1000, () => {
+      const a = s.ball.angularVelocity!;
+      const q = s.ball.rotation!;
+      maxYaw = Math.max(maxYaw, Math.abs(a.y));
+      maxRotationVector = Math.max(maxRotationVector, Math.hypot(q.x, q.y, q.z));
+    });
+
+    // Original capture p95 angular speed is ~6.22rad/s and includes strong yaw.
+    expect(maxYaw).toBeGreaterThan(5);
+    expect(maxYaw).toBeLessThan(10);
+    expect(maxRotationVector).toBeGreaterThan(0.1);
+  });
+
   it('projects babble height from the Rapier 3D sphere center while gravity lands it on the floor', () => {
     const s = setup();
     park(s, ['left-1']);
@@ -319,6 +364,22 @@ describe('Rapier physics: power-play interplay', () => {
     expect(maxHeight).toBeGreaterThan(BALL_REST_HEIGHT + 0.18);
     expect(s.ball.height).toBeCloseTo(ballRestHeight(s.ball.radius), 5);
     expect(s.ball.verticalVelocity).toBe(0);
+  });
+
+  it('makes a full-strength Original B impact reach the observed normal-ball jump peak', () => {
+    const s = setup(3, 'originalGlide');
+    park(s, ['left-1']);
+    const b = s.babbles.find(x => x.id === 'left-1')!;
+    b.pos = { x: 500, y: 310 };
+    b.vel = { x: 800, y: 0 };
+    s.ball.pos = { x: 550, y: 310 };
+    s.ball.vel = { x: 0, y: 0 };
+    let maxHeight = s.ball.height;
+
+    run(s, 30, 1000, () => { maxHeight = Math.max(maxHeight, s.ball.height); });
+
+    expect(maxHeight).toBeGreaterThanOrEqual(0.86);
+    expect(maxHeight).toBeLessThanOrEqual(0.94);
   });
 
   it('gives opposing multi-direction ball impacts more lift than one hard impact', () => {

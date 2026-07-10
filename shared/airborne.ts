@@ -63,7 +63,12 @@ export function ballImpactLiftVelocity(impacts: readonly BallImpactObservation[]
   if (maxSpeed < 260) return 0;
 
   const normalized = clamp((maxSpeed - 260) / 760, 0, 1);
-  const base = beachy ? 1.65 + normalized * 2.15 : 0.75 + normalized * 1.45;
+  // A measured full launch is ~16m/s (800px/s in our scale). The original
+  // normal ball reaches roughly 0.90m from a 0.49m rest center, which needs
+  // about 2.08m/s of vertical velocity under the observed 5.4m/s² gravity.
+  const base = beachy
+    ? 1.65 + normalized * 2.15
+    : Math.min(2.08, 0.9 + normalized * 1.66);
   const multiBonus = Math.min(0.9, Math.max(0, impacts.length - 1) * (beachy ? 0.42 : 0.24));
   let oppositionBonus = 0;
   for (let i = 0; i < impacts.length; i++) {

@@ -82,16 +82,28 @@ async function main() {
 
   const transcript = [`distribution ${distribution.join(' | ')}`];
   let lastTurn = 0;
+  let maxBallHeight = 0;
+  let maxAngularSpeed = 0;
+  let maxYawSpeed = 0;
+  let maxRotationVector = 0;
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const state = bots[0].state;
     if (!state) continue;
+    maxBallHeight = Math.max(maxBallHeight, Number(state.ball.height) || 0);
+    const angular = state.ball.angularVelocity;
+    if (angular) {
+      maxAngularSpeed = Math.max(maxAngularSpeed, Math.hypot(angular.x, angular.y, angular.z));
+      maxYawSpeed = Math.max(maxYawSpeed, Math.abs(angular.y));
+    }
+    const rotation = state.ball.rotation;
+    if (rotation) maxRotationVector = Math.max(maxRotationVector, Math.hypot(rotation.x, rotation.y, rotation.z));
     if (state.phase === 'finished') {
       transcript.push(`finished winner=${state.winner} score=${state.score.left}-${state.score.right} turn=${state.turn}`);
       if (requireGoal && state.score.left + state.score.right === 0) throw new Error(`Betabots finished without a goal: score=${state.score.left}-${state.score.right} turn=${state.turn}`);
       const errors = bots.flatMap(b => b.errors.map(e => `${b.name}:${e}`));
       if (errors.length) throw new Error(`Betabots saw room errors: ${errors.join('|')}`);
-      console.log(JSON.stringify({ ok: true, roomCode: state.roomCode, mapId: state.mapId, bots: bots.length, sideCounts, distribution, winner: state.winner, score: state.score, turn: state.turn, transcript, errors }, null, 2));
+      console.log(JSON.stringify({ ok: true, roomCode: state.roomCode, mapId: state.mapId, bots: bots.length, sideCounts, distribution, winner: state.winner, score: state.score, turn: state.turn, ballMotion: { maxHeight: maxBallHeight, maxAngularSpeed, maxYawSpeed, maxRotationVector }, transcript, errors }, null, 2));
       bots.forEach(b => b.socket.disconnect());
       return;
     }

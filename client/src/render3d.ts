@@ -78,6 +78,14 @@ export function ballSpinToRotation(spin: Vec): { x: number; z: number } {
   return { x: spin.y, z: -spin.x };
 }
 
+export function authoritativeBallQuaternion(ball: { rotation?: { x: number; y: number; z: number; w: number } }): { x: number; y: number; z: number; w: number } | null {
+  const q = ball.rotation;
+  if (!q || ![q.x, q.y, q.z, q.w].every(Number.isFinite)) return null;
+  const length = Math.hypot(q.x, q.y, q.z, q.w);
+  if (length < 1e-8) return null;
+  return { x: q.x / length, y: q.y / length, z: q.z / length, w: q.w / length };
+}
+
 export function ballRenderElevation(ball: { radius: number; height?: number }): {
   centerYAboveTurf: number;
   shadowYAboveTurf: number;
@@ -620,9 +628,14 @@ export class BabbleLeague3DRenderer {
     const p = state.ball.pos;
     const radius = state.ball.radius;
     const w = fieldToWorld(p); const r = fieldRadiusToWorld(radius);
-    // physically-correct rolling: rotate about the axis perpendicular to the
-    // actual travel delta, by distance/radius, accumulated in a quaternion
-    if (this.lastBallPos) {
+    // Prefer the authoritative Rapier quaternion: unlike planar roll inferred
+    // from displacement, it preserves pitch, roll and yaw from glancing hits,
+    // walls, ramps and airborne spin. Keep displacement roll only as a fallback
+    // for old protocol snapshots that predate the quaternion fields.
+    const authoritative = authoritativeBallQuaternion(state.ball);
+    if (authoritative) {
+      this.ballQuat.set(authoritative.x, authoritative.y, authoritative.z, authoritative.w);
+    } else if (this.lastBallPos) {
       const delta = { x: p.x - this.lastBallPos.x, y: p.y - this.lastBallPos.y };
       const distField = Math.hypot(delta.x, delta.y);
       if (distField > 0 && distField < ROLL_TELEPORT_FIELD_DIST) {

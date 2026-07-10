@@ -90,6 +90,8 @@ const ballAtKickoff = (vel: Vec = { x: 0, y: 0 }) => ({
   lastTouchedBy: null,
   lastTouchedBabbleId: null,
   lastTouchedPlayerId: null,
+  rotation: { x: 0, y: 0, z: 0, w: 1 },
+  angularVelocity: { x: 0, y: 0, z: 0 },
   spin: { x: 0, y: 0 }
 });
 
@@ -817,6 +819,7 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, _
       state.ball.vel = { x: 0, y: 0 };
       state.ball.height = ballRestHeight(state.ball.radius);
       state.ball.verticalVelocity = 0;
+      state.ball.angularVelocity = { x: 0, y: 0, z: 0 };
       state.ball.lastTouchedBy = null;
       state.ball.lastTouchedBabbleId = null;
       state.ball.lastTouchedPlayerId = null;
@@ -834,6 +837,7 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, _
       state.ball.vel = { x: 0, y: 0 };
       state.ball.height = ballRestHeight(state.ball.radius);
       state.ball.verticalVelocity = 0;
+      state.ball.angularVelocity = { x: 0, y: 0, z: 0 };
       state.ball.lastTouchedBy = null;
       state.ball.lastTouchedBabbleId = null;
       state.ball.lastTouchedPlayerId = null;
@@ -941,6 +945,7 @@ function resetForPlanning(state: GameState, _rng: Rng) {
   state.ball.vel = { x: 0, y: 0 };
   state.ball.height = ballRestHeight(state.ball.radius);
   state.ball.verticalVelocity = 0;
+  state.ball.angularVelocity = { x: 0, y: 0, z: 0 };
   state.ball.lastTouchedBy = null;
   state.ball.lastTouchedBabbleId = null;
   state.ball.lastTouchedPlayerId = null;

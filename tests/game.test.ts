@@ -707,6 +707,7 @@ describe('classic Babble League shared rules', () => {
     s.ball.pos = { x: 145, y: 91 };
     s.ball.vel = { x: 320, y: -140 };
     s.ball.verticalVelocity = 1.2;
+    s.ball.angularVelocity = { x: 4, y: -3, z: 2 };
     s.ball.lastTouchedBy = 'right';
     s.powerPlayInventories.left.push({ type: 'yellowCard', availableTurn: 1, holderId: 'l' });
 
@@ -714,6 +715,7 @@ describe('classic Babble League shared rules', () => {
     expect(s.ball.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 });
     expect(s.ball.vel).toEqual({ x: 0, y: 0 });
     expect(s.ball.verticalVelocity).toBe(0);
+    expect(s.ball.angularVelocity).toEqual({ x: 0, y: 0, z: 0 });
     expect(s.ball.lastTouchedBy).toBeNull();
     expect(s.babbles.flatMap(b => b.effects).some(e => e.type === 'yellowCard')).toBe(false);
   });

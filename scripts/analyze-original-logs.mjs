@@ -11,6 +11,8 @@ const powers = new Map();
 const formations = new Map();
 const ballHeights = [];
 const ballVy = [];
+const ballAngularSpeed = [];
+const ballAngularAbs = { x: [], y: [], z: [] };
 const giantHeights = [];
 const athleteHeights = [];
 const athleteVy = [];
@@ -47,6 +49,16 @@ for (const rec of records) {
     }
     const vy = Number(ball.CurPhysState.LinearVelocity?.[1]);
     if (Number.isFinite(vy)) ballVy.push(vy);
+    const angular = ball.CurPhysState.AngularVelocity;
+    if (Array.isArray(angular) && angular.length >= 3) {
+      const [x, y, z] = angular.map(Number);
+      if ([x, y, z].every(Number.isFinite)) {
+        ballAngularSpeed.push(Math.hypot(x, y, z));
+        ballAngularAbs.x.push(Math.abs(x));
+        ballAngularAbs.y.push(Math.abs(y));
+        ballAngularAbs.z.push(Math.abs(z));
+      }
+    }
   }
   for (const team of ctx.Teams ?? []) {
     if (team.SelectedFormation) inc(formations, team.SelectedFormation);
@@ -74,6 +86,12 @@ const result = {
   turns: { count: turns.size, min: Math.min(...turns), max: Math.max(...turns) },
   ballHeight: stat(ballHeights),
   ballVerticalVelocity: stat(ballVy),
+  ballAngularSpeed: stat(ballAngularSpeed),
+  ballAngularAbsComponents: {
+    x: stat(ballAngularAbs.x),
+    y: stat(ballAngularAbs.y),
+    z: stat(ballAngularAbs.z)
+  },
   giantBallHeight: stat(giantHeights),
   athleteHeight: stat(athleteHeights),
   athleteVerticalVelocity: stat(athleteVy),

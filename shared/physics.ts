@@ -255,6 +255,19 @@ function syncBall(state: GameState, cache: PhysicsCache) {
   state.ball.verticalVelocity = vertical.verticalVelocity;
   body.setTranslation(fieldToWorld(state.ball.pos, state.ball.height), true);
   body.setLinvel(fieldVelocityToWorld(state.ball.vel, state.ball.verticalVelocity), true);
+  const rotation = state.ball.rotation;
+  const rotationLength = rotation ? Math.hypot(rotation.x, rotation.y, rotation.z, rotation.w) : 0;
+  if (rotation && [rotation.x, rotation.y, rotation.z, rotation.w].every(Number.isFinite) && rotationLength > 1e-8) {
+    body.setRotation({ x: rotation.x / rotationLength, y: rotation.y / rotationLength, z: rotation.z / rotationLength, w: rotation.w / rotationLength }, true);
+  } else {
+    body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+  }
+  const angular = state.ball.angularVelocity;
+  if (angular && [angular.x, angular.y, angular.z].every(Number.isFinite)) {
+    body.setAngvel(angular, true);
+  } else {
+    body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  }
   body.enableCcd(Math.hypot(state.ball.vel.x, state.ball.vel.y, state.ball.verticalVelocity * PX_PER_METER) > CCD_MIN_SPEED);
   const beachy = isBeachy(state);
   if (beachy !== cache.beachy) {
@@ -302,6 +315,8 @@ function syncBabble(
 function projectBall(state: GameState, body: RAPIER.RigidBody) {
   const p = body.translation();
   const v = body.linvel();
+  const r = body.rotation();
+  const av = body.angvel();
   state.ball.pos.x = p.x * PX_PER_METER;
   state.ball.pos.y = p.z * PX_PER_METER;
   state.ball.vel.x = v.x * PX_PER_METER;
@@ -322,6 +337,8 @@ function projectBall(state: GameState, body: RAPIER.RigidBody) {
   }
   state.ball.height = Math.max(rest, Math.min(BALL_MAX_HEIGHT, height));
   state.ball.verticalVelocity = vy;
+  state.ball.rotation = { x: r.x, y: r.y, z: r.z, w: r.w };
+  state.ball.angularVelocity = { x: av.x, y: av.y, z: av.z };
 }
 
 function projectBabble(babble: GameState['babbles'][number], body: RAPIER.RigidBody) {
