@@ -20,8 +20,8 @@ function makeProjector(box) {
   cam.position.set(0, 16.2, 14.4);
   cam.lookAt(0, 0.4, 0);
   cam.updateMatrixWorld();
-  return (fx, fy) => {
-    const v = new THREE.Vector3((fx - FIELD.width / 2) / 50, TURF_Y, (fy - FIELD.height / 2) / 50);
+  return (fx, fy, worldY = TURF_Y) => {
+    const v = new THREE.Vector3((fx - FIELD.width / 2) / 50, worldY, (fy - FIELD.height / 2) / 50);
     v.project(cam);
     return { x: box.x + (v.x + 1) / 2 * box.width, y: box.y + (1 - v.y) / 2 * box.height };
   };
@@ -148,7 +148,9 @@ try {
   // 4. apply the babble-target box (Ghosted) to an own babble
   await clickAbility(/Ghosted/);
   await delay(250);
-  const ghostTarget = project(babbles[2].x, babbles[2].y);
+  // Click the visible oversized head rather than its turf coordinate. This
+  // exercises screen-space model picking used for players behind WebGL boxes.
+  const ghostTarget = project(babbles[2].x, babbles[2].y, TURF_Y + 1.18);
   await page.mouse.click(ghostTarget.x, ghostTarget.y);
   await delay(500);
   const targetingCleared = !/Targeting Ghosted/.test(await page.locator('body').innerText());
@@ -176,7 +178,7 @@ try {
   // 8. Red Card requires a babble click and then exits targeting mode.
   await clickAbility(/Red Card/);
   await delay(250);
-  const redTarget = project(babbles[2].x, babbles[2].y);
+  const redTarget = project(babbles[2].x, babbles[2].y, TURF_Y + 1.18);
   await page.mouse.click(redTarget.x, redTarget.y);
   await delay(500);
   const redTargetingCleared = !/Targeting Red Card/.test(await page.locator('body').innerText());

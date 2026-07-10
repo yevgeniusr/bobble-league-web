@@ -120,6 +120,19 @@ describe('Rapier physics: goals and gates', () => {
     expect(s.ball.pos.x).toBeGreaterThan(28);
     expect(s.ball.vel.x).toBeGreaterThan(0);
   });
+
+  it('keeps the spaces above and below each goal mouth physically walled off', () => {
+    for (const y of [FIELD.goalY - 35, FIELD.goalY + FIELD.goalHeight + 35]) {
+      const s = setup();
+      park(s, ['left-1']);
+      const b = s.babbles.find(x => x.id === 'left-1')!;
+      b.pos = { x: 70, y };
+      b.vel = { x: -700, y: 0 };
+      s.ball.pos = { x: 900, y: 100 };
+      for (let i = 0; i < 30; i++) stepPhysics(s, 1 / 30);
+      expect(b.pos.x).toBeGreaterThan(-2);
+    }
+  });
 });
 
 describe('Rapier physics: walls and body collisions', () => {

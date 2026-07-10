@@ -10,6 +10,7 @@ export type RenderInput = {
   drag: { babbleId: string; start: Vec; current: Vec } | null;
   placing?: PlacingGhost | null;
   selectedBabbleId?: string | null;
+  targetingBabbles?: boolean;
   // optimistic hold-LMB rotation: pad follows the cursor before the server echoes
   rotatingPad?: { id: string; angle: number } | null;
 };
@@ -240,7 +241,31 @@ export class BabbleLeague3DRenderer {
     return this.raycaster.ray.intersectPlane(this.plane, hit) ? worldToField({ x: hit.x, z: hit.z }) : null;
   }
 
-  render({ state, you, drag, placing, selectedBabbleId, rotatingPad }: RenderInput) {
+  /** Pick the visible babble, not the turf beneath it. Screen-space picking
+   * keeps players in roofless goal pockets selectable even when a box or pad
+   * occupies the same field coordinate. */
+  babbleFromClient(state: GameState, clientX: number, clientY: number, allowedIds?: readonly string[]): GameState['babbles'][number] | null {
+    const rect = this.canvas.getBoundingClientRect();
+    let best: { babble: GameState['babbles'][number]; distance: number } | null = null;
+    for (const babble of state.babbles) {
+      if (allowedIds && !allowedIds.includes(babble.id)) continue;
+      const w = fieldToWorld(babble.pos);
+      const height = Number.isFinite(babble.height) ? babble.height : babbleRestHeight(babble.radius);
+      const hop = Math.max(0, height - babbleRestHeight(babble.radius));
+      // Match addBabble's visible oversized-head centre exactly. Turf clicks are
+      // handled by the planar fallback; this path exists for clicking the model.
+      const projected = new THREE.Vector3(w.x, TURF_Y + 1.18 + hop, w.z).project(this.camera);
+      if (projected.z < -1 || projected.z > 1) continue;
+      const sx = rect.left + (projected.x + 1) * rect.width / 2;
+      const sy = rect.top + (1 - projected.y) * rect.height / 2;
+      const distance = Math.hypot(clientX - sx, clientY - sy);
+      const hitRadius = Math.max(24, fieldRadiusToWorld(babble.radius) * rect.width / FIELD_X * 2.4);
+      if (distance <= hitRadius && (!best || distance < best.distance)) best = { babble, distance };
+    }
+    return best?.babble ?? null;
+  }
+
+  render({ state, you, drag, placing, selectedBabbleId, targetingBabbles, rotatingPad }: RenderInput) {
     const mapId = normalizeMapId(state.mapId);
     this.ensureBoard(mapId);
     this.clearDynamic();
@@ -257,7 +282,7 @@ export class BabbleLeague3DRenderer {
       }
     }
     for (const box of state.boxes) this.addPowerBox(box.pos, BOX_TYPES[box.type].color);
-    for (const b of state.babbles) this.addBabble(b, state, you, selectedBabbleId);
+    for (const b of state.babbles) this.addBabble(b, state, you, selectedBabbleId, targetingBabbles);
     this.addBall(state);
     this.addBumperFx(state);
     this.addRampFx(state);
@@ -406,10 +431,10 @@ export class BabbleLeague3DRenderer {
       this.mesh(g, new THREE.BoxGeometry(depth + 0.16, 0.16, 0.16), frameTint, pocketX, 1.15, s * halfGoal, true);
       this.mesh(g, new THREE.BoxGeometry(depth + 0.16, 0.14, 0.12), frameTint, pocketX, 2.55, s * halfGoal, true);
     }
-    // crossbar, roof rail and rear upright make a visible rectangular net pocket.
+    // Front crossbar and rear uprights frame a roofless pocket. No mesh covers
+    // the interior, so players remain visible and selectable from above.
     const bar = new THREE.Mesh(this.geo(`goalBar${halfGoal.toFixed(2)}`, () => new THREE.CylinderGeometry(0.14, 0.14, halfGoal * 2, 16)), frameTint);
     bar.position.set(x, 2.62, 0); bar.rotation.x = Math.PI / 2; bar.castShadow = true; g.add(bar);
-    this.mesh(g, new THREE.BoxGeometry(depth + 0.1, 0.12, halfGoal * 2 + 0.18), frameTint, pocketX, 2.62, 0, true);
     for (const s of [-1, 1] as const) {
       this.mesh(g, new THREE.BoxGeometry(0.14, 1.4, 0.12), frameTint, backX, 1.78, s * halfGoal, true);
     }
@@ -612,7 +637,7 @@ export class BabbleLeague3DRenderer {
     this.dynamic.add(m);
   }
 
-  private addBabble(b: GameState['babbles'][number], state: GameState, you: string, selectedBabbleId?: string | null) {
+  private addBabble(b: GameState['babbles'][number], state: GameState, you: string, selectedBabbleId?: string | null, targetable = false) {
     const player = Object.values(state.players).find(p => p.side === b.side && p.controlledBabbleIds.includes(b.id)) ?? Object.values(state.players).find(p => p.side === b.side);
     const team = TEAMS[player?.team ?? 'pigs'];
     const w = fieldToWorld(b.pos);
@@ -679,8 +704,20 @@ export class BabbleLeague3DRenderer {
     }
     // control ring for your babbles
     if (state.players[you]?.controlledBabbleIds.includes(b.id)) {
-      const ring = new THREE.Mesh(this.geo('ctrlRing', () => new THREE.TorusGeometry(1, 0.06, 8, 48)), this.mat(0xffe86a, 0.4, { emissive: 0x6b5410 }));
+      // X-ray ring remains visible when a mystery box overlaps the babble.
+      const ring = new THREE.Mesh(this.geo('ctrlRing', () => new THREE.TorusGeometry(1, 0.06, 8, 48)),
+        this.texturedMat('ctrlRingXrayMat', () => new THREE.MeshBasicMaterial({ color: 0xffe86a, depthTest: false, depthWrite: false })));
+      ring.renderOrder = 20;
       ring.position.set(w.x, TURF_Y + 0.04, w.z); ring.rotation.x = Math.PI / 2; ring.scale.setScalar(babbleIndicatorRingRadius(b.radius, 'control')); this.dynamic.add(ring);
+    }
+    if (targetable) {
+      const targetableRing = new THREE.Mesh(this.geo('targetableRing', () => new THREE.TorusGeometry(1, 0.075, 8, 48)),
+        this.texturedMat('targetableRingXrayMat', () => new THREE.MeshBasicMaterial({ color: 0x38f0e6, transparent: true, opacity: 0.88, depthTest: false, depthWrite: false })));
+      targetableRing.renderOrder = 21;
+      targetableRing.position.set(w.x, TURF_Y + 0.08, w.z);
+      targetableRing.rotation.x = Math.PI / 2;
+      targetableRing.scale.setScalar(babbleIndicatorRingRadius(b.radius, 'target'));
+      this.dynamic.add(targetableRing);
     }
     // click-to-select box target: pulsing cyan ring plus TARGET label
     if (selectedBabbleId === b.id) {

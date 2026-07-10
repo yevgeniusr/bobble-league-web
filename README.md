@@ -12,7 +12,7 @@ A production-oriented, web-based multiplayer babble soccer game inspired by Disc
   map is included in snapshots and locks after kickoff until reset/new room.
 - Teams: Pigs, Parrots, Penguins, Tigers, Frogs, Foxes.
 - Match modes: first to 1, 3, or 5 goals.
-- Goals are deep, open physical pockets: goalies can enter and clear partially crossed balls; scoring requires the whole ball to cross the line.
+- Goals are deep, roofless physical pockets: goalies can enter from the open mouth, and scoring occurs as soon as the ball centre crosses the front gate line.
 - Babble soccer mechanics: drag-launch, bounce, score goals.
 - Box spawning: every second kickoff turn creates one random top/bottom lane box.
 - Power Play boxes: Beach Ball, Move Ball, Swap Goals, Big Bumpers, Boost,

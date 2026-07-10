@@ -542,7 +542,9 @@ describe('classic Babble League shared rules', () => {
     stepGame(s, {}, 1033, seq([0.5]));
 
     expect(s.ball.vel.x).toBeGreaterThan(0);
-    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeLessThan(300); // no synthetic boost
+    const exitSpeed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
+    expect(exitSpeed).toBeGreaterThan(300); // intentionally lively physical material
+    expect(exitSpeed).toBeLessThan(380); // still no scripted minimum/velocity rewrite
     expect(s.bumperEvents.length).toBeGreaterThanOrEqual(1);
     expect(s.bumperEvents[0].pos).toEqual({ x: BUMPERS[0].x, y: BUMPERS[0].y });
   });
@@ -1004,6 +1006,15 @@ describe('goal mouth scoring and clearance window', () => {
     expect(s.turn).toBe(2); // turn settled normally instead
   });
 
+  it('scores at the front gate line rather than waiting for the back of the pocket', () => {
+    const s = setup(1);
+    s.ball.pos = { x: -1, y: FIELD.goalY + FIELD.goalHeight / 2 };
+    s.ball.vel = { x: -10, y: 0 };
+    stepGame(s, {}, 1033, seq([0.5]));
+    expect(s.score.right).toBe(1);
+    expect(s.phase).toBe('finished');
+  });
+
   it('does not score outside the mouth height even when far past the line', () => {
     const s = setup();
     s.ball.pos = { x: -s.ball.radius - 5, y: FIELD.goalY - 40 };
@@ -1015,7 +1026,7 @@ describe('goal mouth scoring and clearance window', () => {
   it('credits the defending side while Swap Goals is active', () => {
     const s = setup();
     s.swappedGoalsUntilTurn = s.turn;
-    s.ball.pos = { x: -s.ball.radius - 2, y: FIELD.goalY + 40 }; // whole ball across left gate while swapped
+    s.ball.pos = { x: -2, y: FIELD.goalY + 40 }; // centre across the front gate while swapped
     s.ball.vel = { x: 0, y: 0 };
     stepGame(s, {}, 1033, seq([0.5]));
     expect(s.score.left).toBe(1);

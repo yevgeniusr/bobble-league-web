@@ -499,7 +499,7 @@ function syncBumpers(state: GameState, cache: PhysicsCache) {
   const map = mapOf(state);
   const big = state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
   const radiusPx = big ? map.layout.bigBumperRadius : map.layout.bumperRadius;
-  const restitution = big ? tune(state, 'bigBumperRestitution') : tune(state, 'ballRestitution');
+  const restitution = big ? tune(state, 'bigBumperRestitution') : PHYSICS_CONFIG.bumperRestitution;
   const key = `${big}:${radiusPx}:${restitution}:${map.layout.bumpers.map(p => `${p.x},${p.y}`).join('|')}`;
   if (key === cache.bumpersKey) return;
   for (const c of cache.bumperColliders) cache.world.removeCollider(c, false);

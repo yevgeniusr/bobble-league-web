@@ -759,8 +759,8 @@ function expireTurnEffects(state: GameState) {
   }
 }
 
-// A goal requires the whole ball to cross the line. Partial overlap stays live
-// so a goalie can enter the pocket, get behind the ball, and clear it.
+// The front gate plane is the goal line. The rear wall only contains the
+// roofless pocket; it must never defer scoring to the back of the gate.
 export const GOAL_TRIGGER_EPS = 0.5;
 
 function detectGoal(state: GameState): PlayerSide | null {
@@ -769,8 +769,8 @@ function detectGoal(state: GameState): PlayerSide | null {
   const swapped = state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn >= state.turn;
   const leftGoalScorer: PlayerSide = swapped ? 'left' : 'right';
   const rightGoalScorer: PlayerSide = swapped ? 'right' : 'left';
-  if (b.pos.x <= -b.radius + GOAL_TRIGGER_EPS) return leftGoalScorer;
-  if (b.pos.x >= FIELD.width + b.radius - GOAL_TRIGGER_EPS) return rightGoalScorer;
+  if (b.pos.x <= GOAL_TRIGGER_EPS) return leftGoalScorer;
+  if (b.pos.x >= FIELD.width - GOAL_TRIGGER_EPS) return rightGoalScorer;
   return null;
 }
 

@@ -20,7 +20,7 @@ The telemetry strongly identifies launch speed, drag, vertical ranges, planning 
 - Athlete rest/max: `~0.50 m / 1.035 m`.
 - Planning deadline: `20.010–20.014 s`; production default is therefore `20 s`.
 - Typical no-goal resolve: approximately `2.8–6.2 s`; the existing 8 s safety cap remains appropriate.
-- Goals are deep physical pockets with open mouths. A score occurs only after the whole ball crosses the line, leaving partially crossed balls live for a goalie clearance.
+- Goals are deep, roofless physical pockets with open mouths. The front gate plane is the goal line; the rear wall only contains goalies and balls physically.
 
 ## Candidate maps
 

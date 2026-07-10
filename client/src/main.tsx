@@ -519,8 +519,8 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
   const rotatingPad = mode?.kind === 'rotatePad' ? { id: mode.id, angle: mode.angle } : null;
   // animation pump: keeps ball rolling, box spin, boost chevrons and launch hops
   // moving smoothly even between server state frames
-  const frame = React.useRef<{ state: GameState; you: string; drag: typeof drag; placing: PlacingGhost | null; rotatingPad: { id: string; angle: number } | null }>({ state, you, drag, placing, rotatingPad });
-  frame.current = { state, you, drag, placing, rotatingPad };
+  const frame = React.useRef<{ state: GameState; you: string; drag: typeof drag; placing: PlacingGhost | null; targetingBabbles: boolean; rotatingPad: { id: string; angle: number } | null }>({ state, you, drag, placing, targetingBabbles: aiming?.mode === 'babble', rotatingPad });
+  frame.current = { state, you, drag, placing, targetingBabbles: aiming?.mode === 'babble', rotatingPad };
   React.useEffect(() => {
     let raf = 0;
     let timer = 0;
@@ -528,7 +528,7 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
     const tick = () => {
       const f = frame.current;
       const started = performance.now();
-      rendererRef.current?.render({ state: f.state, you: f.you, drag: f.drag, placing: f.placing, rotatingPad: f.rotatingPad });
+      rendererRef.current?.render({ state: f.state, you: f.you, drag: f.drag, placing: f.placing, targetingBabbles: f.targetingBabbles, rotatingPad: f.rotatingPad });
       const cost = performance.now() - started;
       if (stopped) return;
       // Adaptive pump: on weak/software WebGL a frame can take hundreds of ms.
@@ -576,7 +576,8 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
         setAiming(null);
         return;
       }
-      const target = state.babbles.find(b => Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 20);
+      const target = state.babbles.find(b => Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 20)
+        ?? rendererRef.current?.babbleFromClient(state, e.clientX, e.clientY);
       if (target) {
         audioManager.play('abilityUse');
         socket.emit('player:power', { type: aiming.type, targetBabbleId: target.id });
@@ -593,7 +594,8 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
       return;
     }
     if (state.phase === 'planning') {
-      const babble = state.babbles.find(b => me.controlledBabbleIds.includes(b.id) && Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 16);
+      const babble = state.babbles.find(b => me.controlledBabbleIds.includes(b.id) && Math.hypot(b.pos.x - p.x, b.pos.y - p.y) <= b.radius + 16)
+        ?? rendererRef.current?.babbleFromClient(state, e.clientX, e.clientY, me.controlledBabbleIds);
       if (babble) {
         e.currentTarget.setPointerCapture(e.pointerId);
         setMode({ kind: 'launch', babbleId: babble.id, start: babble.pos, current: p });

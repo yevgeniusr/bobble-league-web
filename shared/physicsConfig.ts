@@ -19,7 +19,10 @@ const envNumber = (name: string, fallback: number) => {
 export const PHYSICS_CONFIG = {
   babbleImpulseScale: envNumber('BABBLE_IMPULSE_SCALE', 0.9),
   settleSpeed: envNumber('BABBLE_SETTLE_SPEED', 24),
-  bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1.35),
+  // Superelastic physical materials make bumpers lively without scripted
+  // velocity changes or a minimum exit speed.
+  bumperRestitution: envNumber('BABBLE_BUMPER_RESTITUTION', 1.35),
+  bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1.7),
 
   boostPadAccel: envNumber('BABBLE_BOOST_PAD_ACCEL', 4300),
 
@@ -33,6 +36,6 @@ export const PHYSICS_CONFIG = {
   wallRestitution: envNumber('BABBLE_WALL_RESTITUTION', 0.87),
   blockRestitution: envNumber('BABBLE_BLOCK_RESTITUTION', 0.58),
   babbleDensity: envNumber('BABBLE_DENSITY', 1),
-  ballDensityBase: envNumber('BABBLE_BALL_DENSITY', 0.78),
-  giantBallMassScale: envNumber('BABBLE_GIANT_BALL_MASS_SCALE', 0.65)
+  ballDensityBase: envNumber('BABBLE_BALL_DENSITY', 0.7),
+  giantBallMassScale: envNumber('BABBLE_GIANT_BALL_MASS_SCALE', 0.72)
 } as const;
