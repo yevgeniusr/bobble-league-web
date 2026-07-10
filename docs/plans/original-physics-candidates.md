@@ -12,7 +12,9 @@ The telemetry strongly identifies launch speed, drag, vertical ranges, planning 
 - Normal-ball drag proxy: `0.982–0.995`; central estimate `0.990`.
 - Beach-ball drag target: approximately `0.994–0.995`.
 - Ball rest height: `0.49–0.50 m`.
-- Normal-ball maximum observed height: `~0.90 m`; a full `800 px/s` Original B impact is calibrated to `~0.87–0.90 m`, while compound hits may rise slightly higher.
+- Normal-ball maximum observed height: `~0.90 m`; a full `800 px/s` Original B impact is calibrated to `~0.87–0.90 m`, while compound true-3D contacts may rise as high as the normal-ball safety ceiling of `1.20 m`.
+- Landing uses deterministic vertical restitution (`0.34` normal / `0.48` Giant Ball), so the resolving phase remains active through real bounce arcs instead of snapping to planning on first contact.
+- Airborne damping is one fifth of turf damping and the low-speed brake is disabled in flight. Jumping never creates planar speed, but it preserves significantly more carry until landing.
 - Ball angular speed is genuinely 3D: captured maximum `20.55 rad/s`, with X/Y/Z component maxima `15.39 / 9.55 / 12.87 rad/s`; using the analyzer’s `floor(n × p)` percentile definition, p95 total angular speed is `7.41 rad/s`.
 - Giant-ball rest/max: `1.0 m / 2.661 m`.
 - Athlete rest/max: `~0.50 m / 1.035 m`.

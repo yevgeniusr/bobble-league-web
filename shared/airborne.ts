@@ -2,6 +2,7 @@ import { FIELD } from './types';
 import type { Vec } from './types';
 
 export const BALL_REST_HEIGHT = 0.5;
+export const NORMAL_BALL_MAX_HEIGHT = 1.2;
 export const BALL_MAX_HEIGHT = 2.66;
 export const BALL_GRAVITY = 5.4;
 export const BEACH_BALL_GRAVITY = 2.35;
@@ -77,7 +78,11 @@ export function ballImpactLiftVelocity(impacts: readonly BallImpactObservation[]
       if (dot < -0.45) oppositionBonus = Math.max(oppositionBonus, beachy ? 0.78 : 0.42);
     }
   }
-  return base + multiBonus + oppositionBonus;
+  const lift = base + multiBonus + oppositionBonus;
+  // Compound normal-ball contacts can pop higher than a single hit, but keep
+  // them inside the observed/plausible normal-ball envelope. Giant Ball keeps
+  // its own much higher 2.66m cap.
+  return beachy ? lift : Math.min(2.45, lift);
 }
 
 export function integrateBallVertical(

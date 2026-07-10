@@ -319,6 +319,64 @@ describe('Rapier physics: power-play interplay', () => {
     expect(maxRotationVector).toBeGreaterThan(0.1);
   });
 
+  it('physically bounces after landing and keeps the resolving phase alive', () => {
+    const s = setup(3, 'originalGlide');
+    park(s);
+    s.ball.pos = { x: 550, y: 310 };
+    s.ball.vel = { x: 0, y: 0 };
+    s.ball.height = 1.2;
+    s.ball.verticalVelocity = -1;
+    let bounceCount = 0;
+    let previousVy = s.ball.verticalVelocity;
+
+    for (let i = 1; i <= 40 && s.phase === 'resolving'; i++) {
+      stepGame(s, {}, 1000 + i * 33, seq([0.5]));
+      if (previousVy <= 0 && s.ball.verticalVelocity > 0.2) bounceCount++;
+      previousVy = s.ball.verticalVelocity;
+      if (bounceCount >= 2) break;
+    }
+
+    expect(bounceCount).toBeGreaterThanOrEqual(2);
+    expect(s.phase).toBe('resolving');
+    expect(s.ball.height).toBeGreaterThanOrEqual(ballRestHeight(s.ball.radius));
+  });
+
+  it('preserves horizontal carry in the air without creating free speed', () => {
+    const speedAfter = (airborne: boolean) => {
+      const s = setup(3, 'originalGlide');
+      park(s);
+      s.ball.pos = { x: 550, y: 310 };
+      s.ball.vel = { x: 400, y: 0 };
+      s.ball.height = ballRestHeight(s.ball.radius) + (airborne ? 0.7 : 0);
+      s.ball.verticalVelocity = 0;
+      for (let i = 0; i < 10; i++) stepPhysics(s, 1 / 30);
+      return Math.hypot(s.ball.vel.x, s.ball.vel.y);
+    };
+
+    const grounded = speedAfter(false);
+    const airborne = speedAfter(true);
+    expect(airborne).toBeGreaterThan(380);
+    expect(airborne).toBeGreaterThan(grounded + 15);
+    expect(airborne).toBeLessThanOrEqual(404);
+  });
+
+  it('caps normal-ball flight below Giant Ball altitude while preserving Giant Ball loft', () => {
+    const runHigh = (giant: boolean) => {
+      const s = setup();
+      park(s);
+      if (giant) { s.beachBallUntilTurn = s.turn; s.ball.radius = FIELD.ballRadius * 1.6; }
+      s.ball.pos = { x: 550, y: 310 };
+      s.ball.vel = { x: 0, y: 0 };
+      s.ball.height = 1.19;
+      s.ball.verticalVelocity = 3;
+      stepPhysics(s, 1 / 30);
+      return s.ball.height;
+    };
+
+    expect(runHigh(false)).toBeLessThanOrEqual(1.2);
+    expect(runHigh(true)).toBeGreaterThan(1.2);
+  });
+
   it('projects babble height from the Rapier 3D sphere center while gravity lands it on the floor', () => {
     const s = setup();
     park(s, ['left-1']);

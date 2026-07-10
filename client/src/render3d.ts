@@ -86,6 +86,15 @@ export function authoritativeBallQuaternion(ball: { rotation?: { x: number; y: n
   return { x: q.x / length, y: q.y / length, z: q.z / length, w: q.w / length };
 }
 
+export function ballVisualProfile(lowPower: boolean) {
+  return {
+    surface: 'proceduralTexture' as const,
+    geometricPatches: false,
+    seamRings: false,
+    blobShadow: lowPower
+  };
+}
+
 export function ballRenderElevation(ball: { radius: number; height?: number }): {
   centerYAboveTurf: number;
   shadowYAboveTurf: number;
@@ -183,7 +192,7 @@ export class BabbleLeague3DRenderer {
     this.lowPower = detectSoftwareWebGL();
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.lowPower, preserveDrawingBuffer: true });
     this.renderer.shadowMap.enabled = !this.lowPower;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setPixelRatio(this.lowPower ? 0.5 : Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setClearColor(MAPS.stadium.theme.sky, 1);
     this.scene.fog = new THREE.Fog(MAPS.stadium.theme.fog, 34, 70);
@@ -195,7 +204,9 @@ export class BabbleLeague3DRenderer {
     const sun = new THREE.DirectionalLight(0xfff2df, 3.1);
     sun.position.set(-6, 15, 9); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.left = -16; sun.shadow.camera.right = 16; sun.shadow.camera.top = 13; sun.shadow.camera.bottom = -13;
-    sun.shadow.bias = -0.0004;
+    sun.shadow.bias = -0.0001;
+    sun.shadow.normalBias = 0.025;
+    sun.shadow.intensity = 0.42;
     this.scene.add(sun);
     const fill = new THREE.DirectionalLight(0x9fb8ff, 0.7);
     fill.position.set(7, 9, -11);
@@ -522,6 +533,47 @@ export class BabbleLeague3DRenderer {
     return tex;
   }
 
+  private soccerBallTexture() {
+    const key = 'soccerBallTextureV2';
+    let tex = this.textCache.get(key);
+    if (tex) return tex;
+    const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+    const g = c.getContext('2d')!;
+    const spots = [
+      [512, 72], [258, 142], [766, 142],
+      [405, 250], [620, 238], [188, 286], [836, 286],
+      [298, 398], [530, 412], [742, 392]
+    ] as const;
+    g.fillStyle = '#f4f0df';
+    g.fillRect(0, 0, c.width, c.height);
+    g.strokeStyle = '#b8b2a2';
+    g.lineWidth = 5;
+    g.lineCap = 'round';
+    const links = [[0,1],[0,2],[0,3],[0,4],[1,3],[1,5],[2,4],[2,6],[3,4],[3,7],[3,8],[4,8],[4,9],[4,6],[5,7],[6,9],[7,8],[8,9]] as const;
+    for (const [a, b] of links) {
+      g.beginPath(); g.moveTo(spots[a][0], spots[a][1]); g.lineTo(spots[b][0], spots[b][1]); g.stroke();
+    }
+    const pentagon = (x: number, y: number, radius: number, rotation: number) => {
+      g.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const angle = rotation + i * Math.PI * 2 / 5;
+        const px = x + Math.cos(angle) * radius;
+        const py = y + Math.sin(angle) * radius;
+        if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.closePath();
+      g.fillStyle = '#242526'; g.fill();
+      g.strokeStyle = '#111214'; g.lineWidth = 3; g.stroke();
+    };
+    spots.forEach(([x, y], i) => pentagon(x, y, i === 0 || i > 6 ? 38 : 34, -Math.PI / 2 + i * 0.17));
+    tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.anisotropy = 8;
+    this.textCache.set(key, tex);
+    return tex;
+  }
+
   private contactShadowMaterial(opacity: number) {
     const key = `contactShadow:${opacity.toFixed(2)}`;
     return this.texturedMat(key, () => new THREE.MeshBasicMaterial({
@@ -645,28 +697,21 @@ export class BabbleLeague3DRenderer {
     }
     this.lastBallPos = { x: p.x, y: p.y };
     const elevation = ballRenderElevation(state.ball);
-    this.blobShadow(w.x, w.z, elevation.shadowRadius, elevation.shadowOpacity, elevation.shadowYAboveTurf);
+    const visual = ballVisualProfile(this.lowPower);
+    if (visual.blobShadow) this.blobShadow(w.x, w.z, elevation.shadowRadius, elevation.shadowOpacity, elevation.shadowYAboveTurf);
     const grp = new THREE.Group(); grp.position.set(w.x, TURF_Y + elevation.centerYAboveTurf, w.z);
     grp.quaternion.copy(this.ballQuat);
     this.dynamic.add(grp);
-    const ball = this.mesh(grp, new THREE.SphereGeometry(r, 36, 24), this.mat(0xfdfdfa, 0.3), 0, 0, 0, true);
+    const material = this.texturedMat('soccerBallSurfaceV2', () => new THREE.MeshStandardMaterial({
+      map: this.soccerBallTexture(),
+      roughness: 0.62,
+      metalness: 0,
+      color: 0xffffff
+    }));
+    const ball = this.mesh(grp, this.geo('soccerBallSphereV2', () => new THREE.SphereGeometry(1, 48, 32)), material, 0, 0, 0, true);
+    ball.scale.setScalar(r);
     ball.castShadow = true;
-    // pentagon patches placed on the surface
-    const patch = this.geo('ballPatch', () => new THREE.CircleGeometry(0.32, 5));
-    const dirs = [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0.35, 0.4), new THREE.Vector3(-1, 0.35, -0.4), new THREE.Vector3(0.4, -0.2, 1), new THREE.Vector3(-0.4, -0.2, -1), new THREE.Vector3(1, -0.4, -0.8), new THREE.Vector3(-1, -0.4, 0.8)];
-    for (const d of dirs) {
-      const spot = new THREE.Mesh(patch, this.mat(0x22201e, 0.6));
-      const n = d.clone().normalize();
-      spot.position.copy(n.clone().multiplyScalar(r * 1.001));
-      spot.lookAt(n.clone().multiplyScalar(2));
-      spot.scale.setScalar(r);
-      grp.add(spot);
-    }
-    // thin seam rings so the roll reads clearly even from far away
-    for (const rx of [0, Math.PI / 2]) {
-      const seam = new THREE.Mesh(this.geo('ballSeam', () => new THREE.TorusGeometry(1, 0.035, 8, 40)), this.mat(0xd8d5cf, 0.5));
-      seam.scale.setScalar(r * 0.998); seam.rotation.x = rx; seam.castShadow = false; grp.add(seam);
-    }
+    ball.receiveShadow = false;
   }
 
   private addPowerBox(p: Vec, color: string) {

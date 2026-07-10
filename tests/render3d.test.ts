@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, MAPS, MAP_IDS } from '../shared/types';
-import { authoritativeBallQuaternion, ballRenderElevation, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { authoritativeBallQuaternion, ballRenderElevation, ballVisualProfile, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT } from '../shared/airborne';
 
 describe('3D renderer coordinate mapping', () => {
@@ -107,6 +107,16 @@ describe('3D renderer coordinate mapping', () => {
     expect(authoritativeBallQuaternion({ rotation: { x: Number.NaN, y: 0, z: 0, w: 1 } })).toBeNull();
     expect(authoritativeBallQuaternion({ rotation: { x: 0, y: 0, z: 0, w: 0 } })).toBeNull();
     expect(authoritativeBallQuaternion({})).toBeNull();
+  });
+
+  it('uses a single textured ball surface and never doubles real and blob shadows', () => {
+    expect(ballVisualProfile(false)).toEqual({
+      surface: 'proceduralTexture',
+      geometricPatches: false,
+      seamRings: false,
+      blobShadow: false
+    });
+    expect(ballVisualProfile(true).blobShadow).toBe(true);
   });
 
   it('renders elevated balls above a turf-anchored shadow', () => {

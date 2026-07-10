@@ -35,7 +35,10 @@ import type { BallImpactObservation } from './airborne';
 import {
   BABBLE_IMPACT_MAX_VERTICAL_VELOCITY,
   BEACH_BALL_ACTIVATION_VERTICAL_VELOCITY,
+  BALL_MAX_HEIGHT,
+  NORMAL_BALL_MAX_HEIGHT,
   BALL_REST_HEIGHT,
+  ballGravity,
   ballImpactLiftVelocity,
   ballRestHeight,
   babbleRestHeight,
@@ -640,7 +643,13 @@ function clampAllSpeeds(state: GameState) {
 function applyLowSpeedBrake(state: GameState) {
   const threshold = tune(state, 'lowSpeedBrakeThreshold');
   const factor = Math.min(0.99, tune(state, 'lowSpeedBrakeFactor'));
-  for (const vel of [state.ball.vel, ...state.babbles.map(b => b.vel)]) {
+  const ballAirborne = state.ball.height > ballRestHeight(state.ball.radius) + 0.02 || Math.abs(state.ball.verticalVelocity) > 0.05;
+  const movers = [
+    { vel: state.ball.vel, skip: ballAirborne },
+    ...state.babbles.map(b => ({ vel: b.vel, skip: false }))
+  ];
+  for (const { vel, skip } of movers) {
+    if (skip) continue;
     const s = Math.hypot(vel.x, vel.y);
     if (s > 0 && s < threshold) {
       vel.x *= factor;
@@ -659,8 +668,17 @@ function beachBallActive(state: GameState) {
 }
 
 function applyBallImpactLift(state: GameState, impacts: readonly BallImpactObservation[]) {
-  const lift = ballImpactLiftVelocity(impacts, beachBallActive(state));
-  if (lift > 0) state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, lift);
+  const beachy = beachBallActive(state);
+  const lift = ballImpactLiftVelocity(impacts, beachy);
+  if (lift > 0) {
+    // Re-hits while already airborne must not stack enough vertical energy to
+    // exceed the observed envelope. Preserve current physical velocity when it
+    // is already larger; otherwise cap the new impulse by remaining height.
+    const ceiling = beachy ? BALL_MAX_HEIGHT : NORMAL_BALL_MAX_HEIGHT;
+    const remainingHeight = Math.max(0, ceiling - state.ball.height);
+    const allowedAtHeight = Math.sqrt(2 * ballGravity(beachy) * remainingHeight);
+    state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, Math.min(lift, allowedAtHeight));
+  }
   for (const impact of impacts) {
     const hop = Math.max(0, Math.min(BABBLE_IMPACT_MAX_VERTICAL_VELOCITY * 0.82, (impact.impactSpeed - 260) / 420));
     if (hop > 0) launchBabbleHop(state, impact.babbleId, hop);

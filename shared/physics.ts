@@ -12,10 +12,13 @@
 import RAPIER from '@dimforge/rapier3d-deterministic-compat';
 import type { BallImpactObservation } from './airborne';
 import {
+  BALL_LANDING_REST_VELOCITY,
   BALL_MAX_HEIGHT,
+  NORMAL_BALL_MAX_HEIGHT,
   BABBLE_GRAVITY,
   babbleRestHeight,
   ballGravity,
+  ballLandingBounce,
   ballRestHeight,
   normalizeBabbleVertical,
   normalizeBallVertical
@@ -119,14 +122,16 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
   syncBall(state, cache);
   const ballPreStep = {
     pos: { ...state.ball.pos },
-    vel: { ...state.ball.vel }
+    vel: { ...state.ball.vel },
+    height: state.ball.height,
+    verticalVelocity: state.ball.verticalVelocity
   };
   const touchable = new Map<number, BabbleImpactSnapshot>();
   for (const b of state.babbles) syncBabble(state, cache, b, touchable);
 
   world.step(events);
 
-  projectBall(state, cache.ballBody);
+  projectBall(state, cache.ballBody, ballPreStep.height, ballPreStep.verticalVelocity, dt);
   for (const b of state.babbles) projectBabble(b, cache.babbles.get(b.id)!.body);
 
   // Ball possession. A babble still pressed against the ball (dribbling)
@@ -268,10 +273,15 @@ function syncBall(state: GameState, cache: PhysicsCache) {
   } else {
     body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
-  body.enableCcd(Math.hypot(state.ball.vel.x, state.ball.vel.y, state.ball.verticalVelocity * PX_PER_METER) > CCD_MIN_SPEED);
   const beachy = isBeachy(state);
+  // Airborne balls keep their carry because there is no turf-contact drag.
+  // This reduces damping in flight but never increases horizontal speed.
+  const groundDrag = dragTune(state, beachy ? 'beachBallDragPerTick' : 'ballDragPerTick');
+  const airborne = state.ball.height > ballRestHeight(state.ball.radius) + 0.02 || state.ball.verticalVelocity > 0.05;
+  const effectiveDrag = airborne ? 1 - (1 - groundDrag) * 0.2 : groundDrag;
+  body.setLinearDamping(dampingFromDrag(effectiveDrag));
+  body.enableCcd(Math.hypot(state.ball.vel.x, state.ball.vel.y, state.ball.verticalVelocity * PX_PER_METER) > CCD_MIN_SPEED);
   if (beachy !== cache.beachy) {
-    body.setLinearDamping(beachy ? dampingFromDrag(dragTune(state, 'beachBallDragPerTick')) : dampingFromDrag(dragTune(state, 'ballDragPerTick')));
     body.setGravityScale(ballGravity(beachy) / WORLD_GRAVITY, true);
     cache.beachy = beachy;
   }
@@ -312,7 +322,7 @@ function syncBabble(
   });
 }
 
-function projectBall(state: GameState, body: RAPIER.RigidBody) {
+function projectBall(state: GameState, body: RAPIER.RigidBody, preHeight: number, preVerticalVelocity: number, dt: number) {
   const p = body.translation();
   const v = body.linvel();
   const r = body.rotation();
@@ -322,20 +332,26 @@ function projectBall(state: GameState, body: RAPIER.RigidBody) {
   state.ball.vel.x = v.x * PX_PER_METER;
   state.ball.vel.y = v.z * PX_PER_METER;
   const rest = ballRestHeight(state.ball.radius);
+  const maxHeight = isBeachy(state) ? BALL_MAX_HEIGHT : NORMAL_BALL_MAX_HEIGHT;
   let height = p.y;
   let vy = v.y;
   if (height <= rest + REST_EPS && vy <= 0) {
     height = rest;
-    vy = 0;
+    const beachy = isBeachy(state);
+    const impactVelocity = preVerticalVelocity - ballGravity(beachy) * dt;
+    const newlyLanded = preHeight > rest + REST_EPS;
+    vy = newlyLanded && impactVelocity < -BALL_LANDING_REST_VELOCITY
+      ? -impactVelocity * ballLandingBounce(beachy)
+      : 0;
     body.setTranslation({ x: p.x, y: rest, z: p.z }, true);
-    body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
-  } else if (height >= BALL_MAX_HEIGHT && vy > 0) {
-    height = BALL_MAX_HEIGHT;
+    body.setLinvel({ x: v.x, y: vy, z: v.z }, true);
+  } else if (height >= maxHeight && vy > 0) {
+    height = maxHeight;
     vy = 0;
-    body.setTranslation({ x: p.x, y: BALL_MAX_HEIGHT, z: p.z }, true);
+    body.setTranslation({ x: p.x, y: maxHeight, z: p.z }, true);
     body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
   }
-  state.ball.height = Math.max(rest, Math.min(BALL_MAX_HEIGHT, height));
+  state.ball.height = Math.max(rest, Math.min(maxHeight, height));
   state.ball.verticalVelocity = vy;
   state.ball.rotation = { x: r.x, y: r.y, z: r.z, w: r.w };
   state.ball.angularVelocity = { x: av.x, y: av.y, z: av.z };
