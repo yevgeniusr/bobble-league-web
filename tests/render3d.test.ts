@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, MAPS, MAP_IDS } from '../shared/types';
 import { authoritativeBallQuaternion, ballRenderElevation, ballVisualProfile, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
-import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT } from '../shared/airborne';
+import { BALL_REST_HEIGHT } from '../shared/airborne';
 
 describe('3D renderer coordinate mapping', () => {
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
@@ -81,6 +81,9 @@ describe('3D renderer coordinate mapping', () => {
     expect(metrics.mouthBottomZ).toBeCloseTo(fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight }).z);
     expect(metrics.mouthHalfHeight).toBeCloseTo(fieldRadiusToWorld(FIELD.goalHeight) / 2);
     expect(metrics.depth).toBeCloseTo(fieldRadiusToWorld(FIELD.goalDepth));
+    expect(metrics.pocketFloorDepth).toBeCloseTo(metrics.depth);
+    expect(metrics.pocketFloorWidth).toBeCloseTo(fieldRadiusToWorld(FIELD.goalHeight));
+    expect(metrics.sideWallLength).toBeCloseTo(metrics.depth);
   });
 
   it('derives ball roll rotation from authoritative spin so it matches travel direction', () => {
@@ -131,10 +134,10 @@ describe('3D renderer coordinate mapping', () => {
     expect(high.shadowRadius).toBeGreaterThan(rest.shadowRadius);
   });
 
-  it('scales beach-ball render height up to the original giant-ball range', () => {
-    const beach = ballRenderElevation({ radius: FIELD.ballRadius * 1.6, height: BALL_MAX_HEIGHT });
+  it('renders arbitrary authoritative Rapier height without a visual ceiling', () => {
+    const beach = ballRenderElevation({ radius: FIELD.ballRadius * 1.6, height: 3.4 });
 
-    expect(beach.centerYAboveTurf).toBeCloseTo(BALL_MAX_HEIGHT);
+    expect(beach.centerYAboveTurf).toBeCloseTo(3.4);
     expect(beach.shadowRadius).toBeGreaterThan(fieldRadiusToWorld(FIELD.ballRadius * 1.6));
     expect(beach.shadowOpacity).toBeLessThan(0.1);
   });

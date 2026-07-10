@@ -17,6 +17,7 @@ import {
   InventoryItem,
   MAPS,
   MapId,
+  MapPhysicsMultipliers,
   PlayerInput,
   PlayerSide,
   PlayerState,
@@ -29,17 +30,10 @@ import {
   normalizeMapId
 } from './types';
 import { buildAbilityUsedEvent, buildBoxPickupEvent, buildGoalScoredEvent, recordAnalyticsEvent } from './analytics';
-import { stepPhysics } from './physics';
+import { applyBabblePlanarImpulse, stepPhysics } from './physics';
 import { PHYSICS_CONFIG } from './physicsConfig';
-import type { BallImpactObservation } from './airborne';
 import {
-  BABBLE_IMPACT_MAX_VERTICAL_VELOCITY,
-  BEACH_BALL_ACTIVATION_VERTICAL_VELOCITY,
-  BALL_MAX_HEIGHT,
-  NORMAL_BALL_MAX_HEIGHT,
   BALL_REST_HEIGHT,
-  ballGravity,
-  ballImpactLiftVelocity,
   ballRestHeight,
   babbleRestHeight,
   normalizeBabbleVertical,
@@ -63,16 +57,7 @@ export const MAX_RESOLVE_MS = 8000;
 // no `process`, so players get the original-game 20s planning window.
 const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 20000;
 const ALL_AIMED_RESOLVE_GRACE_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_ALL_AIMED_GRACE_MS)) || 3000;
-export const MAX_SPEED = PHYSICS_CONFIG.maxSpeed;
-export const BUMPER_BOOST = PHYSICS_CONFIG.bumperBoost;
-// Bumper hits are event moments: even a graze exits at a strong minimum speed.
-export const BUMPER_MIN_EXIT_BALL = PHYSICS_CONFIG.bumperMinExitBall;
-export const BUMPER_MIN_EXIT_BABBLE = PHYSICS_CONFIG.bumperMinExitBabble;
-// Low-speed brake: extra per-tick decay below this speed so pieces stop
-// crisply instead of gliding for seconds at a visible crawl.
-export const LOW_SPEED_BRAKE_THRESHOLD = PHYSICS_CONFIG.lowSpeedBrakeThreshold;
-// Big Bumpers power play: noticeably stronger corner hits plus higher restitution.
-export const BIG_BUMPER_BOOST_MULT = PHYSICS_CONFIG.bigBumperBoostMult;
+// Big Bumpers are larger Rapier colliders with higher material restitution.
 export const BIG_BUMPER_RESTITUTION = PHYSICS_CONFIG.bigBumperRestitution;
 const BUMPER_EVENT_TTL_MS = 1500;
 const RAMP_EVENT_TTL_MS = 1500;
@@ -81,7 +66,7 @@ const RAMP_EVENT_TTL_MS = 1500;
 export const BOOST_PAD_ACCEL = PHYSICS_CONFIG.boostPadAccel;
 // Trampolines are physical Rapier 3D wedges; no minimum exit speed or boost
 // constant exists in the rule layer.
-export { BALL_MAX_HEIGHT, BALL_REST_HEIGHT, ballRestHeight } from './airborne';
+export { BALL_REST_HEIGHT, ballRestHeight } from './airborne';
 export { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from './types';
 
 const ballAtKickoff = (vel: Vec = { x: 0, y: 0 }) => ({
@@ -149,7 +134,7 @@ function matchConfig(mode: GameMode, mapId: MapId) {
 }
 
 const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
-const tune = (state: GameState, key: keyof typeof PHYSICS_CONFIG) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
+const tune = (state: GameState, key: keyof MapPhysicsMultipliers) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
 
 function syncBallVerticalDefaults(state: GameState) {
   const v = normalizeBallVertical(state.ball.radius, state.ball.height, state.ball.verticalVelocity);
@@ -364,11 +349,9 @@ export function stepGame(state: GameState, _inputs: Record<string, PlayerInput> 
   // walls (with open goal mouths), placed blocks and every ball/babble
   // collision.
   const physicsResult = stepPhysics(state, dt);
-  clampAllSpeeds(state);
-  applyBallImpactLift(state, physicsResult.ballBabbleImpacts);
-  resolveFieldObjects(state, dt, now);
-  resolveCornerBumpers(state, now);
-  applyLowSpeedBrake(state);
+  resolveFieldObjects(state, now);
+  for (const hit of physicsResult.bumperHits) pushBumperEvent(state, hit, now);
+  state.bumperEvents = state.bumperEvents.filter(e => now - e.at < BUMPER_EVENT_TTL_MS).slice(-12);
   collectBoxesForBabbles(state, now);
   const goal = detectGoal(state);
   if (goal) return handleClassicGoal(state, goal, now, rng);
@@ -393,11 +376,11 @@ function beginResolving(state: GameState, now: number) {
     const babble = state.babbles.find(b => b.id === intent.babbleId);
     if (!babble) continue;
 
-    const boost = babble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
-    const bigHead = babble.effects.some(e => e.type === 'bigHead' && e.untilTurn >= state.turn) ? 1.3 : 1;
     const impulseScale = tune(state, 'babbleImpulseScale');
-    babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * impulseScale;
-    babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * impulseScale;
+    applyBabblePlanarImpulse(state, babble.id, {
+      x: Math.cos(intent.aimAngle) * intent.impulse * impulseScale,
+      y: Math.sin(intent.aimAngle) * intent.impulse * impulseScale
+    });
     babble.lastLaunchedTurn = state.turn;
   }
   state.phase = 'resolving';
@@ -632,86 +615,13 @@ function updateBallSpin(state: GameState, dt: number) {
   b.spin.y += (b.vel.y * dt) / b.radius;
 }
 
-function clampAllSpeeds(state: GameState) {
-  const max = tune(state, 'maxSpeed');
-  clampSpeed(state.ball.vel, max);
-  for (const b of state.babbles) clampSpeed(b.vel, max);
-}
-
-// Below the brake threshold pieces decay extra fast, so turns end with a crisp
-// stop instead of a long low-speed glide (settling feels immediate).
-function applyLowSpeedBrake(state: GameState) {
-  const threshold = tune(state, 'lowSpeedBrakeThreshold');
-  const factor = Math.min(0.99, tune(state, 'lowSpeedBrakeFactor'));
-  const ballAirborne = state.ball.height > ballRestHeight(state.ball.radius) + 0.02 || Math.abs(state.ball.verticalVelocity) > 0.05;
-  const movers = [
-    { vel: state.ball.vel, skip: ballAirborne },
-    ...state.babbles.map(b => ({ vel: b.vel, skip: false }))
-  ];
-  for (const { vel, skip } of movers) {
-    if (skip) continue;
-    const s = Math.hypot(vel.x, vel.y);
-    if (s > 0 && s < threshold) {
-      vel.x *= factor;
-      vel.y *= factor;
-    }
-  }
-}
-
 function syncAirborneDefaults(state: GameState) {
   syncBallVerticalDefaults(state);
   for (const b of state.babbles) syncBabbleVerticalDefaults(b);
 }
 
-function beachBallActive(state: GameState) {
-  return state.beachBallUntilTurn !== null && state.beachBallUntilTurn >= state.turn;
-}
-
-function applyBallImpactLift(state: GameState, impacts: readonly BallImpactObservation[]) {
-  const beachy = beachBallActive(state);
-  const lift = ballImpactLiftVelocity(impacts, beachy);
-  if (lift > 0) {
-    // Re-hits while already airborne must not stack enough vertical energy to
-    // exceed the observed envelope. Preserve current physical velocity when it
-    // is already larger; otherwise cap the new impulse by remaining height.
-    const ceiling = beachy ? BALL_MAX_HEIGHT : NORMAL_BALL_MAX_HEIGHT;
-    const remainingHeight = Math.max(0, ceiling - state.ball.height);
-    const allowedAtHeight = Math.sqrt(2 * ballGravity(beachy) * remainingHeight);
-    state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, Math.min(lift, allowedAtHeight));
-  }
-  for (const impact of impacts) {
-    const hop = Math.max(0, Math.min(BABBLE_IMPACT_MAX_VERTICAL_VELOCITY * 0.82, (impact.impactSpeed - 260) / 420));
-    if (hop > 0) launchBabbleHop(state, impact.babbleId, hop);
-  }
-}
-
-
-function launchBabbleHop(state: GameState, babbleId: string | undefined, verticalVelocity: number) {
-  if (!babbleId) return;
-  const babble = state.babbles.find(b => b.id === babbleId);
-  if (!babble) return;
-  syncBabbleVerticalDefaults(babble);
-  babble.verticalVelocity = Math.max(babble.verticalVelocity, verticalVelocity);
-}
-
 export function bigBumpersActive(state: GameState) {
   return state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
-}
-
-function resolveCornerBumpers(state: GameState, now: number) {
-  const big = bigBumpersActive(state);
-  const map = mapOf(state);
-  const bumperRadius = big ? map.layout.bigBumperRadius : map.layout.bumperRadius;
-  const baseBoost = tune(state, 'bumperBoost');
-  const boost = big ? baseBoost * tune(state, 'bigBumperBoostMult') : baseBoost;
-  const maxSpeed = tune(state, 'maxSpeed');
-  for (const c of map.layout.bumpers) {
-    for (const b of state.babbles) {
-      if (staticCircleBounce(b.pos, b.vel, b.radius, c, bumperRadius, big ? 1.05 : 0.92, boost * 0.85, tune(state, 'bumperMinExitBabble'), maxSpeed)) pushBumperEvent(state, c, now);
-    }
-    if (staticCircleBounce(state.ball.pos, state.ball.vel, state.ball.radius, c, bumperRadius, big ? tune(state, 'bigBumperRestitution') : 1.04, boost, tune(state, 'bumperMinExitBall'), maxSpeed)) pushBumperEvent(state, c, now);
-  }
-  state.bumperEvents = state.bumperEvents.filter(e => now - e.at < BUMPER_EVENT_TTL_MS).slice(-12);
 }
 
 function pushBumperEvent(state: GameState, pos: Vec, now: number) {
@@ -720,64 +630,20 @@ function pushBumperEvent(state: GameState, pos: Vec, now: number) {
   state.bumperEvents.push({ pos: { ...pos }, at: now });
 }
 
-function staticCircleBounce(pos: Vec, vel: Vec, radius: number, center: Vec, bumperRadius: number, restitution: number, boost = 0, minExitSpeed = 0, maxSpeed = MAX_SPEED) {
-  const dx = pos.x - center.x, dy = pos.y - center.y;
-  const d = Math.hypot(dx, dy) || 0.0001;
-  const min = radius + bumperRadius;
-  if (d >= min) return false;
-  const nx = dx / d, ny = dy / d;
-  pos.x = center.x + nx * min;
-  pos.y = center.y + ny * min;
-  const into = vel.x * nx + vel.y * ny;
-  if (into < 0) {
-    vel.x -= (1 + restitution) * into * nx;
-    vel.y -= (1 + restitution) * into * ny;
-    vel.x += nx * boost;
-    vel.y += ny * boost;
-    // Min-exit speed: weak grazes still leave the bumper as a real hit, so
-    // every bumper contact reads as an intentional pinball moment.
-    const exit = Math.hypot(vel.x, vel.y);
-    if (exit > 0 && exit < minExitSpeed) {
-      vel.x *= minExitSpeed / exit;
-      vel.y *= minExitSpeed / exit;
-    }
-    clampSpeed(vel, maxSpeed);
-    return true;
-  }
-  return false;
-}
-
-function clampSpeed(vel: Vec, max = MAX_SPEED) {
-  const s = Math.hypot(vel.x, vel.y);
-  if (s > max) { vel.x *= max / s; vel.y *= max / s; }
-}
-
-function resolveFieldObjects(state: GameState, dt: number, now = Date.now()) {
-  const boostPadAccel = tune(state, 'boostPadAccel');
-  const maxSpeed = tune(state, 'maxSpeed');
-  const movers: { pos: Vec; vel: Vec; radius: number; height: number; verticalVelocity: number; ghosted: boolean; mover: 'ball' | 'babble'; moverId?: string }[] = [
-    { pos: state.ball.pos, vel: state.ball.vel, radius: state.ball.radius, height: state.ball.height, verticalVelocity: state.ball.verticalVelocity, ghosted: false, mover: 'ball' },
-    ...state.babbles.map(b => ({ pos: b.pos, vel: b.vel, radius: b.radius, height: b.height, verticalVelocity: b.verticalVelocity, ghosted: b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn), mover: 'babble' as const, moverId: b.id }))
+function resolveFieldObjects(state: GameState, now = Date.now()) {
+  const movers: { pos: Vec; radius: number; verticalVelocity: number; ghosted: boolean; mover: 'ball' | 'babble'; moverId?: string }[] = [
+    { pos: state.ball.pos, radius: state.ball.radius, verticalVelocity: state.ball.verticalVelocity, ghosted: false, mover: 'ball' },
+    ...state.babbles.map(b => ({ pos: b.pos, radius: b.radius, verticalVelocity: b.verticalVelocity, ghosted: b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn), mover: 'babble' as const, moverId: b.id }))
   ];
   for (const o of state.fieldObjects) {
-    if (o.untilTurn < state.turn) continue;
+    if (o.untilTurn < state.turn || o.type !== 'ramp') continue;
     for (const m of movers) {
-      if (o.type === 'boost') {
-        if (dist(m.pos, o.pos) <= 70 + m.radius) {
-          m.vel.x += Math.cos(o.angle) * boostPadAccel * dt;
-          m.vel.y += Math.sin(o.angle) * boostPadAccel * dt;
-          clampSpeed(m.vel, maxSpeed);
-        }
-      } else if (o.type === 'stickyGoo') {
-        if (dist(m.pos, o.pos) <= 80 + m.radius) { m.vel.x *= 0.93; m.vel.y *= 0.93; }
-      } else if (o.type === 'ramp') {
-        const dx = m.pos.x - o.pos.x;
-        const dy = m.pos.y - o.pos.y;
-        const along = dx * Math.cos(o.angle) + dy * Math.sin(o.angle);
-        const lateral = -dx * Math.sin(o.angle) + dy * Math.cos(o.angle);
-        if (!m.ghosted && Math.abs(along) <= RAMP_HALF_LEN + m.radius && Math.abs(lateral) <= RAMP_HALF_WIDTH + m.radius && m.verticalVelocity > 0.05) {
-          pushRampEvent(state, o.pos, m.mover, m.moverId, now);
-        }
+      const dx = m.pos.x - o.pos.x;
+      const dy = m.pos.y - o.pos.y;
+      const along = dx * Math.cos(o.angle) + dy * Math.sin(o.angle);
+      const lateral = -dx * Math.sin(o.angle) + dy * Math.cos(o.angle);
+      if (!m.ghosted && Math.abs(along) <= RAMP_HALF_LEN + m.radius && Math.abs(lateral) <= RAMP_HALF_WIDTH + m.radius && m.verticalVelocity > 0.05) {
+        pushRampEvent(state, o.pos, m.mover, m.moverId, now);
       }
     }
   }
@@ -828,9 +694,6 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, _
       state.ball.radius = FIELD.ballRadius * 1.6;
       state.beachBallUntilTurn = state.turn;
       state.ball.height = Math.max(ballRestHeight(state.ball.radius), state.ball.height);
-      state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, BEACH_BALL_ACTIVATION_VERTICAL_VELOCITY * 0.45);
-      state.ball.vel.x *= 1.25;
-      state.ball.vel.y *= 1.25;
       break;
     case 'moveBall':
       state.ball.pos = safeFieldPos(use.position, { x: FIELD.width / 2, y: FIELD.height / 2 }, state.ball.radius);
@@ -844,7 +707,7 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, _
       break;
     case 'swapGoals': state.swappedGoalsUntilTurn = state.turn + 1; break;
     case 'bigBumpers': state.bigBumpersUntilTurn = state.turn; break;
-    case 'boost': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'boost', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); if (target) addBabbleEffect(target, 'boost', state.turn + 1); break;
+    case 'boost': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'boost', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
     case 'stickyGoo': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'stickyGoo', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: 0, untilTurn: state.turn + 1 }); break;
     case 'ramp': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'ramp', owner: side, pos: safeFieldPos(use.position, { x: FIELD.width / 2, y: FIELD.height / 2 }, RAMP_HALF_LEN), angle: use.angle ?? -Math.PI / 4, untilTurn: state.turn }); break;
     case 'block': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'block', owner: side, pos: use.position ?? { x: side === 'left' ? 85 : FIELD.width - 85, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
@@ -896,21 +759,18 @@ function expireTurnEffects(state: GameState) {
   }
 }
 
-// Goal trigger tolerance: any penetration of the goal-line plane deeper than
-// this scores. Outside the mouth the walls clamp the ball at exactly pos.x ==
-// radius, so the epsilon keeps wall-contact jitter from ever counting.
+// A goal requires the whole ball to cross the line. Partial overlap stays live
+// so a goalie can enter the pocket, get behind the ball, and clear it.
 export const GOAL_TRIGGER_EPS = 0.5;
 
 function detectGoal(state: GameState): PlayerSide | null {
   const b = state.ball;
-  if (b.pos.y < FIELD.goalY || b.pos.y > FIELD.goalY + FIELD.goalHeight) return null;
+  if (b.pos.y < FIELD.goalY + b.radius || b.pos.y > FIELD.goalY + FIELD.goalHeight - b.radius) return null;
   const swapped = state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn >= state.turn;
   const leftGoalScorer: PlayerSide = swapped ? 'left' : 'right';
   const rightGoalScorer: PlayerSide = swapped ? 'right' : 'left';
-  // Score as soon as the ball overlaps the goal mouth plane. There is no dead
-  // pocket: the ball can never rest inside a gate without the goal counting.
-  if (b.pos.x < b.radius - GOAL_TRIGGER_EPS) return leftGoalScorer;
-  if (b.pos.x > FIELD.width - b.radius + GOAL_TRIGGER_EPS) return rightGoalScorer;
+  if (b.pos.x <= -b.radius + GOAL_TRIGGER_EPS) return leftGoalScorer;
+  if (b.pos.x >= FIELD.width + b.radius - GOAL_TRIGGER_EPS) return rightGoalScorer;
   return null;
 }
 

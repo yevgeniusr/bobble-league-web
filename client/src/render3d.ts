@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec, normalizeMapId } from '../../shared/types';
-import { BALL_MAX_HEIGHT, babbleRestHeight, ballRestHeight } from '../../shared/airborne';
+import { babbleRestHeight, ballRestHeight } from '../../shared/airborne';
 
 export type WorldXZ = { x: number; z: number };
 export type PlacingGhost = { type: FieldObjectType; pos: Vec; angle: number };
@@ -59,7 +59,7 @@ export function bumperVisualFootprint(mapId: MapId, powered = false): { collider
   };
 }
 
-export function goalVisualMetrics(): { leftGoalLineX: number; rightGoalLineX: number; mouthTopZ: number; mouthBottomZ: number; mouthHalfHeight: number; depth: number } {
+export function goalVisualMetrics(): { leftGoalLineX: number; rightGoalLineX: number; mouthTopZ: number; mouthBottomZ: number; mouthHalfHeight: number; depth: number; pocketFloorDepth: number; pocketFloorWidth: number; sideWallLength: number } {
   const mouthTopZ = fieldToWorld({ x: 0, y: FIELD.goalY }).z;
   const mouthBottomZ = fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight }).z;
   return {
@@ -68,7 +68,10 @@ export function goalVisualMetrics(): { leftGoalLineX: number; rightGoalLineX: nu
     mouthTopZ,
     mouthBottomZ,
     mouthHalfHeight: (mouthBottomZ - mouthTopZ) / 2,
-    depth: fieldRadiusToWorld(FIELD.goalDepth)
+    depth: fieldRadiusToWorld(FIELD.goalDepth),
+    pocketFloorDepth: fieldRadiusToWorld(FIELD.goalDepth),
+    pocketFloorWidth: mouthBottomZ - mouthTopZ,
+    sideWallLength: fieldRadiusToWorld(FIELD.goalDepth)
   };
 }
 
@@ -102,7 +105,8 @@ export function ballRenderElevation(ball: { radius: number; height?: number }): 
   shadowOpacity: number;
 } {
   const rest = ballRestHeight(ball.radius);
-  const height = Number.isFinite(ball.height) ? Math.min(BALL_MAX_HEIGHT, Math.max(rest, ball.height!)) : rest;
+  // Render the authoritative Rapier height without an artificial ceiling.
+  const height = Number.isFinite(ball.height) ? Math.max(rest, ball.height!) : rest;
   const separation = Math.max(0, height - rest);
   const r = fieldRadiusToWorld(ball.radius);
   return {
@@ -367,7 +371,7 @@ export class BabbleLeague3DRenderer {
     // dedicated tintable materials so Swap Goals can visibly recolor the gates
     const frameTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.32, metalness: 0.06 });
     const mouthTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.55, metalness: 0.03, transparent: true, opacity: 0.46 });
-    const panelTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.62, metalness: 0.03, transparent: true, opacity: 0.74 });
+    const panelTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.62, metalness: 0.03, transparent: true, opacity: 0.28, depthWrite: false });
     this.goalTint[key].push(frameTint, mouthTint, panelTint);
     this.matCache.set(`goalFrame:${key}`, frameTint);
     this.matCache.set(`goalMouth:${key}`, mouthTint);
@@ -377,9 +381,23 @@ export class BabbleLeague3DRenderer {
     // back-wall depth. Circular hoops looked like bogus colliders here.
     const mouth = this.mesh(g, new THREE.BoxGeometry(0.12, 0.05, halfGoal * 2), mouthTint, x, TURF_Y + 0.03, 0);
     mouth.receiveShadow = false;
-    this.mesh(g, new THREE.BoxGeometry(depth, 0.035, halfGoal * 2 + 0.28), panelTint, pocketX, TURF_Y + 0.01, 0);
+    // Extend the board and textured turf through the complete physical pocket.
+    // A goalie therefore remains visibly supported after crossing the line.
+    this.mesh(g, new THREE.BoxGeometry(depth, 0.24, halfGoal * 2), this.mat(theme.fieldBase, 0.85), pocketX, 0.82, 0);
+    const pocketTurf = new THREE.Mesh(
+      this.geo(`goalPocketTurf:${mapId}`, () => new THREE.PlaneGeometry(depth, halfGoal * 2)),
+      this.matCache.get(`turfSurface:${mapId}`)!
+    );
+    pocketTurf.rotation.x = -Math.PI / 2;
+    pocketTurf.position.set(pocketX, TURF_Y + 0.002, 0);
+    pocketTurf.receiveShadow = true;
+    g.add(pocketTurf);
     const backPanel = this.mesh(g, new THREE.BoxGeometry(0.08, 1.34, halfGoal * 2 + 0.22), panelTint, backX, 1.78, 0);
     backPanel.castShadow = false;
+    for (const z of [-halfGoal, halfGoal] as const) {
+      const sideNet = this.mesh(g, new THREE.BoxGeometry(depth, 1.68, 0.06), panelTint, pocketX, 1.78, z);
+      sideNet.castShadow = false;
+    }
     // chunky posts with cream collars and finials aligned to the mouth edges
     for (const s of [-1, 1] as const) {
       this.mesh(g, new THREE.CylinderGeometry(0.17, 0.23, 1.9, 20), frameTint, x, 1.78, s * halfGoal, true);

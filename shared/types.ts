@@ -1,12 +1,16 @@
 export const FIELD = {
   width: 1100,
   height: 620,
-  goalDepth: 34,
+  // Deep enough for a babblehead to enter the goal and get behind a ball
+  // resting near the line. The goal mouth itself is physically open.
+  goalDepth: 120,
   goalY: 205,
   goalHeight: 210,
   playerRadius: 18,
   babbleRadius: 18,
-  ballRadius: 22,
+  // 25px at 50px/m = 0.5m, matching the Rapier sphere and observed ~0.49m
+  // grounded center height.
+  ballRadius: 25,
   boxSize: 34
 } as const;
 
@@ -55,7 +59,7 @@ export const BOX_TYPES = {
   stickyGoo: { label: 'Sticky Goo', targetId: 'sticky', color: '#84cc16', category: 'field', durationTurns: 1, description: 'Place a sticky slow zone.' },
   ramp: { label: 'Trampoline', targetId: 'ramp', color: '#a78bfa', category: 'field', durationTurns: 1, description: 'Place a physical ramp for this turn. It adds no artificial boost.' },
   block: { label: 'Block', targetId: 'block', color: '#94a3b8', category: 'field', durationTurns: 1, description: 'Place a temporary wall.' },
-  bigHead: { label: 'Big Head', targetId: 'bighead', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead grows and kicks harder.' },
+  bigHead: { label: 'Big Head', targetId: 'bighead', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead grows into a larger, heavier physical collider.' },
   ghosted: { label: 'Ghosted', targetId: 'ghost', color: '#d8b4fe', category: 'babble', durationTurns: 1, description: 'Target babblehead passes through babbleheads and boxes.' },
   movePlayer: { label: 'Move Player', targetId: 'moveplayer', color: '#fde047', category: 'babble', durationTurns: 0, description: 'Move a target babblehead back toward center field.' },
   yellowCard: { label: 'Yellow Card', targetId: 'yellowcard', color: '#facc15', category: 'instant', durationTurns: 0, description: 'Teleport the ball to the center of the field.' },
@@ -130,14 +134,7 @@ export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano', 'saturn'
 
 export type MapPhysicsMultipliers = {
   babbleImpulseScale: number;
-  maxSpeed: number;
   settleSpeed: number;
-  lowSpeedBrakeThreshold: number;
-  lowSpeedBrakeFactor: number;
-  bumperBoost: number;
-  bumperMinExitBall: number;
-  bumperMinExitBabble: number;
-  bigBumperBoostMult: number;
   bigBumperRestitution: number;
   boostPadAccel: number;
   babbleDragPerTick: number;
@@ -188,14 +185,7 @@ export type MapConfig = {
 
 const PHYSICS_1X: MapPhysicsMultipliers = {
   babbleImpulseScale: 1,
-  maxSpeed: 1,
   settleSpeed: 1,
-  lowSpeedBrakeThreshold: 1,
-  lowSpeedBrakeFactor: 1,
-  bumperBoost: 1,
-  bumperMinExitBall: 1,
-  bumperMinExitBabble: 1,
-  bigBumperBoostMult: 1,
   bigBumperRestitution: 1,
   boostPadAccel: 1,
   babbleDragPerTick: 1,
@@ -262,10 +252,7 @@ export const MAPS: Record<MapId, MapConfig> = {
       // Move the default map closer to the loved Moon feel: softer launch,
       // lower top speed, later settling, and more glide/carry.
       babbleImpulseScale: 0.94,
-      maxSpeed: 0.97,
       settleSpeed: 0.88,
-      lowSpeedBrakeThreshold: 0.78,
-      lowSpeedBrakeFactor: 1.04,
       babbleDragPerTick: 1.025,
       ballDragPerTick: 1.025,
       beachBallDragPerTick: 1.012,
@@ -318,14 +305,7 @@ export const MAPS: Record<MapId, MapConfig> = {
     physics: {
       ...PHYSICS_1X,
       babbleImpulseScale: 0.88,
-      maxSpeed: 0.93,
       settleSpeed: 0.75,
-      lowSpeedBrakeThreshold: 0.55,
-      lowSpeedBrakeFactor: 1.12,
-      bumperBoost: 0.88,
-      bumperMinExitBall: 0.86,
-      bumperMinExitBabble: 0.86,
-      bigBumperBoostMult: 0.92,
       bigBumperRestitution: 1.04,
       boostPadAccel: 0.9,
       babbleDragPerTick: 1.06,
@@ -381,14 +361,7 @@ export const MAPS: Record<MapId, MapConfig> = {
     physics: {
       ...PHYSICS_1X,
       babbleImpulseScale: 0.98,
-      maxSpeed: 1,
       settleSpeed: 0.9,
-      lowSpeedBrakeThreshold: 0.82,
-      lowSpeedBrakeFactor: 1.03,
-      bumperBoost: 1.28,
-      bumperMinExitBall: 1.2,
-      bumperMinExitBabble: 1.16,
-      bigBumperBoostMult: 1.1,
       bigBumperRestitution: 1.08,
       boostPadAccel: 1.18,
       babbleDragPerTick: 1.038,
@@ -444,14 +417,7 @@ export const MAPS: Record<MapId, MapConfig> = {
     physics: {
       ...PHYSICS_1X,
       babbleImpulseScale: 0.86,
-      maxSpeed: 0.88,
       settleSpeed: 0.82,
-      lowSpeedBrakeThreshold: 0.72,
-      lowSpeedBrakeFactor: 1.04,
-      bumperBoost: 1.02,
-      bumperMinExitBall: 0.96,
-      bumperMinExitBabble: 0.96,
-      bigBumperBoostMult: 0.96,
       bigBumperRestitution: 0.98,
       boostPadAccel: 0.92,
       babbleDragPerTick: 1.045,
@@ -474,10 +440,8 @@ export const MAPS: Record<MapId, MapConfig> = {
     theme: { ...ORIGINAL_THEME, accent: '#fff0a8' },
     physics: {
       ...PHYSICS_1X,
-      babbleImpulseScale: 0.98, maxSpeed: 0.58,
-      settleSpeed: 2.2, lowSpeedBrakeThreshold: 1.75, lowSpeedBrakeFactor: 0.9,
-      bumperBoost: 1, bumperMinExitBall: 1, bumperMinExitBabble: 1,
-      bigBumperBoostMult: 1, bigBumperRestitution: 0.96,
+      babbleImpulseScale: 0.98,
+      settleSpeed: 2.2, bigBumperRestitution: 0.96,
       boostPadAccel: 0.95,
       babbleDragPerTick: 1.045, ballDragPerTick: 1.045, beachBallDragPerTick: 1.02,
       babbleRestitution: 0.95, ballRestitution: 0.95,
@@ -494,10 +458,8 @@ export const MAPS: Record<MapId, MapConfig> = {
     theme: { ...ORIGINAL_THEME, accent: '#9eefff', frame: 0x65bed1 },
     physics: {
       ...PHYSICS_1X,
-      babbleImpulseScale: 0.99, maxSpeed: 0.66,
-      settleSpeed: 1.7, lowSpeedBrakeThreshold: 1.4, lowSpeedBrakeFactor: 0.96,
-      bumperBoost: 1, bumperMinExitBall: 1, bumperMinExitBabble: 1,
-      bigBumperBoostMult: 1, bigBumperRestitution: 1,
+      babbleImpulseScale: 0.99,
+      settleSpeed: 1.7, bigBumperRestitution: 1,
       boostPadAccel: 1,
       babbleDragPerTick: 1.057, ballDragPerTick: 1.053, beachBallDragPerTick: 1.025,
       babbleRestitution: 1.05, ballRestitution: 1.05,
@@ -514,10 +476,8 @@ export const MAPS: Record<MapId, MapConfig> = {
     theme: { ...ORIGINAL_THEME, accent: '#ffb4c1', frame: 0xd97682 },
     physics: {
       ...PHYSICS_1X,
-      babbleImpulseScale: 1, maxSpeed: 0.72,
-      settleSpeed: 1.25, lowSpeedBrakeThreshold: 1, lowSpeedBrakeFactor: 1.02,
-      bumperBoost: 1.1, bumperMinExitBall: 1.08, bumperMinExitBabble: 1.06,
-      bigBumperBoostMult: 1.05, bigBumperRestitution: 1.08,
+      babbleImpulseScale: 1,
+      settleSpeed: 1.25, bigBumperRestitution: 1.08,
       boostPadAccel: 1.05,
       babbleDragPerTick: 1.063, ballDragPerTick: 1.058, beachBallDragPerTick: 1.026,
       babbleRestitution: 1.12, ballRestitution: 1.08,

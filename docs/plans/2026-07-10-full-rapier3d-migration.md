@@ -30,7 +30,7 @@ From `events4-2.json`:
    - `height` -> Rapier world `y`
 4. World gravity should point down in `y`.
 5. Ball and babbles should be sphere colliders. Ball should be allowed to roll/rotate; players may lock or damp rotation if needed but must still have true vertical contact.
-6. Arena should have floor + walls + goal mouth/back walls as 3D cuboids. Babbles cannot enter goal mouths; ball can enter and score as before.
+6. Arena has floor + walls + deep goal-pocket side/back walls as 3D cuboids. Goal mouths are open to both ball and babbles so goalies can enter and push a near-line ball out from behind.
 7. Blocks/ramps/boost/goo/bumpers must remain functional. Ramps should use true vertical launch/geometry/impulse rather than only fake height state. If ramp mesh collider is too risky, keep planar ramp trigger but apply real vertical velocity to the Rapier 3D body.
 8. Bumpers should be 3D cylinder/ball/capsule-ish static colliders or equivalent with true impulse response.
 9. Remove the separate custom `integrateAirborne` loop from gameplay once Rapier 3D owns vertical integration. Retain helper constants/functions only if they define target heights or comparison thresholds.

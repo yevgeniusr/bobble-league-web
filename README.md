@@ -12,6 +12,7 @@ A production-oriented, web-based multiplayer babble soccer game inspired by Disc
   map is included in snapshots and locks after kickoff until reset/new room.
 - Teams: Pigs, Parrots, Penguins, Tigers, Frogs, Foxes.
 - Match modes: first to 1, 3, or 5 goals.
+- Goals are deep, open physical pockets: goalies can enter and clear partially crossed balls; scoring requires the whole ball to cross the line.
 - Babble soccer mechanics: drag-launch, bounce, score goals.
 - Box spawning: every second kickoff turn creates one random top/bottom lane box.
 - Power Play boxes: Beach Ball, Move Ball, Swap Goals, Big Bumpers, Boost,
@@ -20,17 +21,18 @@ A production-oriented, web-based multiplayer babble soccer game inspired by Disc
 
 ## Physics engine
 
-Rigid-body physics (ball/babble integration and damping, wall and goal-mouth
-collisions, placed block walls) runs on **Rapier 2D** via
-`@dimforge/rapier2d-deterministic-compat`: the `-compat` build inlines the WASM
-blob so it loads in plain Node (tsx, vitest, Docker) with no bundler wiring,
-and the `-deterministic` build keeps the authoritative server simulation
-reproducible across platforms. `shared/physics.ts` owns the Rapier world (one
-persistent world per `GameState`, `GameState` stays the source of truth);
-game-feel rules — corner bumpers, boost pads, sticky goo, ramps, box pickups,
-goal detection, settling — stay as explicit rule code in `shared/game.ts`. The
-browser client never imports the physics module; it renders server state only,
-so no WASM ships in the client bundle.
+Rigid-body physics runs on **Rapier 3D** via
+`@dimforge/rapier3d-deterministic-compat`. Field X/Y map to Rapier X/Z and
+height maps to Rapier Y. During resolution the persistent Rapier world is
+authoritative: explicit launches use `applyImpulse`, Boost pads use `addForce`,
+Sticky Goo changes rigid-body damping, and teleports/resizes synchronize once.
+Rapier then owns gravity, floor contacts, lift, landing, bounce, carry, collision
+response, and quaternion/angular motion until the turn settles. The ball,
+babbleheads, walls, open goal pockets, blocks, physical corner bumpers, and
+Trampolines all use 3D colliders. Public `GameState` remains the stable network
+snapshot boundary and receives projected Rapier state after each step. The
+browser never imports the physics module; it renders server state only, so no
+Rapier WASM ships in the client bundle.
 
 ### Maps
 
@@ -63,9 +65,8 @@ For quick server/test experiments, set environment overrides without editing
 source. Examples:
 
 ```bash
-BABBLE_MAX_SPEED=1450 npm test
 BABBLE_IMPULSE_SCALE=1.0 BABBLE_BALL_DENSITY=0.86 npm run smoke
-BABBLE_BUMPER_BOOST=270 npm run render-check
+BABBLE_BIG_BUMPER_RESTITUTION=1.35 npm run render-check
 ```
 
 Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano|saturn|original|originalGlide|originalBounce`:
@@ -80,11 +81,11 @@ BABBLE_MAP=volcano node scripts/box-control-check.mjs
 Common knobs:
 
 - `BABBLE_IMPULSE_SCALE`: babble launch force multiplier.
-- `BABBLE_MAX_SPEED`: clamp for ball and babble velocity.
+
 - `BABBLE_BALL_DENSITY`: ball weight in Rapier collisions.
+- `BABBLE_GIANT_BALL_MASS_SCALE`: Giant Ball mass relative to the normal ball.
 - `BABBLE_BOOST_PAD_ACCEL`: boost pad acceleration.
-- `BABBLE_BUMPER_BOOST`, `BABBLE_BUMPER_MIN_EXIT_BALL`,
-  `BABBLE_BIG_BUMPER_MULT`: corner bumper strength.
+- `BABBLE_BIG_BUMPER_RESTITUTION`: powered corner-bumper elasticity.
 - Trampolines use physical Rapier 3D wedge geometry and have no artificial boost/minimum exit-speed knob.
 - `BABBLE_BALL_DRAG_PER_TICK`, `BABBLE_DRAG_PER_TICK`: damping feel.
 

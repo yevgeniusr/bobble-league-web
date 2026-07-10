@@ -1,5 +1,5 @@
 import { BOX_TYPES, FORMATION_IDS, MAP_IDS } from '../shared/types';
-import { addCheatBoxes, addPlayer, BALL_MAX_HEIGHT, BALL_REST_HEIGHT, createInitialState, launchBabble, setPlayerReady, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { addCheatBoxes, addPlayer, BALL_REST_HEIGHT, createInitialState, launchBabble, setPlayerReady, startGame, stepGame, usePowerPlay } from '../shared/game';
 
 const assert = (ok: boolean, message: string) => {
   if (!ok) throw new Error(message);
@@ -57,7 +57,7 @@ function touchScenario() {
 const normal = simulate(false);
 const beach = simulate(true);
 const touch = touchScenario();
-const boxTargetIds = new Set(Object.values(BOX_TYPES).map(b => b.targetId));
+const boxTargetIds = new Set<string>(Object.values(BOX_TYPES).map(b => b.targetId));
 const requiredPowers = ['giantball', 'bumppadboost', 'redcard', 'yellowcard', 'goalswap', 'bighead', 'ghost', 'sticky', 'ramp', 'block', 'boost'];
 
 const checks = [
@@ -66,7 +66,8 @@ const checks = [
   ['normal ball has vertical state', normal.maxBall >= BALL_REST_HEIGHT],
   ['normal compound-hit peak stays in the documented original-like tolerance', normal.maxBall >= 0.85 && normal.maxBall <= 1.2],
   ['beach/giant ball lofts higher than normal', beach.maxBall > normal.maxBall + 0.35],
-  ['beach/giant ball approaches original airborne range', beach.maxBall > Math.min(BALL_MAX_HEIGHT * 0.55, 1.45)],
+  ['beach/giant ball reaches a higher physical flight than normal', beach.maxBall > 1.45],
+  ['beach/giant ball stays near the observed physical range without a cap', beach.maxBall >= 2.45 && beach.maxBall <= 2.85],
   ['player/babble hop remains subtler than beach ball', beach.maxBabble < beach.maxBall],
   ['last touch tracks exact babble id', typeof touch.lastTouchedBabbleId === 'string'],
   ...requiredPowers.map(id => [`power alias present: ${id}`, boxTargetIds.has(id)] as [string, boolean]),
@@ -77,5 +78,5 @@ for (const [name, ok] of checks) {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}`);
   if (!ok) failed++;
 }
-console.log(JSON.stringify({ normal, beach, touch, targets: { originalBallRest: 0.49, originalNormalMax: 0.90, originalGiantMax: 2.66, BALL_REST_HEIGHT, BALL_MAX_HEIGHT } }, null, 2));
+console.log(JSON.stringify({ normal, beach, touch, targets: { originalBallRest: 0.49, originalNormalMax: 0.90, originalGiantMax: 2.66, BALL_REST_HEIGHT } }, null, 2));
 assert(failed === 0, `${failed} original-feel comparison checks failed`);

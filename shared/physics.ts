@@ -5,25 +5,19 @@
 //   field y -> Rapier world z
 //   height  -> Rapier world y
 //
-// GameState remains the protocol/source-of-truth boundary. Each tick writes
-// public state into a persistent Rapier world, steps true 3D gravity/contacts,
-// then projects field-plane position/velocity plus vertical height/velocity
-// back to the public state shape.
+// GameState remains the public protocol boundary. Rapier is authoritative while
+// a turn resolves; explicit launches/teleports/powers are synchronized once,
+// then each step projects the resulting 3D state back to the public shape.
 import RAPIER from '@dimforge/rapier3d-deterministic-compat';
-import type { BallImpactObservation } from './airborne';
+
 import {
-  BALL_LANDING_REST_VELOCITY,
-  BALL_MAX_HEIGHT,
-  NORMAL_BALL_MAX_HEIGHT,
   BABBLE_GRAVITY,
   babbleRestHeight,
-  ballGravity,
-  ballLandingBounce,
   ballRestHeight,
   normalizeBabbleVertical,
   normalizeBallVertical
 } from './airborne';
-import { FIELD, GameState, MAPS, PlayerSide, RAMP_HALF_LEN, RAMP_HALF_WIDTH, Vec, normalizeMapId } from './types';
+import { FIELD, GameState, MAPS, MapPhysicsMultipliers, PlayerSide, RAMP_HALF_LEN, RAMP_HALF_WIDTH, Vec, normalizeMapId } from './types';
 import { PHYSICS_CONFIG } from './physicsConfig';
 
 // Rapier is tuned for meter-scale numbers; the field is 1100x620 px.
@@ -36,7 +30,7 @@ const dampingFromDrag = (dragPerTick: number) => -Math.log(dragPerTick) * LEGACY
 
 const WORLD_GRAVITY = BABBLE_GRAVITY;
 const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
-const tune = (state: GameState, key: keyof typeof PHYSICS_CONFIG) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
+const tune = (state: GameState, key: keyof MapPhysicsMultipliers) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
 const dragTune = (state: GameState, key: 'babbleDragPerTick' | 'ballDragPerTick' | 'beachBallDragPerTick') =>
   Math.max(0.5, Math.min(0.995, tune(state, key)));
 
@@ -45,17 +39,13 @@ const G_BALL = 0x0001;
 const G_BABBLE = 0x0002;
 const G_GHOST = 0x0004; // ghosted babbles: pass through ball, babbles, blocks
 const G_ARENA = 0x0008; // floor + outer walls
-const G_MOUTH = 0x0010; // goal-mouth strips: stop babbles, let the ball in
 const G_BLOCK = 0x0020; // placed Block power-play walls
-const G_BACK = 0x0040; // goal back walls behind the mouth (ball only)
 const groups = (membership: number, filter: number) => ((membership << 16) | filter) >>> 0;
-const BALL_GROUPS = groups(G_BALL, G_BABBLE | G_ARENA | G_BLOCK | G_BACK);
-const BABBLE_GROUPS = groups(G_BABBLE, G_BALL | G_BABBLE | G_ARENA | G_MOUTH | G_BLOCK);
-const GHOST_GROUPS = groups(G_GHOST, G_ARENA | G_MOUTH);
+const BALL_GROUPS = groups(G_BALL, G_BABBLE | G_ARENA | G_BLOCK);
+const BABBLE_GROUPS = groups(G_BABBLE, G_BALL | G_BABBLE | G_ARENA | G_BLOCK);
+const GHOST_GROUPS = groups(G_GHOST, G_ARENA);
 const ARENA_GROUPS = groups(G_ARENA, G_BALL | G_BABBLE | G_GHOST);
-const MOUTH_GROUPS = groups(G_MOUTH, G_BABBLE | G_GHOST);
 const BLOCK_GROUPS = groups(G_BLOCK, G_BALL | G_BABBLE);
-const BACK_GROUPS = groups(G_BACK, G_BALL);
 
 const WALL_HALF_THICKNESS = 1; // meters (50px): thick walls + CCD stop tunneling
 const WALL_HALF_HEIGHT = 2.5;
@@ -64,7 +54,7 @@ const BLOCK_HALF_LEN = 60 / PX_PER_METER;
 const BLOCK_HALF_THICKNESS = 14 / PX_PER_METER;
 const BLOCK_HALF_HEIGHT = WALL_HALF_HEIGHT;
 const RAMP_HEIGHT = 0.82; // matches client wedgeGeometry exactly
-const REST_EPS = 0.004;
+
 
 // -compat builds expose an async init that instantiates the inlined WASM.
 // Top-level await: server/tests wait for it once at module load. The browser
@@ -76,6 +66,7 @@ interface BabbleEntry {
   collider: RAPIER.Collider;
   radius: number;
   ghosted: boolean;
+  stateKey: string;
 }
 
 interface PhysicsCache {
@@ -86,16 +77,20 @@ interface PhysicsCache {
   ballCollider: RAPIER.Collider;
   ballRadius: number;
   beachy: boolean;
+  ballStateKey: string;
   babbles: Map<string, BabbleEntry>;
   babbleKey: string;
   blocksKey: string;
   blockColliders: RAPIER.Collider[];
   rampsKey: string;
   rampColliders: RAPIER.Collider[];
+  bumpersKey: string;
+  bumperColliders: RAPIER.Collider[];
+  bumperHandles: Map<number, Vec>;
 }
 
 const caches = new WeakMap<GameState, PhysicsCache>();
-export type PhysicsStepResult = { ballBabbleImpacts: BallImpactObservation[] };
+export type PhysicsStepResult = { bumperHits: Vec[] };
 
 type BabbleImpactSnapshot = {
   id: string;
@@ -112,27 +107,43 @@ export function freePhysics(state: GameState) {
   caches.delete(state);
 }
 
+export function applyBabblePlanarImpulse(state: GameState, babbleId: string, deltaVelocity: Vec) {
+  const babble = state.babbles.find(b => b.id === babbleId);
+  if (!babble) return false;
+  const cache = getCache(state);
+  syncBabble(state, cache, babble, new Map());
+  const entry = cache.babbles.get(babbleId)!;
+  const mass = entry.body.mass();
+  entry.body.applyImpulse({
+    x: deltaVelocity.x / PX_PER_METER * mass,
+    y: 0,
+    z: deltaVelocity.y / PX_PER_METER * mass
+  }, true);
+  const velocity = entry.body.linvel();
+  babble.vel = { x: velocity.x * PX_PER_METER, y: velocity.z * PX_PER_METER };
+  babble.verticalVelocity = velocity.y;
+  entry.stateKey = babbleStateKey(babble);
+  return true;
+}
+
 export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
   const cache = getCache(state);
   const { world, events } = cache;
-  const result: PhysicsStepResult = { ballBabbleImpacts: [] };
+  const result: PhysicsStepResult = { bumperHits: [] };
   world.timestep = dt;
+  syncBumpers(state, cache);
   syncBlocks(state, cache);
   syncRamps(state, cache);
   syncBall(state, cache);
-  const ballPreStep = {
-    pos: { ...state.ball.pos },
-    vel: { ...state.ball.vel },
-    height: state.ball.height,
-    verticalVelocity: state.ball.verticalVelocity
-  };
+
   const touchable = new Map<number, BabbleImpactSnapshot>();
   for (const b of state.babbles) syncBabble(state, cache, b, touchable);
+  applyFieldForces(state, cache);
 
   world.step(events);
 
-  projectBall(state, cache.ballBody, ballPreStep.height, ballPreStep.verticalVelocity, dt);
-  for (const b of state.babbles) projectBabble(b, cache.babbles.get(b.id)!.body);
+  projectBall(state, cache);
+  for (const b of state.babbles) projectBabble(b, cache.babbles.get(b.id)!);
 
   // Ball possession. A babble still pressed against the ball (dribbling)
   // fires its collision event only once in a persistent world, so first
@@ -150,14 +161,12 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
   const ballHandle = cache.ballCollider.handle;
   events.drainCollisionEvents((h1, h2, started) => {
     if (!started) return;
+    const bumper = cache.bumperHandles.get(h1) ?? cache.bumperHandles.get(h2);
+    if (bumper) result.bumperHits.push({ ...bumper });
     const other = h1 === ballHandle ? h2 : h2 === ballHandle ? h1 : null;
     if (other === null) return;
     const babble = touchable.get(other);
-    if (babble) {
-      recordBallTouch(state, babble.id, babble.side);
-      const impact = ballBabbleImpact(ballPreStep, babble);
-      if (impact) result.ballBabbleImpacts.push(impact);
-    }
+    if (babble) recordBallTouch(state, babble.id, babble.side);
   });
   return result;
 }
@@ -192,13 +201,13 @@ function buildCache(state: GameState): PhysicsCache {
     RAPIER.RigidBodyDesc.dynamic()
       .setLinearDamping(beachy ? dampingFromDrag(dragTune(state, 'beachBallDragPerTick')) : dampingFromDrag(dragTune(state, 'ballDragPerTick')))
       .setAngularDamping(0.45)
-      .setGravityScale(ballGravity(beachy) / WORLD_GRAVITY)
       .setCanSleep(false)
   );
-  // The beach ball grows but keeps its mass, so it floats farther, not heavier.
+  // Giant Ball uses a lower collider density, so resizing changes mass through
+  // Rapier rather than injecting velocity.
   const ballCollider = world.createCollider(
     RAPIER.ColliderDesc.ball(ballColliderRadius(state.ball.radius))
-      .setFriction(0.18)
+      .setFriction(0.35)
       .setRestitution(tune(state, 'ballRestitution'))
       .setDensity(ballDensity(state, state.ball.radius))
       .setCollisionGroups(BALL_GROUPS)
@@ -217,13 +226,17 @@ function buildCache(state: GameState): PhysicsCache {
     );
     const collider = world.createCollider(
       RAPIER.ColliderDesc.ball(babbleColliderRadius(b.radius))
-        .setFriction(0.12)
+        // The collision sphere is the physical rolling base of the bobblehead,
+        // not its full visual/body height. Its lower center creates a real
+        // upward contact normal when it strikes the larger ball.
+        .setTranslation(0, babbleColliderOffsetY(b.radius), 0)
+        .setFriction(0.3)
         .setRestitution(tune(state, 'babbleRestitution'))
-        .setDensity(tune(state, 'babbleDensity'))
+        .setDensity(babbleDensity(state, b.radius))
         .setCollisionGroups(ghosted ? GHOST_GROUPS : BABBLE_GROUPS),
       body
     );
-    babbles.set(b.id, { body, collider, radius: b.radius, ghosted });
+    babbles.set(b.id, { body, collider, radius: b.radius, ghosted, stateKey: '' });
   }
   return {
     world,
@@ -233,56 +246,76 @@ function buildCache(state: GameState): PhysicsCache {
     ballCollider,
     ballRadius: state.ball.radius,
     beachy,
+    ballStateKey: '',
     babbles,
     babbleKey: babbleKeyOf(state),
     blocksKey: '',
     blockColliders: [],
     rampsKey: '',
     rampColliders: [],
+    bumpersKey: '',
+    bumperColliders: [],
+    bumperHandles: new Map(),
   };
 }
 
-const ballDensity = (state: GameState, radius: number) =>
-  tune(state, 'ballDensityBase') * (ballColliderRadius(FIELD.ballRadius) / ballColliderRadius(radius)) ** 3;
+const ballDensity = (state: GameState, radius: number) => {
+  const massPreservingDensity = tune(state, 'ballDensityBase') * (ballColliderRadius(FIELD.ballRadius) / ballColliderRadius(radius)) ** 3;
+  // Giant Ball is a genuinely lighter physical body, not a scripted launch.
+  return radius > FIELD.ballRadius * 1.2 ? massPreservingDensity * PHYSICS_CONFIG.giantBallMassScale : massPreservingDensity;
+};
 const ballColliderRadius = (radius: number) => ballRestHeight(radius);
-const babbleColliderRadius = (radius: number) => babbleRestHeight(radius);
+const babbleColliderRadius = (radius: number) => radius / PX_PER_METER;
+const babbleColliderOffsetY = (radius: number) => babbleColliderRadius(radius) - babbleRestHeight(radius);
+const babbleDensity = (state: GameState, _radius: number) =>
+  // Density is a physical material calibration. The smaller rolling-base
+  // collider intentionally makes the bobblehead lighter than a full 0.5m ball.
+  tune(state, 'babbleDensity');
 
 const isGhosted = (state: GameState, babble: GameState['babbles'][number]) =>
   babble.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn);
 
-// GameState velocities/positions are authoritative between ticks (launches,
-// bumper boosts, goo, ramps, teleport power plays and tests all write them),
-// so bodies are re-synced from state every tick, not just on changes.
+const ballStateKey = (state: GameState) => {
+  const b = state.ball;
+  const q = b.rotation ?? { x: 0, y: 0, z: 0, w: 1 };
+  const a = b.angularVelocity ?? { x: 0, y: 0, z: 0 };
+  return [b.pos.x, b.pos.y, b.height, b.radius, b.vel.x, b.vel.y, b.verticalVelocity, q.x, q.y, q.z, q.w, a.x, a.y, a.z].join(':');
+};
+
+const babbleStateKey = (b: GameState['babbles'][number]) =>
+  [b.pos.x, b.pos.y, b.height, b.radius, b.vel.x, b.vel.y, b.verticalVelocity].join(':');
+
+// Rapier remains authoritative between explicit game events. State is written
+// into a body only when a launch, teleport, resize, power, or test changed the
+// last state projected by Rapier.
 function syncBall(state: GameState, cache: PhysicsCache) {
   const body = cache.ballBody;
   const vertical = normalizeBallVertical(state.ball.radius, state.ball.height, state.ball.verticalVelocity);
   state.ball.height = vertical.height;
   state.ball.verticalVelocity = vertical.verticalVelocity;
-  body.setTranslation(fieldToWorld(state.ball.pos, state.ball.height), true);
-  body.setLinvel(fieldVelocityToWorld(state.ball.vel, state.ball.verticalVelocity), true);
-  const rotation = state.ball.rotation;
-  const rotationLength = rotation ? Math.hypot(rotation.x, rotation.y, rotation.z, rotation.w) : 0;
-  if (rotation && [rotation.x, rotation.y, rotation.z, rotation.w].every(Number.isFinite) && rotationLength > 1e-8) {
-    body.setRotation({ x: rotation.x / rotationLength, y: rotation.y / rotationLength, z: rotation.z / rotationLength, w: rotation.w / rotationLength }, true);
-  } else {
-    body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
-  }
-  const angular = state.ball.angularVelocity;
-  if (angular && [angular.x, angular.y, angular.z].every(Number.isFinite)) {
-    body.setAngvel(angular, true);
-  } else {
-    body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  const stateKey = ballStateKey(state);
+  if (stateKey !== cache.ballStateKey) {
+    body.setTranslation(fieldToWorld(state.ball.pos, state.ball.height), true);
+    body.setLinvel(fieldVelocityToWorld(state.ball.vel, state.ball.verticalVelocity), true);
+    const rotation = state.ball.rotation;
+    const rotationLength = rotation ? Math.hypot(rotation.x, rotation.y, rotation.z, rotation.w) : 0;
+    if (rotation && [rotation.x, rotation.y, rotation.z, rotation.w].every(Number.isFinite) && rotationLength > 1e-8) {
+      body.setRotation({ x: rotation.x / rotationLength, y: rotation.y / rotationLength, z: rotation.z / rotationLength, w: rotation.w / rotationLength }, true);
+    } else {
+      body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    }
+    const angular = state.ball.angularVelocity;
+    body.setAngvel(angular && [angular.x, angular.y, angular.z].every(Number.isFinite) ? angular : { x: 0, y: 0, z: 0 }, true);
+    cache.ballStateKey = stateKey;
   }
   const beachy = isBeachy(state);
-  // Airborne balls keep their carry because there is no turf-contact drag.
-  // This reduces damping in flight but never increases horizontal speed.
-  const groundDrag = dragTune(state, beachy ? 'beachBallDragPerTick' : 'ballDragPerTick');
-  const airborne = state.ball.height > ballRestHeight(state.ball.radius) + 0.02 || state.ball.verticalVelocity > 0.05;
-  const effectiveDrag = airborne ? 1 - (1 - groundDrag) * 0.2 : groundDrag;
-  body.setLinearDamping(dampingFromDrag(effectiveDrag));
+  // One physical drag coefficient applies in every state. Floor friction and
+  // contact—not a grounded/airborne branch—produce the difference in carry.
+  const drag = dragTune(state, beachy ? 'beachBallDragPerTick' : 'ballDragPerTick');
+  body.setLinearDamping(dampingFromDrag(drag));
   body.enableCcd(Math.hypot(state.ball.vel.x, state.ball.vel.y, state.ball.verticalVelocity * PX_PER_METER) > CCD_MIN_SPEED);
   if (beachy !== cache.beachy) {
-    body.setGravityScale(ballGravity(beachy) / WORLD_GRAVITY, true);
+    body.setLinearDamping(dampingFromDrag(drag));
     cache.beachy = beachy;
   }
   if (state.ball.radius !== cache.ballRadius) {
@@ -302,8 +335,12 @@ function syncBabble(
   const vertical = normalizeBabbleVertical(babble.height, babble.verticalVelocity, babble.radius);
   babble.height = vertical.height;
   babble.verticalVelocity = vertical.verticalVelocity;
-  entry.body.setTranslation(fieldToWorld(babble.pos, babble.height), true);
-  entry.body.setLinvel(fieldVelocityToWorld(babble.vel, babble.verticalVelocity), true);
+  const stateKey = babbleStateKey(babble);
+  if (stateKey !== entry.stateKey) {
+    entry.body.setTranslation(fieldToWorld(babble.pos, babble.height), true);
+    entry.body.setLinvel(fieldVelocityToWorld(babble.vel, babble.verticalVelocity), true);
+    entry.stateKey = stateKey;
+  }
   entry.body.enableCcd(Math.hypot(babble.vel.x, babble.vel.y, babble.verticalVelocity * PX_PER_METER) > CCD_MIN_SPEED);
   const ghosted = isGhosted(state, babble);
   if (ghosted !== entry.ghosted) {
@@ -312,6 +349,8 @@ function syncBabble(
   }
   if (babble.radius !== entry.radius) {
     entry.collider.setRadius(babbleColliderRadius(babble.radius));
+    entry.collider.setTranslationWrtParent({ x: 0, y: babbleColliderOffsetY(babble.radius), z: 0 });
+    entry.collider.setDensity(babbleDensity(state, babble.radius));
     entry.radius = babble.radius;
   }
   if (!ghosted) touchable.set(entry.collider.handle, {
@@ -322,7 +361,36 @@ function syncBabble(
   });
 }
 
-function projectBall(state: GameState, body: RAPIER.RigidBody, preHeight: number, preVerticalVelocity: number, dt: number) {
+function applyFieldForces(state: GameState, cache: PhysicsCache) {
+  const active = state.fieldObjects.filter(o => o.untilTurn >= state.turn);
+  const boosts = active.filter(o => o.type === 'boost');
+  const goo = active.filter(o => o.type === 'stickyGoo');
+  const boostAcceleration = tune(state, 'boostPadAccel') / PX_PER_METER;
+  const gooDamping = dampingFromDrag(0.93);
+  const affect = (body: RAPIER.RigidBody, pos: Vec, radius: number, baseDamping: number) => {
+    body.resetForces(true);
+    const inGoo = goo.some(o => Math.hypot(pos.x - o.pos.x, pos.y - o.pos.y) <= 80 + radius);
+    body.setLinearDamping(baseDamping + (inGoo ? gooDamping : 0));
+    for (const o of boosts) {
+      if (Math.hypot(pos.x - o.pos.x, pos.y - o.pos.y) > 70 + radius) continue;
+      const mass = body.mass();
+      body.addForce({
+        x: Math.cos(o.angle) * boostAcceleration * mass,
+        y: 0,
+        z: Math.sin(o.angle) * boostAcceleration * mass
+      }, true);
+    }
+  };
+  const beachy = isBeachy(state);
+  affect(cache.ballBody, state.ball.pos, state.ball.radius,
+    dampingFromDrag(dragTune(state, beachy ? 'beachBallDragPerTick' : 'ballDragPerTick')));
+  for (const b of state.babbles) {
+    affect(cache.babbles.get(b.id)!.body, b.pos, b.radius, dampingFromDrag(dragTune(state, 'babbleDragPerTick')));
+  }
+}
+
+function projectBall(state: GameState, cache: PhysicsCache) {
+  const body = cache.ballBody;
   const p = body.translation();
   const v = body.linvel();
   const r = body.rotation();
@@ -331,50 +399,26 @@ function projectBall(state: GameState, body: RAPIER.RigidBody, preHeight: number
   state.ball.pos.y = p.z * PX_PER_METER;
   state.ball.vel.x = v.x * PX_PER_METER;
   state.ball.vel.y = v.z * PX_PER_METER;
-  const rest = ballRestHeight(state.ball.radius);
-  const maxHeight = isBeachy(state) ? BALL_MAX_HEIGHT : NORMAL_BALL_MAX_HEIGHT;
-  let height = p.y;
-  let vy = v.y;
-  if (height <= rest + REST_EPS && vy <= 0) {
-    height = rest;
-    const beachy = isBeachy(state);
-    const impactVelocity = preVerticalVelocity - ballGravity(beachy) * dt;
-    const newlyLanded = preHeight > rest + REST_EPS;
-    vy = newlyLanded && impactVelocity < -BALL_LANDING_REST_VELOCITY
-      ? -impactVelocity * ballLandingBounce(beachy)
-      : 0;
-    body.setTranslation({ x: p.x, y: rest, z: p.z }, true);
-    body.setLinvel({ x: v.x, y: vy, z: v.z }, true);
-  } else if (height >= maxHeight && vy > 0) {
-    height = maxHeight;
-    vy = 0;
-    body.setTranslation({ x: p.x, y: maxHeight, z: p.z }, true);
-    body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
-  }
-  state.ball.height = Math.max(rest, Math.min(maxHeight, height));
-  state.ball.verticalVelocity = vy;
+  // Height and landing velocity are direct Rapier outputs. The floor collider,
+  // material restitution, gravity, and damping are the complete bounce model.
+  state.ball.height = p.y;
+  state.ball.verticalVelocity = v.y;
   state.ball.rotation = { x: r.x, y: r.y, z: r.z, w: r.w };
   state.ball.angularVelocity = { x: av.x, y: av.y, z: av.z };
+  cache.ballStateKey = ballStateKey(state);
 }
 
-function projectBabble(babble: GameState['babbles'][number], body: RAPIER.RigidBody) {
+function projectBabble(babble: GameState['babbles'][number], entry: BabbleEntry) {
+  const body = entry.body;
   const p = body.translation();
   const v = body.linvel();
   babble.pos.x = p.x * PX_PER_METER;
   babble.pos.y = p.z * PX_PER_METER;
   babble.vel.x = v.x * PX_PER_METER;
   babble.vel.y = v.z * PX_PER_METER;
-  const rest = babbleRestHeight(babble.radius);
-  let height = p.y;
-  let vy = v.y;
-  if (height <= rest + REST_EPS && vy <= 0) {
-    height = rest;
-    vy = 0;
-    body.setTranslation({ x: p.x, y: rest, z: p.z }, true);
-    body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
-  }
-  babble.height = Math.max(rest, height);
-  babble.verticalVelocity = vy;
+  babble.height = p.y;
+  babble.verticalVelocity = v.y;
+  entry.stateKey = babbleStateKey(babble);
 }
 
 function fieldToWorld(pos: Vec, height: number): RAPIER.Vector {
@@ -385,38 +429,6 @@ function fieldVelocityToWorld(vel: Vec, verticalVelocity: number): RAPIER.Vector
   return { x: vel.x / PX_PER_METER, y: verticalVelocity, z: vel.y / PX_PER_METER };
 }
 
-function ballBabbleImpact(
-  ball: { pos: Vec; vel: Vec },
-  babble: BabbleImpactSnapshot
-): BallImpactObservation | null {
-  const dx = ball.pos.x - babble.pos.x;
-  const dy = ball.pos.y - babble.pos.y;
-  const dist = Math.hypot(dx, dy);
-  const rvx = ball.vel.x - babble.vel.x;
-  const rvy = ball.vel.y - babble.vel.y;
-  let nx = 1;
-  let ny = 0;
-  if (dist > 0.0001) {
-    nx = dx / dist;
-    ny = dy / dist;
-  } else {
-    const rel = Math.hypot(rvx, rvy);
-    if (rel > 0.0001) {
-      nx = -rvx / rel;
-      ny = -rvy / rel;
-    }
-  }
-  const closing = Math.max(0, -(rvx * nx + rvy * ny));
-  const relativeSpeed = Math.hypot(rvx, rvy);
-  const impactSpeed = Math.max(closing, relativeSpeed * 0.35);
-  if (impactSpeed < 1) return null;
-  return {
-    babbleId: babble.id,
-    side: babble.side,
-    impactSpeed,
-    normal: { x: nx, y: ny }
-  };
-}
 
 function fixedCuboid(
   world: RAPIER.World,
@@ -469,13 +481,43 @@ function buildArena(world: RAPIER.World, state: GameState) {
     // Solid wall segments above and below the goal mouth.
     fixedCuboid(world, x, wallY, mouthTop / 2, t, WALL_HALF_HEIGHT, mouthTop / 2, ARENA_GROUPS, wallRestitution);
     fixedCuboid(world, x, wallY, (mouthBottom + h) / 2, t, WALL_HALF_HEIGHT, (h - mouthBottom) / 2, ARENA_GROUPS, wallRestitution);
-    // The mouth strip stops babbleheads on the goal line but lets the ball
-    // through so goals score reliably and nothing bounces back off a gate.
-    fixedCuboid(world, x, wallY, (mouthTop + mouthBottom) / 2, t, WALL_HALF_HEIGHT, (mouthBottom - mouthTop) / 2, MOUTH_GROUPS, wallRestitution);
-    // Back of the net: keeps a flying ball inside the gate pocket.
+    // The mouth is completely open to both ball and babbleheads. The goal is a
+    // real pocket with rear and side walls, so a goalie can enter, get behind a
+    // ball resting near the line, and push it back onto the field.
     const backX = side === 'left' ? -goalDepth - t : w + goalDepth + t;
-    fixedCuboid(world, backX, wallY, (mouthTop + mouthBottom) / 2, t, WALL_HALF_HEIGHT, (mouthBottom - mouthTop) / 2 + t, BACK_GROUPS, wallRestitution);
+    fixedCuboid(world, backX, wallY, (mouthTop + mouthBottom) / 2, t, WALL_HALF_HEIGHT, (mouthBottom - mouthTop) / 2 + t, ARENA_GROUPS, wallRestitution);
+    const pocketCenterX = side === 'left' ? -goalDepth / 2 : w + goalDepth / 2;
+    fixedCuboid(world, pocketCenterX, wallY, mouthTop - t, goalDepth / 2 + t, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
+    fixedCuboid(world, pocketCenterX, wallY, mouthBottom + t, goalDepth / 2 + t, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
   }
+}
+
+// Corner bumpers are Rapier colliders, not post-step overlap corrections. A
+// powered bumper is represented by a larger collider and a superelastic
+// restitution coefficient; direction and energy transfer come from contacts.
+function syncBumpers(state: GameState, cache: PhysicsCache) {
+  const map = mapOf(state);
+  const big = state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
+  const radiusPx = big ? map.layout.bigBumperRadius : map.layout.bumperRadius;
+  const restitution = big ? tune(state, 'bigBumperRestitution') : tune(state, 'ballRestitution');
+  const key = `${big}:${radiusPx}:${restitution}:${map.layout.bumpers.map(p => `${p.x},${p.y}`).join('|')}`;
+  if (key === cache.bumpersKey) return;
+  for (const c of cache.bumperColliders) cache.world.removeCollider(c, false);
+  cache.bumperColliders = [];
+  cache.bumperHandles.clear();
+  for (const p of map.layout.bumpers) {
+    const collider = cache.world.createCollider(
+      RAPIER.ColliderDesc.cylinder(WALL_HALF_HEIGHT, radiusPx / PX_PER_METER)
+        .setTranslation(p.x / PX_PER_METER, WALL_HALF_HEIGHT, p.y / PX_PER_METER)
+        .setFriction(0.12)
+        .setRestitution(restitution)
+        .setCollisionGroups(ARENA_GROUPS)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS)
+    );
+    cache.bumperColliders.push(collider);
+    cache.bumperHandles.set(collider.handle, { ...p });
+  }
+  cache.bumpersKey = key;
 }
 
 // Placed Block walls appear/expire between turns; rebuild their colliders

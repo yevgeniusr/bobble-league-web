@@ -6,7 +6,6 @@
 // intentional playfield features instead of soft wall nudges.
 //
 // Server/test override examples:
-//   BABBLE_MAX_SPEED=1450 npm test
 //   BABBLE_BALL_DENSITY=0.86 npm run smoke
 //
 // Browser clients render server state only and do not import this module.
@@ -19,15 +18,7 @@ const envNumber = (name: string, fallback: number) => {
 
 export const PHYSICS_CONFIG = {
   babbleImpulseScale: envNumber('BABBLE_IMPULSE_SCALE', 0.9),
-  maxSpeed: envNumber('BABBLE_MAX_SPEED', 1250),
   settleSpeed: envNumber('BABBLE_SETTLE_SPEED', 24),
-  lowSpeedBrakeThreshold: envNumber('BABBLE_LOW_SPEED_BRAKE_THRESHOLD', 128),
-  lowSpeedBrakeFactor: envNumber('BABBLE_LOW_SPEED_BRAKE_FACTOR', 0.86),
-
-  bumperBoost: envNumber('BABBLE_BUMPER_BOOST', 435),
-  bumperMinExitBall: envNumber('BABBLE_BUMPER_MIN_EXIT_BALL', 840),
-  bumperMinExitBabble: envNumber('BABBLE_BUMPER_MIN_EXIT_BABBLE', 615),
-  bigBumperBoostMult: envNumber('BABBLE_BIG_BUMPER_MULT', 7.05),
   bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1.35),
 
   boostPadAccel: envNumber('BABBLE_BOOST_PAD_ACCEL', 4300),
@@ -42,5 +33,6 @@ export const PHYSICS_CONFIG = {
   wallRestitution: envNumber('BABBLE_WALL_RESTITUTION', 0.87),
   blockRestitution: envNumber('BABBLE_BLOCK_RESTITUTION', 0.58),
   babbleDensity: envNumber('BABBLE_DENSITY', 1),
-  ballDensityBase: envNumber('BABBLE_BALL_DENSITY', 0.78)
+  ballDensityBase: envNumber('BABBLE_BALL_DENSITY', 0.78),
+  giantBallMassScale: envNumber('BABBLE_GIANT_BALL_MASS_SCALE', 0.65)
 } as const;

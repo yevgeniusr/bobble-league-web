@@ -3,7 +3,7 @@ import {
   addCheatBoxes,
   addPlayer,
   applyFormation,
-  BIG_BUMPER_BOOST_MULT,
+
   BOOST_PAD_ACCEL,
   BOX_LIFETIME_TURNS,
   collectPowerBox,
@@ -11,10 +11,9 @@ import {
   findDisconnectedSeat,
   grantCheatBox,
   launchBabble,
-  BUMPER_MIN_EXIT_BALL,
-  BUMPER_MIN_EXIT_BABBLE,
+
   MAX_RESOLVE_MS,
-  MAX_SPEED,
+
   reclaimPlayer,
   redactStateFor,
   removePlayer,
@@ -44,7 +43,7 @@ describe('classic Babble League shared rules', () => {
   });
 
   it('uses a larger normal ball and smaller physics babbles', () => {
-    expect(FIELD.ballRadius).toBe(22);
+    expect(FIELD.ballRadius).toBe(25);
     expect(FIELD.babbleRadius).toBe(18);
     expect(FIELD.playerRadius).toBe(FIELD.babbleRadius);
 
@@ -530,7 +529,7 @@ describe('classic Babble League shared rules', () => {
     }
   });
 
-  it('bumpers boost the ball on impact and emit a hit event for the client animation', () => {
+  it('bumpers reflect the ball through Rapier contact and emit a hit event', () => {
     const s = createInitialState('BUMP', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
@@ -542,15 +541,13 @@ describe('classic Babble League shared rules', () => {
 
     stepGame(s, {}, 1033, seq([0.5]));
 
-    expect(s.ball.vel.x).toBeGreaterThan(300); // reflected AND boosted beyond incoming speed
-    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeLessThanOrEqual(MAX_SPEED); // clamped
+    expect(s.ball.vel.x).toBeGreaterThan(0);
+    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeLessThan(300); // no synthetic boost
     expect(s.bumperEvents.length).toBeGreaterThanOrEqual(1);
     expect(s.bumperEvents[0].pos).toEqual({ x: BUMPERS[0].x, y: BUMPERS[0].y });
   });
 
-  it('bumpers guarantee a strong minimum exit speed even on weak grazes', () => {
-    expect(BUMPER_MIN_EXIT_BALL).toBeGreaterThanOrEqual(400);
-    expect(BUMPER_MIN_EXIT_BABBLE).toBeGreaterThanOrEqual(300);
+  it('bumpers do not manufacture a minimum exit speed from a weak graze', () => {
     const s = createInitialState('MINEXIT', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
@@ -562,7 +559,8 @@ describe('classic Babble League shared rules', () => {
     s.ball.pos = { x: BUMPERS[0].x + 51, y: BUMPERS[0].y };
     s.ball.vel = { x: -40, y: 0 }; // barely creeping into the bumper
     stepGame(s, {}, 1033, seq([0.5]));
-    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeGreaterThanOrEqual(BUMPER_MIN_EXIT_BALL * 0.95);
+    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeGreaterThan(0);
+    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeLessThan(80);
     expect(s.ball.vel.x).toBeGreaterThan(0); // reflected away from the corner
   });
 
@@ -627,9 +625,13 @@ describe('classic Babble League shared rules', () => {
     startGame(s, seq([0.5]));
     s.powerPlayInventories.left.push({ type: 'beachBall', availableTurn: 1 });
     const normalRadius = s.ball.radius;
+    s.ball.vel = { x: 123, y: -45 };
+    s.ball.verticalVelocity = 0;
     expect(usePowerPlay(s, 'l', { type: 'beachBall' }, 1000)).toBe(true);
     expect(s.ball.radius).toBeGreaterThan(FIELD.ballRadius);
     expect(s.ball.radius).toBeCloseTo(normalRadius * 1.6);
+    expect(s.ball.vel).toEqual({ x: 123, y: -45 });
+    expect(s.ball.verticalVelocity).toBe(0); // resizing injects no motion
     expect(s.beachBallUntilTurn).toBe(1);
     for (const id of ['left-1', 'left-2', 'left-3', 'left-4']) launchBabble(s, 'l', { babbleId: id, aimAngle: Math.PI, impulse: 1 }, 1000);
     for (const id of ['right-1', 'right-2', 'right-3', 'right-4']) launchBabble(s, 'r', { babbleId: id, aimAngle: 0, impulse: 1 }, 1000);
@@ -844,8 +846,34 @@ describe('classic Babble League shared rules', () => {
     expect(s.ball.vel.x).toBeGreaterThan(80); // visibly accelerated in one tick
   });
 
-  it('big bumpers hit far harder than normal bumpers', () => {
-    expect(BIG_BUMPER_BOOST_MULT).toBeGreaterThanOrEqual(2);
+  it('Boost only places a physical pad and never modifies launch impulse', () => {
+    const placed = createInitialState('BOOSTONLY', 3);
+    addPlayer(placed, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(placed, 'r', 'Righty', 'tigers', 'right');
+    startGame(placed, seq([0.5]));
+    placed.powerPlayInventories.left.push({ type: 'boost', availableTurn: 1, holderId: 'l' });
+    expect(usePowerPlay(placed, 'l', { type: 'boost', targetBabbleId: 'left-1', position: { x: 900, y: 100 }, angle: 0 }, 1000)).toBe(true);
+    expect(placed.fieldObjects.filter(o => o.type === 'boost')).toHaveLength(1);
+    expect(placed.babbles.flatMap(b => b.effects).some(e => e.type === 'boost')).toBe(false);
+
+    const launchSpeed = (legacyBoostEffect: boolean) => {
+      const s = createInitialState('BOOSTIMPULSE', 3);
+      addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+      addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+      startGame(s, seq([0.5]));
+      const target = s.babbles.find(b => b.id === 'left-1')!;
+      if (legacyBoostEffect) target.effects.push({ type: 'boost', untilTurn: s.turn });
+      for (const b of s.babbles) {
+        const player = Object.values(s.players).find(p => p.controlledBabbleIds.includes(b.id))!;
+        launchBabble(s, player.id, { babbleId: b.id, aimAngle: b.id === 'left-1' ? 0 : Math.PI / 2, impulse: b.id === 'left-1' ? 500 : 1 }, 1000);
+      }
+      stepGame(s, {}, s.turnDeadlineAt + 1, seq([0.5]));
+      return Math.hypot(target.vel.x, target.vel.y);
+    };
+    expect(launchSpeed(true)).toBeCloseTo(launchSpeed(false), 6);
+  });
+
+  it('big bumpers use larger, more elastic physical colliders', () => {
     const run = (big: boolean) => {
       const s = createInitialState('BIGHIT', 3);
       addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
@@ -854,7 +882,8 @@ describe('classic Babble League shared rules', () => {
       s.phase = 'resolving';
       s.resolvingStartedAt = 1000;
       if (big) s.bigBumpersUntilTurn = s.turn;
-      s.ball.pos = { x: BUMPERS[0].x + 55, y: BUMPERS[0].y };
+      const radius = big ? MAPS.stadium.layout.bigBumperRadius : MAPS.stadium.layout.bumperRadius;
+      s.ball.pos = { x: BUMPERS[0].x + radius + s.ball.radius - 2, y: BUMPERS[0].y };
       s.ball.vel = { x: -300, y: 0 };
       stepGame(s, {}, 1033, seq([0.5]));
       return s.ball.vel.x;
@@ -862,7 +891,7 @@ describe('classic Babble League shared rules', () => {
     const normal = run(false);
     const big = run(true);
     expect(normal).toBeGreaterThan(0);
-    expect(big).toBeGreaterThan(normal + 80);
+    expect(big).toBeGreaterThan(normal + 20);
   });
 
   it('accumulates authoritative ball spin matching travelled distance over radius', () => {
@@ -937,7 +966,7 @@ describe('classic Babble League shared rules', () => {
   });
 });
 
-describe('goal mouth scoring is airtight', () => {
+describe('goal mouth scoring and clearance window', () => {
   const setup = (mode: 1 | 3 = 3) => {
     const s = createInitialState('MOUTH', mode);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
@@ -948,21 +977,22 @@ describe('goal mouth scoring is airtight', () => {
     return s;
   };
 
-  it('scores the moment the ball overlaps the goal mouth so it can never rest inside a gate', () => {
+  it('keeps a stalled, partially crossed ball live in the left goal pocket', () => {
     const s = setup();
-    s.ball.pos = { x: 2, y: FIELD.goalY + 40 }; // stationary, overlapping the left mouth
+    s.ball.pos = { x: 2, y: FIELD.goalY + 40 };
     s.ball.vel = { x: 0, y: 0 };
     stepGame(s, {}, 1033, seq([0.5]));
-    expect(s.score.right).toBe(1); // ball in the left gate credits the right team
-    expect(s.ball.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 }); // kickoff reset, nothing lingers in the gate
+    expect(s.score).toEqual({ left: 0, right: 0 });
+    expect(s.ball.pos.x).toBeLessThan(s.ball.radius);
   });
 
-  it('scores a stalled ball overlapping the right mouth too', () => {
+  it('keeps a stalled, partially crossed ball live in the right goal pocket', () => {
     const s = setup();
     s.ball.pos = { x: FIELD.width - 2, y: FIELD.goalY + FIELD.goalHeight - 30 };
     s.ball.vel = { x: 0, y: 0 };
     stepGame(s, {}, 1033, seq([0.5]));
-    expect(s.score.left).toBe(1);
+    expect(s.score).toEqual({ left: 0, right: 0 });
+    expect(s.ball.pos.x).toBeGreaterThan(FIELD.width - s.ball.radius);
   });
 
   it('does not score while the ball only touches the mouth plane from the field side', () => {
@@ -976,7 +1006,7 @@ describe('goal mouth scoring is airtight', () => {
 
   it('does not score outside the mouth height even when far past the line', () => {
     const s = setup();
-    s.ball.pos = { x: 2, y: FIELD.goalY - 40 };
+    s.ball.pos = { x: -s.ball.radius - 5, y: FIELD.goalY - 40 };
     s.ball.vel = { x: 0, y: 0 };
     stepGame(s, {}, 1033, seq([0.5]));
     expect(s.score).toEqual({ left: 0, right: 0 });
@@ -985,7 +1015,7 @@ describe('goal mouth scoring is airtight', () => {
   it('credits the defending side while Swap Goals is active', () => {
     const s = setup();
     s.swappedGoalsUntilTurn = s.turn;
-    s.ball.pos = { x: 2, y: FIELD.goalY + 40 }; // left gate while swapped
+    s.ball.pos = { x: -s.ball.radius - 2, y: FIELD.goalY + 40 }; // whole ball across left gate while swapped
     s.ball.vel = { x: 0, y: 0 };
     stepGame(s, {}, 1033, seq([0.5]));
     expect(s.score.left).toBe(1);
