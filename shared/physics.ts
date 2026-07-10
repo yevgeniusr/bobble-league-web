@@ -92,6 +92,7 @@ interface PhysicsCache {
   bumperColliders: RAPIER.Collider[];
   bumperBodies: RAPIER.RigidBody[];
   bumperHandles: Map<number, Vec>;
+  bumperBallIdentity: GameState['ball'];
 }
 
 const caches = new WeakMap<GameState, PhysicsCache>();
@@ -262,6 +263,7 @@ function buildCache(state: GameState): PhysicsCache {
     bumperColliders: [],
     bumperBodies: [],
     bumperHandles: new Map(),
+    bumperBallIdentity: state.ball,
   };
 }
 
@@ -503,6 +505,12 @@ function buildArena(world: RAPIER.World, state: GameState) {
 // restores it after compression. This creates powered rebounds through contact
 // forces while keeping restitution in Rapier's documented [0,1] range.
 function syncBumpers(state: GameState, cache: PhysicsCache) {
+  // Kickoffs, goals, resets, and rematches replace the authoritative ball
+  // object. Treat that as a physics-epoch boundary even when turn returns to 1.
+  if (cache.bumperBallIdentity !== state.ball) {
+    cache.bumpersKey = '';
+    cache.bumperBallIdentity = state.ball;
+  }
   const map = mapOf(state);
   const big = state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
   const radiusPx = big ? map.layout.bigBumperRadius : map.layout.bumperRadius;

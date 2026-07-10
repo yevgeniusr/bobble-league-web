@@ -3,7 +3,7 @@
 // body collisions, ghosting, blocks, boxes, ramps/boosts, settling, and a
 // full 8-betabot scripted match completing by goal.
 import { describe, expect, it } from 'vitest';
-import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, startGame, stepGame } from '../shared/game';
+import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, resetGame, startGame, stepGame } from '../shared/game';
 import { clampMotorParameter, clampRestitution, stepPhysics } from '../shared/physics';
 import { BUMPERS, FIELD, GameState, MapId, PlayerSide, Vec } from '../shared/types';
 import { BALL_REST_HEIGHT, babbleRestHeight, ballRestHeight } from '../shared/airborne';
@@ -369,6 +369,37 @@ describe('Rapier physics: power-play interplay', () => {
     expect(carried.ball.vel.x).toBeCloseTo(fresh.ball.vel.x, 0);
     expect(carried.ball.vel.y).toBeCloseTo(fresh.ball.vel.y, 0);
     expect(carried.ball.height).toBeCloseTo(fresh.ball.height, 2);
+  });
+
+  it('clears compressed bumper state across reset and rematch at turn one', () => {
+    const resetProbe = (s: GameState) => {
+      park(s);
+      s.phase = 'resolving';
+      s.resolvingStartedAt = 1000;
+      s.ball.pos = { x: BUMPERS[0].x + 70, y: BUMPERS[0].y };
+      s.ball.vel = { x: -220, y: 0 };
+      s.ball.height = ballRestHeight(s.ball.radius);
+      s.ball.verticalVelocity = 0;
+      s.ball.rotation = { x: 0, y: 0, z: 0, w: 1 };
+      s.ball.angularVelocity = { x: 0, y: 0, z: 0 };
+    };
+    const rematch = setup();
+    resetProbe(rematch);
+    for (let i = 0; i < 4; i++) stepPhysics(rematch, 1 / 30);
+    resetGame(rematch, 3, seq([0.5]));
+    startGame(rematch, seq([0.5]));
+    resetProbe(rematch);
+
+    const fresh = setup();
+    resetProbe(fresh);
+    for (let i = 0; i < 20; i++) {
+      stepPhysics(rematch, 1 / 30);
+      stepPhysics(fresh, 1 / 30);
+    }
+    expect(rematch.ball.pos.x).toBeCloseTo(fresh.ball.pos.x, 1);
+    expect(rematch.ball.pos.y).toBeCloseTo(fresh.ball.pos.y, 1);
+    expect(rematch.ball.vel.x).toBeCloseTo(fresh.ball.vel.x, 0);
+    expect(rematch.ball.vel.y).toBeCloseTo(fresh.ball.vel.y, 0);
   });
 
   it('safely synchronizes radius-only collider changes and expiry', () => {
