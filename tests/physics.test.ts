@@ -401,31 +401,67 @@ describe('Rapier physics: power-play interplay', () => {
     expect(runBall(true)).toBeGreaterThan(runBall(false) + 120);
   });
 
-  it('launches a babble riding a ramp at full launch speed off the lip', () => {
+  it('keeps rendered and physical ramp facing aligned at rotated angles', () => {
+    const run = (angle: number) => {
+      const s = setup();
+      park(s, ['left-2']);
+      const b = s.babbles.find(x => x.id === 'left-2')!;
+      const dir = { x: Math.cos(angle), y: Math.sin(angle) };
+      b.pos = { x: 550 - dir.x * 75, y: 310 - dir.y * 75 };
+      b.vel = { x: dir.x * 190, y: dir.y * 190 };
+      s.fieldObjects = [{ id: `ramp-${angle}`, type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle, untilTurn: 99 }];
+      let maxHeight = b.height;
+      for (let i = 0; i < 14; i++) {
+        stepPhysics(s, 1 / 30);
+        maxHeight = Math.max(maxHeight, b.height);
+      }
+      const progress = (b.pos.x - (550 - dir.x * 75)) * dir.x + (b.pos.y - (310 - dir.y * 75)) * dir.y;
+      return { maxHeight, progress, rest: babbleRestHeight(b.radius) };
+    };
+    for (const angle of [Math.PI / 2, -Math.PI / 4]) {
+      const result = run(angle);
+      expect(result.maxHeight).toBeGreaterThan(result.rest + 0.06);
+      expect(result.progress).toBeGreaterThan(15);
+    }
+  });
+
+  it('converts a babble’s incoming momentum into physical ramp elevation without boosting speed', () => {
     const s = setup();
     park(s, ['left-2']);
     const b = s.babbles.find(x => x.id === 'left-2')!;
     b.pos = { x: 470, y: 320 };
     b.vel = { x: 250, y: -40 };
+    const incoming = Math.hypot(b.vel.x, b.vel.y);
     s.ball.pos = { x: 900, y: 100 };
     s.fieldObjects = [{ id: 'r1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: 99 }];
-    run(s, 6);
+    let maxHeight = b.height;
+    let maxPlanarSpeed = incoming;
+    run(s, 12, 1000, () => {
+      maxHeight = Math.max(maxHeight, b.height);
+      maxPlanarSpeed = Math.max(maxPlanarSpeed, Math.hypot(b.vel.x, b.vel.y));
+    });
     expect(s.rampEvents.some(e => e.mover === 'babble' && e.moverId === 'left-2')).toBe(true);
-    expect(Math.hypot(b.vel.x, b.vel.y)).toBeGreaterThan(500); // visibly launched
+    expect(maxHeight).toBeGreaterThan(babbleRestHeight(b.radius) + 0.05);
+    expect(maxPlanarSpeed).toBeLessThan(incoming * 1.08);
   });
 
-  it('ramps launch the ball through authoritative vertical state', () => {
+  it('ramps lift the ball through authoritative Rapier vertical state only', () => {
     const s = setup();
     park(s);
     s.ball.pos = { x: 470, y: 320 };
     s.ball.vel = { x: 250, y: -40 };
+    const incoming = Math.hypot(s.ball.vel.x, s.ball.vel.y);
     s.fieldObjects = [{ id: 'r1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: 99 }];
-
-    run(s, 3);
+    let maxHeight = s.ball.height;
+    let maxPlanarSpeed = incoming;
+    run(s, 12, 1000, () => {
+      maxHeight = Math.max(maxHeight, s.ball.height);
+      maxPlanarSpeed = Math.max(maxPlanarSpeed, Math.hypot(s.ball.vel.x, s.ball.vel.y));
+    });
 
     expect(s.rampEvents.some(e => e.mover === 'ball')).toBe(true);
-    expect(s.ball.height).toBeGreaterThan(BALL_REST_HEIGHT + 0.2);
-    expect(s.ball.verticalVelocity).toBeGreaterThan(0);
+    expect(maxHeight).toBeGreaterThan(BALL_REST_HEIGHT + 0.05);
+    expect(maxPlanarSpeed).toBeLessThan(incoming * 1.08);
   });
 
   it('resets vertical ball state when the beach ball effect expires', () => {

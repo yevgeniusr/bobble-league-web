@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, RampEvent, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec, normalizeMapId } from '../../shared/types';
+import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec, normalizeMapId } from '../../shared/types';
 import { BALL_MAX_HEIGHT, babbleRestHeight, ballRestHeight } from '../../shared/airborne';
 
 export type WorldXZ = { x: number; z: number };
@@ -110,23 +110,6 @@ export function rollDelta(deltaField: Vec, radiusWorld: number): { axis: { x: nu
 // Teleports (goal reset, Move Ball) larger than this skip the roll animation.
 export const ROLL_TELEPORT_FIELD_DIST = 180;
 
-// Ramp launch hop: parabolic vertical offset (world units) for a mover that
-// just flew off a ramp lip. age is seconds since the launch event.
-export const RAMP_HOP_SECONDS = 0.7;
-export function rampHopOffset(ageSeconds: number): number {
-  if (ageSeconds < 0 || ageSeconds > RAMP_HOP_SECONDS) return 0;
-  const t = ageSeconds / RAMP_HOP_SECONDS;
-  return Math.sin(Math.PI * t) * 1.15;
-}
-export function latestRampEvent(events: readonly RampEvent[] | undefined, mover: 'ball' | 'babble', moverId: string | undefined, now: number): RampEvent | null {
-  if (!events) return null;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.mover === mover && e.moverId === moverId && (now - e.at) / 1000 <= RAMP_HOP_SECONDS) return e;
-  }
-  return null;
-}
-
 // Ghosted power play: the whole babble renders translucent so everyone can see
 // it phases through other babbleheads, plus a pulsing ghost aura and label.
 export const GHOST_OPACITY = 0.38;
@@ -134,11 +117,6 @@ export function babbleGhosted(effects: readonly ActiveEffect[] | undefined, turn
   return !!effects?.some(e => e.type === 'ghosted' && e.untilTurn >= turn);
 }
 
-export function babbleCardEffect(effects: readonly ActiveEffect[] | undefined, turn: number): 'yellowCard' | 'redCard' | null {
-  if (effects?.some(e => e.type === 'redCard' && e.untilTurn >= turn)) return 'redCard';
-  if (effects?.some(e => e.type === 'yellowCard' && e.untilTurn >= turn)) return 'yellowCard';
-  return null;
-}
 
 export const GOAL_COLORS = { left: 0x4a5ad6, right: 0xf05d48 } as const;
 export function goalDisplayColors(swapped: boolean): { left: number; right: number } {
@@ -571,9 +549,10 @@ export class BabbleLeague3DRenderer {
     const solid = !ghosted;
     this.blobShadow(w.x, w.z, babbleContactShadowRadius(b.radius), ghosted ? 0.08 : 0.18);
 
-    const eventHop = rampHopOffset((Date.now() - (latestRampEvent(state.rampEvents, 'babble', b.id, Date.now())?.at ?? -1e12)) / 1000) * 0.24;
     const physicsHop = Number.isFinite(b.height) ? Math.max(0, b.height - babbleRestHeight(b.radius)) : 0;
-    const hop = Math.max(physicsHop, eventHop);
+    // Trampoline elevation is authoritative Rapier 3D state; ramp events only
+    // drive rings/sparks and never add a second render-only hop.
+    const hop = physicsHop;
     const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
     const sideCol = b.side === 'left' ? 0xe25a4c : 0x5147a8;
     const base = babbleContactBaseMetrics(b.radius);
@@ -612,20 +591,7 @@ export class BabbleLeague3DRenderer {
       tag.position.set(w.x, TURF_Y + 2.65 + bobY, w.z);
       this.dynamic.add(tag);
     }
-    const card = babbleCardEffect(b.effects, state.turn);
-    if (card) {
-      const red = card === 'redCard';
-      const color = red ? 0xef4444 : 0xfacc15;
-      const label = red ? 'RED CARD' : 'YELLOW CARD';
-      const marker = new THREE.Group();
-      marker.position.set(w.x, TURF_Y + 2.95 + bobY, w.z);
-      marker.rotation.y = Math.sin(t * 1.8) * 0.25;
-      this.dynamic.add(marker);
-      this.mesh(marker, new THREE.BoxGeometry(0.38, 0.56, 0.04), this.mat(color, 0.32, { emissive: red ? 0x4a0808 : 0x4a3a08 }), 0, 0, 0);
-      const text = this.text(label, 20, red ? '#fecaca' : '#fef3c7');
-      text.position.set(w.x, TURF_Y + 3.38 + bobY, w.z);
-      this.dynamic.add(text);
-    }
+
     // team emoji badge on the chest (hidden while ghosted so the see-through body reads clearly)
     if (!ghosted) {
       const badge = this.text(team.emoji, 44);

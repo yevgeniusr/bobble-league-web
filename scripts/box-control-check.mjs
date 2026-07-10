@@ -71,18 +71,49 @@ try {
     await page.mouse.up();
     await delay(500);
   };
+  const clickAbility = async (name) => {
+    const button = page.locator('.inventory button', { hasText: name }).first();
+    await button.evaluate(el => {
+      const scroller = el.closest('.inventory');
+      if (scroller) scroller.scrollLeft = el.offsetLeft - scroller.clientWidth / 2 + el.clientWidth / 2;
+    });
+    await delay(150);
+    const rect = await button.boundingBox();
+    const viewport = page.viewportSize();
+    if (!rect || !viewport || rect.x < 0 || rect.y < 0 || rect.x + rect.width > viewport.width || rect.y + rect.height > viewport.height) {
+      const diag = await button.evaluate(el => {
+        const scroller = el.closest('.inventory');
+        const row = el.closest('.actionBarRow');
+        return {
+          button: el.getBoundingClientRect().toJSON(),
+          offsetLeft: el.offsetLeft,
+          scroller: scroller ? { rect: scroller.getBoundingClientRect().toJSON(), scrollLeft: scroller.scrollLeft, scrollWidth: scroller.scrollWidth, clientWidth: scroller.clientWidth } : null,
+          row: row ? { rect: row.getBoundingClientRect().toJSON(), columns: getComputedStyle(row).gridTemplateColumns } : null,
+          windowScrollX: window.scrollX
+        };
+      });
+      throw new Error(`Ability ${String(name)} is not pointer-visible after scrolling: ${JSON.stringify({ rect, diag })}`);
+    }
+    await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  };
 
-  // 0. grant both test boxes through the developer console hook
+  // 0. grant the test boxes through the developer console hook
   //    (window.__babbleDev, gated by localStorage babble:devtools=1 above).
   //    Grants are spaced out to respect the server's cheat rate limit.
   await page.waitForFunction(() => typeof window.__babbleDev?.grantBox === 'function', null, { timeout: 10000 });
   await page.evaluate(() => window.__babbleDev.grantBox('boost'));
   await delay(1000);
   await page.evaluate(() => window.__babbleDev.grantBox('ghosted'));
+  await delay(1000);
+  await page.evaluate(() => window.__babbleDev.grantBox('ramp'));
+  await delay(1000);
+  await page.evaluate(() => window.__babbleDev.grantBox('yellowCard'));
+  await delay(1000);
+  await page.evaluate(() => window.__babbleDev.grantBox('redCard'));
   // note: buttons render uppercase (CSS text-transform), so match case-insensitively
   await page.waitForFunction(() => {
     const t = document.body.innerText;
-    return /boost/i.test(t) && /ghosted/i.test(t);
+    return /boost/i.test(t) && /ghosted/i.test(t) && /trampoline/i.test(t) && /yellow card/i.test(t) && /red card/i.test(t);
   }, null, { timeout: 10000 });
 
   // the whole sequence must land inside a single planning turn (BABBLE_TURN_MS
@@ -100,7 +131,7 @@ try {
   const aimedAfterReaim = await aimedCount(page, 'afterReaim');
 
   // 2. use the placeable box (Boost)
-  await page.locator('.inventory button', { hasText: /Boost/ }).first().click({ force: true });
+  await clickAbility(/Boost/);
   await delay(250);
   const padA = project(560, 250), padB = project(660, 250);
   await page.mouse.move(padA.x, padA.y);
@@ -115,7 +146,7 @@ try {
   const aimedAfterBoost = await aimedCount(page, 'afterBoost');
 
   // 4. apply the babble-target box (Ghosted) to an own babble
-  await page.locator('.inventory button', { hasText: /Ghosted/ }).first().click({ force: true });
+  await clickAbility(/Ghosted/);
   await delay(250);
   const ghostTarget = project(babbles[2].x, babbles[2].y);
   await page.mouse.click(ghostTarget.x, ghostTarget.y);
@@ -126,10 +157,43 @@ try {
   await dragLaunch(babbles[3]);
   const aimedAfterGhost = await aimedCount(page, 'afterGhost');
 
+  // 6. Trampoline is placeable, clears placement, and does not block controls.
+  await clickAbility(/Trampoline/);
+  await delay(250);
+  const rampA = project(500, 380), rampB = project(600, 380);
+  await page.mouse.move(rampA.x, rampA.y);
+  await page.mouse.down();
+  await page.mouse.move(rampB.x, rampB.y, { steps: 5 });
+  await page.mouse.up();
+  await delay(500);
+  const trampolinePlacementCleared = !/Placing Trampoline/.test(await page.locator('body').innerText());
+
+  // 7. Yellow Card is instant: no field/babble targeting mode should open.
+  await clickAbility(/Yellow Card/);
+  await delay(500);
+  const yellowWasInstant = !/Targeting Yellow Card/.test(await page.locator('body').innerText());
+
+  // 8. Red Card requires a babble click and then exits targeting mode.
+  await clickAbility(/Red Card/);
+  await delay(250);
+  const redTarget = project(babbles[2].x, babbles[2].y);
+  await page.mouse.click(redTarget.x, redTarget.y);
+  await delay(500);
+  const redTargetingCleared = !/Targeting Red Card/.test(await page.locator('body').innerText());
+
+  // 9. An unresolved targeting mode must disappear when planning ends.
+  await page.evaluate(() => window.__babbleDev.grantBox('redCard'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.inventory button')].some(b => /Red Card/i.test(b.textContent || '')));
+  await clickAbility(/Red Card/);
+  await page.locator('.readyBtn').evaluate(button => button.click());
+  await page.waitForFunction(() => /resolving/i.test(document.body.innerText), null, { timeout: 10000 });
+  await delay(250);
+  const targetingClearedOnResolve = !/Targeting Red Card/.test(await page.locator('body').innerText());
+
   const out = {
-    ok: aimedBefore >= 1 && aimedAfterReaim === aimedBefore && placingHintCleared && aimedAfterBoost > aimedAfterReaim && targetingCleared && aimedAfterGhost > aimedAfterBoost && errors.length === 0,
+    ok: aimedBefore >= 1 && aimedAfterReaim === aimedBefore && placingHintCleared && aimedAfterBoost > aimedAfterReaim && targetingCleared && aimedAfterGhost > aimedAfterBoost && trampolinePlacementCleared && yellowWasInstant && redTargetingCleared && targetingClearedOnResolve && errors.length === 0,
     mapId,
-    aimedBefore, aimedAfterReaim, aimedAfterBoost, aimedAfterGhost, placingHintCleared, targetingCleared,
+    aimedBefore, aimedAfterReaim, aimedAfterBoost, aimedAfterGhost, placingHintCleared, targetingCleared, trampolinePlacementCleared, yellowWasInstant, redTargetingCleared, targetingClearedOnResolve,
     errors: errors.slice(0, 5)
   };
   console.log(JSON.stringify(out, null, 2));

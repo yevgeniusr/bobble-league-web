@@ -20,7 +20,7 @@ import {
   normalizeBabbleVertical,
   normalizeBallVertical
 } from './airborne';
-import { FIELD, GameState, MAPS, PlayerSide, Vec, normalizeMapId } from './types';
+import { FIELD, GameState, MAPS, PlayerSide, RAMP_HALF_LEN, RAMP_HALF_WIDTH, Vec, normalizeMapId } from './types';
 import { PHYSICS_CONFIG } from './physicsConfig';
 
 // Rapier is tuned for meter-scale numbers; the field is 1100x620 px.
@@ -60,6 +60,7 @@ const FLOOR_HALF_THICKNESS = 0.25;
 const BLOCK_HALF_LEN = 60 / PX_PER_METER;
 const BLOCK_HALF_THICKNESS = 14 / PX_PER_METER;
 const BLOCK_HALF_HEIGHT = WALL_HALF_HEIGHT;
+const RAMP_HEIGHT = 0.82; // matches client wedgeGeometry exactly
 const REST_EPS = 0.004;
 
 // -compat builds expose an async init that instantiates the inlined WASM.
@@ -86,6 +87,8 @@ interface PhysicsCache {
   babbleKey: string;
   blocksKey: string;
   blockColliders: RAPIER.Collider[];
+  rampsKey: string;
+  rampColliders: RAPIER.Collider[];
 }
 
 const caches = new WeakMap<GameState, PhysicsCache>();
@@ -112,6 +115,7 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
   const result: PhysicsStepResult = { ballBabbleImpacts: [] };
   world.timestep = dt;
   syncBlocks(state, cache);
+  syncRamps(state, cache);
   syncBall(state, cache);
   const ballPreStep = {
     pos: { ...state.ball.pos },
@@ -228,6 +232,8 @@ function buildCache(state: GameState): PhysicsCache {
     babbleKey: babbleKeyOf(state),
     blocksKey: '',
     blockColliders: [],
+    rampsKey: '',
+    rampColliders: [],
   };
 }
 
@@ -457,6 +463,39 @@ function syncBlocks(state: GameState, cache: PhysicsCache) {
     )
   );
   cache.blocksKey = key;
+}
+
+// Trampolines are real static 3D wedges. They add no velocity or minimum exit
+// speed: Rapier converts incoming horizontal momentum into height through the
+// contact normal, gravity, friction, and wedge geometry itself.
+function syncRamps(state: GameState, cache: PhysicsCache) {
+  const active = state.fieldObjects.filter(o => o.type === 'ramp' && o.untilTurn >= state.turn);
+  const key = active.map(o => `${o.id}:${o.pos.x},${o.pos.y},${o.angle}`).join('|');
+  if (key === cache.rampsKey) return;
+  for (const c of cache.rampColliders) cache.world.removeCollider(c, false);
+  const halfLen = RAMP_HALF_LEN / PX_PER_METER;
+  const halfWidth = RAMP_HALF_WIDTH / PX_PER_METER;
+  const points = new Float32Array([
+    -halfLen, 0, -halfWidth,
+    -halfLen, 0, halfWidth,
+    halfLen, 0, -halfWidth,
+    halfLen, 0, halfWidth,
+    halfLen, RAMP_HEIGHT, -halfWidth,
+    halfLen, RAMP_HEIGHT, halfWidth
+  ]);
+  cache.rampColliders = active.flatMap(o => {
+    const desc = RAPIER.ColliderDesc.convexHull(points);
+    if (!desc) return [];
+    return [cache.world.createCollider(
+      desc
+        .setTranslation(o.pos.x / PX_PER_METER, 0, o.pos.y / PX_PER_METER)
+        .setRotation(yawRotation(-o.angle))
+        .setFriction(0.08)
+        .setRestitution(0)
+        .setCollisionGroups(BLOCK_GROUPS)
+    )];
+  });
+  cache.rampsKey = key;
 }
 
 // CCD (swept collision) is only worth its cost for genuinely fast movers that

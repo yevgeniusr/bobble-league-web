@@ -15,7 +15,6 @@ import {
   BUMPER_MIN_EXIT_BABBLE,
   MAX_RESOLVE_MS,
   MAX_SPEED,
-  RAMP_LAUNCH_SPEED,
   reclaimPlayer,
   redactStateFor,
   removePlayer,
@@ -30,6 +29,7 @@ import {
   usePowerPlay
 } from '../shared/game';
 import { BOX_SELECTION_WEIGHTS, BOX_TYPE_IDS, BOX_TYPES, BUMPERS, FIELD, FORMATION_IDS, FORMATIONS, MAPS, MAP_IDS, MapId, normalizeBoxType } from '../shared/types';
+import { PHYSICS_CONFIG } from '../shared/physicsConfig';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
@@ -39,7 +39,8 @@ describe('classic Babble League shared rules', () => {
     expect(s.mapId).toBe('stadium');
     expect(s.config.mapId).toBe('stadium');
     expect(s.config.boxSpawnAnchors).toEqual(['topMid', 'bottomMid']);
-    expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano', 'saturn']);
+    expect(s.config.turnDurationMs).toBe(20000);
+    expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano', 'saturn', 'original', 'originalGlide', 'originalBounce']);
   });
 
   it('uses a larger normal ball and smaller physics babbles', () => {
@@ -57,9 +58,9 @@ describe('classic Babble League shared rules', () => {
   });
 
   it('defines Saturn as a selectable ring-themed heavy map', () => {
-    const otherMapIds = MAP_IDS.filter(id => id !== 'saturn');
-    const maxOtherBabbleDensity = Math.max(...otherMapIds.map(id => MAPS[id].physics.babbleDensity));
-    const maxOtherBallDensity = Math.max(...otherMapIds.map(id => MAPS[id].physics.ballDensityBase));
+    const ordinaryMapIds = MAP_IDS.filter(id => !['saturn', 'original', 'originalGlide', 'originalBounce'].includes(id));
+    const maxOtherBabbleDensity = Math.max(...ordinaryMapIds.map(id => MAPS[id].physics.babbleDensity));
+    const maxOtherBallDensity = Math.max(...ordinaryMapIds.map(id => MAPS[id].physics.ballDensityBase));
 
     expect(MAPS.saturn.label).toBe('Saturn');
     expect(MAPS.saturn.shortLabel).toBe('Saturn');
@@ -68,6 +69,18 @@ describe('classic Babble League shared rules', () => {
     expect(MAPS.saturn.layout.bumpers.length).toBeGreaterThanOrEqual(4);
     expect(MAPS.saturn.physics.babbleDensity).toBeGreaterThanOrEqual(maxOtherBabbleDensity * 3);
     expect(MAPS.saturn.physics.ballDensityBase).toBeGreaterThanOrEqual(maxOtherBallDensity * 3);
+  });
+
+  it('provides three clearly labelled original-physics candidates for playtesting', () => {
+    expect(MAPS.original.label).toBe('Original A · Tight');
+    expect(MAPS.originalGlide.label).toBe('Original B · Empirical');
+    expect(MAPS.originalBounce.label).toBe('Original C · Glide');
+    for (const id of ['original', 'originalGlide', 'originalBounce'] as const) {
+      expect(MAPS[id].description).toMatch(/original.*candidate/i);
+      expect(MAPS[id].layout).toEqual(MAPS.stadium.layout);
+    }
+    expect(MAPS.originalGlide.physics.ballDragPerTick).toBeGreaterThan(MAPS.original.physics.ballDragPerTick);
+    expect(MAPS.originalBounce.physics.ballRestitution).toBeGreaterThan(MAPS.original.physics.ballRestitution);
   });
 
   it('allows map changes only in the lobby and preserves the selected map through kickoff', () => {
@@ -438,7 +451,7 @@ describe('classic Babble League shared rules', () => {
     expect(BOX_TYPES.bigHead.targetId).toBe('bighead');
     expect(BOX_TYPES.yellowCard.targetId).toBe('yellowcard');
     expect(BOX_TYPES.redCard.targetId).toBe('redcard');
-    expect(BOX_TYPES.yellowCard.category).toBe('babble');
+    expect(BOX_TYPES.yellowCard.category).toBe('instant');
     expect(BOX_TYPES.redCard.category).toBe('babble');
     expect(normalizeBoxType('giantball')).toBe('beachBall');
     expect(normalizeBoxType('bumppadboost')).toBe('bigBumpers');
@@ -651,44 +664,91 @@ describe('classic Babble League shared rules', () => {
     expect(s.bigBumpersUntilTurn).toBe(1);
   });
 
-  it('yellow card weakens a targeted babble launch for one turn', () => {
-    const run = (carded: boolean) => {
-      const s = createInitialState(carded ? 'YELLOW' : 'NOCARD', 3);
+  it('rejects malformed Power Play positions and angles without consuming inventory', () => {
+    const invalidUses = [
+      null,
+      { type: 'ramp', angle: 'sideways' },
+      { type: 'ramp', angle: Number.NaN },
+      { type: 'ramp', angle: Number.POSITIVE_INFINITY },
+      { type: 'ramp', position: null },
+      { type: 'ramp', position: 'center' },
+      { type: 'ramp', position: { x: Number.NaN, y: 200 } },
+      { type: 'ramp', position: { x: 400, y: Number.NEGATIVE_INFINITY } }
+    ];
+    for (const [i, invalidUse] of invalidUses.entries()) {
+      const s = createInitialState(`BADPOWER${i}`, 3);
       addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
       addPlayer(s, 'r', 'Righty', 'tigers', 'right');
       startGame(s, seq([0.5]));
-      if (carded) {
-        s.powerPlayInventories.left.push({ type: 'yellowCard', availableTurn: 1, holderId: 'l' });
-        expect(usePowerPlay(s, 'l', { type: 'yellowcard' as never, targetBabbleId: 'right-2' }, 1000)).toBe(true);
-        expect(s.babbles.find(b => b.id === 'right-2')?.effects.map(e => e.type)).toContain('yellowCard');
-      }
-      expect(launchBabble(s, 'r', { babbleId: 'right-2', aimAngle: Math.PI, impulse: 500 }, 1001)).toBe(true);
-      expect(setPlayerReady(s, 'l', 1002)).toBe(true);
-      expect(setPlayerReady(s, 'r', 1003)).toBe(true);
-      return Math.abs(s.babbles.find(b => b.id === 'right-2')!.vel.x);
-    };
-
-    expect(run(true)).toBeLessThan(run(false) * 0.7);
+      const item = { type: 'ramp' as const, availableTurn: s.turn, holderId: 'l' };
+      s.powerPlayInventories.left.push(item);
+      expect(usePowerPlay(s, 'l', invalidUse as never, 1000)).toBe(false);
+      expect(s.powerPlayInventories.left).toEqual([item]);
+      expect(s.fieldObjects).toHaveLength(0);
+    }
   });
 
-  it('red card stuns a targeted babble and marks it ghosted for clear feedback', () => {
+  it('rejects Power Plays outside planning without consuming inventory', () => {
+    const s = createInitialState('POWERPHASE', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'yellowCard', availableTurn: s.turn, holderId: 'l' });
+    s.phase = 'resolving';
+    expect(usePowerPlay(s, 'l', { type: 'yellowCard' }, 1000)).toBe(false);
+    expect(s.powerPlayInventories.left).toEqual([{ type: 'yellowCard', availableTurn: s.turn, holderId: 'l' }]);
+  });
+
+  it('yellow card instantly teleports the ball to exact field center without targeting', () => {
+    const s = createInitialState('YELLOW', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.ball.pos = { x: 145, y: 91 };
+    s.ball.vel = { x: 320, y: -140 };
+    s.ball.verticalVelocity = 1.2;
+    s.ball.lastTouchedBy = 'right';
+    s.powerPlayInventories.left.push({ type: 'yellowCard', availableTurn: 1, holderId: 'l' });
+
+    expect(usePowerPlay(s, 'l', { type: 'yellowcard' as never }, 1000)).toBe(true);
+    expect(s.ball.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 });
+    expect(s.ball.vel).toEqual({ x: 0, y: 0 });
+    expect(s.ball.verticalVelocity).toBe(0);
+    expect(s.ball.lastTouchedBy).toBeNull();
+    expect(s.babbles.flatMap(b => b.effects).some(e => e.type === 'yellowCard')).toBe(false);
+  });
+
+  it('red card rejects a missing target without consuming inventory', () => {
+    const s = createInitialState('REDBAD', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    const item = { type: 'redCard' as const, availableTurn: s.turn, holderId: 'l' };
+    s.powerPlayInventories.left.push(item);
+    expect(usePowerPlay(s, 'l', { type: 'redCard' }, 1000)).toBe(false);
+    expect(usePowerPlay(s, 'l', { type: 'redCard', targetBabbleId: 'missing' }, 1001)).toBe(false);
+    expect(s.powerPlayInventories.left).toEqual([item]);
+  });
+
+  it('red card lets the user choose a babble and teleports only that babble to exact field center', () => {
     const s = createInitialState('RED', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
     s.powerPlayInventories.left.push({ type: 'redCard', availableTurn: 1, holderId: 'l' });
+    const untouched = { ...s.babbles.find(b => b.id === 'right-1')!.pos };
+    const target = s.babbles.find(b => b.id === 'right-2')!;
+    target.pos = { x: 990, y: 100 };
+    target.vel = { x: -220, y: 80 };
+    target.verticalVelocity = 1;
 
     expect(usePowerPlay(s, 'l', { type: 'redcard' as never, targetBabbleId: 'right-2' }, 1000)).toBe(true);
-    expect(s.babbles.find(b => b.id === 'right-2')?.effects.map(e => e.type)).toEqual(expect.arrayContaining(['redCard', 'ghosted']));
-    expect(s.events.some(e => /red card/i.test(e.message))).toBe(true);
-
-    expect(launchBabble(s, 'r', { babbleId: 'right-2', aimAngle: Math.PI, impulse: 500 }, 1001)).toBe(true);
-    expect(setPlayerReady(s, 'l', 1002)).toBe(true);
-    expect(setPlayerReady(s, 'r', 1003)).toBe(true);
-
-    const target = s.babbles.find(b => b.id === 'right-2')!;
+    expect(target.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 });
     expect(target.vel).toEqual({ x: 0, y: 0 });
-    expect(target.lastLaunchedTurn).toBe(0);
+    expect(target.verticalVelocity).toBe(0);
+    expect(target.effects.some(e => e.type === 'redCard' || e.type === 'ghosted')).toBe(false);
+    expect(s.babbles.find(b => b.id === 'right-1')!.pos).toEqual(untouched);
+    expect(s.events.some(e => /red card/i.test(e.message))).toBe(true);
   });
 
   it('placed rotatable obstacles keep their angle in state and rotate only for their owner', () => {
@@ -710,20 +770,46 @@ describe('classic Babble League shared rules', () => {
     expect(rotateFieldObject(s, 'l', goo.id)).toBe(false); // goo is not rotatable
   });
 
-  it('ramps launch movers along the ramp direction with a guaranteed exit speed', () => {
+  it('ramps rely on their physical slope and never inject a guaranteed horizontal boost', () => {
     const s = createInitialState('RAMP', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
     s.phase = 'resolving';
     s.resolvingStartedAt = 1000;
-    s.fieldObjects = [{ id: 'ramp-1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: 99 }];
-    // slow ball rolling up the ramp gets redirected and launched off the lip
-    s.ball.pos = { x: 505, y: 330 };
-    s.ball.vel = { x: 150, y: -60 };
-    stepGame(s, {}, 1033, seq([0.5]));
-    expect(s.ball.vel.x).toBeGreaterThanOrEqual(RAMP_LAUNCH_SPEED - 1);
-    expect(Math.abs(s.ball.vel.y)).toBeLessThan(1); // aligned to the ramp facing
+    s.fieldObjects = [{ id: 'ramp-1', type: 'ramp', owner: 'left', pos: { x: 550, y: 310 }, angle: 0, untilTurn: s.turn }];
+    s.ball.pos = { x: 475, y: 310 };
+    s.ball.vel = { x: 180, y: 0 };
+    const incoming = Math.hypot(s.ball.vel.x, s.ball.vel.y);
+    let maxHeight = s.ball.height;
+    let maxPlanarSpeed = incoming;
+    for (let i = 0; i < 45; i++) {
+      stepGame(s, {}, 1033 + i * 33, seq([0.5]));
+      maxHeight = Math.max(maxHeight, s.ball.height);
+      maxPlanarSpeed = Math.max(maxPlanarSpeed, Math.hypot(s.ball.vel.x, s.ball.vel.y));
+    }
+    expect(maxHeight).toBeGreaterThan(0.65);
+    expect(maxPlanarSpeed).toBeLessThan(incoming * 1.08);
+  });
+
+  it('ramps last exactly their placement turn and multiple placed ramps stack independently', () => {
+    const s = createInitialState('RAMPSTACK', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push(
+      { type: 'ramp', availableTurn: s.turn, holderId: 'l' },
+      { type: 'ramp', availableTurn: s.turn, holderId: 'l' }
+    );
+    expect(usePowerPlay(s, 'l', { type: 'ramp', position: { x: 400, y: 250 }, angle: 0 }, 1000)).toBe(true);
+    expect(usePowerPlay(s, 'l', { type: 'ramp', position: { x: 700, y: 370 }, angle: Math.PI }, 1001)).toBe(true);
+    expect(s.fieldObjects.filter(o => o.type === 'ramp')).toHaveLength(2);
+    expect(s.fieldObjects.every(o => o.untilTurn === s.turn)).toBe(true);
+    s.phase = 'resolving';
+    s.resolvingStartedAt = 1000 - MAX_RESOLVE_MS;
+    stepGame(s, {}, 1000, seq([0.5]));
+    expect(s.turn).toBe(2);
+    expect(s.fieldObjects.filter(o => o.type === 'ramp')).toHaveLength(0);
   });
 
   it('ramps bounce movers that hit the tall back face instead of ramping them', () => {
@@ -1066,9 +1152,9 @@ describe('ramp launch events', () => {
     expect(s.rampEvents.some(e => e.mover === 'babble' && e.moverId === 'left-1')).toBe(true);
   });
 
-  it('boost pads are launch-day strong', () => {
+  it('boost pads are launch-day strong while trampolines remain purely physical', () => {
     expect(BOOST_PAD_ACCEL).toBeGreaterThanOrEqual(2800);
-    expect(RAMP_LAUNCH_SPEED).toBeGreaterThanOrEqual(550);
+    expect('RAMP_LAUNCH_SPEED' in PHYSICS_CONFIG).toBe(false);
   });
 });
 
@@ -1178,7 +1264,8 @@ describe('move ball ability', () => {
     expect(s.ball.pos).toEqual({ x: 640, y: 222 });
 
     s.powerPlayInventories.left.push({ type: 'moveBall', availableTurn: 1, holderId: 'l' });
-    expect(usePowerPlay(s, 'l', { type: 'moveBall', position: { x: Number.NaN, y: 10 } }, 1200)).toBe(true);
-    expect(s.ball.pos).toEqual({ x: FIELD.width / 2, y: FIELD.height / 2 }); // bogus input falls back to center
+    expect(usePowerPlay(s, 'l', { type: 'moveBall', position: { x: Number.NaN, y: 10 } }, 1200)).toBe(false);
+    expect(s.ball.pos).toEqual({ x: 640, y: 222 });
+    expect(s.powerPlayInventories.left).toHaveLength(1);
   });
 });

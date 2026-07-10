@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BUMPERS, FIELD, MAPS, MAP_IDS, RampEvent } from '../shared/types';
-import { ballRenderElevation, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, latestRampEvent, mapBumperWorldPositions, RAMP_HOP_SECONDS, rampHopOffset, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { BUMPERS, FIELD, MAPS, MAP_IDS } from '../shared/types';
+import { ballRenderElevation, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 import { BALL_MAX_HEIGHT, BALL_REST_HEIGHT } from '../shared/airborne';
 
 describe('3D renderer coordinate mapping', () => {
@@ -139,27 +139,6 @@ describe('3D renderer coordinate mapping', () => {
     expect(ROLL_TELEPORT_FIELD_DIST).toBeGreaterThan(100);
   });
 
-  it('animates a parabolic ramp hop only within the hop window', () => {
-    expect(rampHopOffset(-0.1)).toBe(0);
-    expect(rampHopOffset(0)).toBeCloseTo(0);
-    expect(rampHopOffset(RAMP_HOP_SECONDS / 2)).toBeGreaterThan(1);
-    expect(rampHopOffset(RAMP_HOP_SECONDS)).toBeCloseTo(0);
-    expect(rampHopOffset(RAMP_HOP_SECONDS + 0.1)).toBe(0);
-  });
-
-  it('finds the freshest ramp event for exactly the requested mover', () => {
-    const now = 10000;
-    const events: RampEvent[] = [
-      { pos: { x: 1, y: 1 }, at: now - 100, mover: 'ball' },
-      { pos: { x: 2, y: 2 }, at: now - 50, mover: 'babble', moverId: 'left-1' },
-      { pos: { x: 3, y: 3 }, at: now - 60_000, mover: 'babble', moverId: 'left-2' } // stale
-    ];
-    expect(latestRampEvent(events, 'ball', undefined, now)?.pos).toEqual({ x: 1, y: 1 });
-    expect(latestRampEvent(events, 'babble', 'left-1', now)?.pos).toEqual({ x: 2, y: 2 });
-    expect(latestRampEvent(events, 'babble', 'left-2', now)).toBeNull();
-    expect(latestRampEvent(events, 'babble', 'right-1', now)).toBeNull();
-    expect(latestRampEvent(undefined, 'ball', undefined, now)).toBeNull();
-  });
 
   it('renders ghosted babbles translucent only while the effect is active', () => {
     // ghosted babbles must be clearly see-through but still visible

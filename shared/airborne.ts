@@ -8,8 +8,7 @@ export const BEACH_BALL_GRAVITY = 2.35;
 export const BALL_LANDING_BOUNCE = 0.34;
 export const BEACH_BALL_LANDING_BOUNCE = 0.48;
 export const BALL_LANDING_REST_VELOCITY = 0.42;
-export const BALL_RAMP_VERTICAL_VELOCITY = 3.25;
-export const BEACH_BALL_RAMP_VERTICAL_VELOCITY = 4.1;
+export const BEACH_BALL_ACTIVATION_VERTICAL_VELOCITY = 4.1;
 
 const PX_PER_METER = 50;
 
@@ -17,7 +16,7 @@ export const BABBLE_REST_HEIGHT = 0.5;
 export const BABBLE_MAX_HEIGHT = 1.03;
 export const BABBLE_GRAVITY = 9.5;
 export const BABBLE_LANDING_REST_VELOCITY = 0.35;
-export const BABBLE_RAMP_VERTICAL_VELOCITY = 2.15;
+export const BABBLE_IMPACT_MAX_VERTICAL_VELOCITY = 2.15;
 
 export type BallVerticalState = {
   height: number;

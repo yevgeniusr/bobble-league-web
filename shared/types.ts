@@ -53,13 +53,13 @@ export const BOX_TYPES = {
   bigBumpers: { label: 'Big Bumpers', targetId: 'bumppadboost', color: '#f97316', category: 'instant', durationTurns: 1, description: 'Corner bumpers grow stronger for one turn.' },
   boost: { label: 'Boost', targetId: 'boost', color: '#38bdf8', category: 'field', durationTurns: 1, description: 'Place a directional boost pad.' },
   stickyGoo: { label: 'Sticky Goo', targetId: 'sticky', color: '#84cc16', category: 'field', durationTurns: 1, description: 'Place a sticky slow zone.' },
-  ramp: { label: 'Ramp', targetId: 'ramp', color: '#a78bfa', category: 'field', durationTurns: 1, description: 'Place a ramp deflector.' },
+  ramp: { label: 'Trampoline', targetId: 'ramp', color: '#a78bfa', category: 'field', durationTurns: 1, description: 'Place a physical ramp for this turn. It adds no artificial boost.' },
   block: { label: 'Block', targetId: 'block', color: '#94a3b8', category: 'field', durationTurns: 1, description: 'Place a temporary wall.' },
   bigHead: { label: 'Big Head', targetId: 'bighead', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead grows and kicks harder.' },
   ghosted: { label: 'Ghosted', targetId: 'ghost', color: '#d8b4fe', category: 'babble', durationTurns: 1, description: 'Target babblehead passes through babbleheads and boxes.' },
   movePlayer: { label: 'Move Player', targetId: 'moveplayer', color: '#fde047', category: 'babble', durationTurns: 0, description: 'Move a target babblehead back toward center field.' },
-  yellowCard: { label: 'Yellow Card', targetId: 'yellowcard', color: '#facc15', category: 'babble', durationTurns: 1, description: 'Target babblehead gets a weak launch for one turn.' },
-  redCard: { label: 'Red Card', targetId: 'redcard', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead is stunned and ghosted for one turn.' }
+  yellowCard: { label: 'Yellow Card', targetId: 'yellowcard', color: '#facc15', category: 'instant', durationTurns: 0, description: 'Teleport the ball to the center of the field.' },
+  redCard: { label: 'Red Card', targetId: 'redcard', color: '#ef4444', category: 'babble', durationTurns: 0, description: 'Choose a babblehead to teleport to the center of the field.' }
 } as const;
 export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
@@ -123,8 +123,8 @@ export const BUMPERS: readonly Vec[] = [
   { x: FIELD.width - STADIUM_BUMPER_OFFSET, y: FIELD.height - STADIUM_BUMPER_OFFSET }
 ] as const;
 
-export type MapId = 'stadium' | 'moon' | 'volcano' | 'saturn';
-export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano', 'saturn'] as const;
+export type MapId = 'stadium' | 'moon' | 'volcano' | 'saturn' | 'original' | 'originalGlide' | 'originalBounce';
+export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano', 'saturn', 'original', 'originalGlide', 'originalBounce'] as const;
 
 export type MapPhysicsMultipliers = {
   babbleImpulseScale: number;
@@ -138,7 +138,6 @@ export type MapPhysicsMultipliers = {
   bigBumperBoostMult: number;
   bigBumperRestitution: number;
   boostPadAccel: number;
-  rampLaunchSpeed: number;
   babbleDragPerTick: number;
   ballDragPerTick: number;
   beachBallDragPerTick: number;
@@ -197,7 +196,6 @@ const PHYSICS_1X: MapPhysicsMultipliers = {
   bigBumperBoostMult: 1,
   bigBumperRestitution: 1,
   boostPadAccel: 1,
-  rampLaunchSpeed: 1,
   babbleDragPerTick: 1,
   ballDragPerTick: 1,
   beachBallDragPerTick: 1,
@@ -207,6 +205,26 @@ const PHYSICS_1X: MapPhysicsMultipliers = {
   blockRestitution: 1,
   babbleDensity: 1,
   ballDensityBase: 1
+};
+
+// Playtest candidates share the closest observed original arena layout so the
+// user can compare physics alone. Their values bracket the remaining uncertainty
+// in drag and restitution from the sparse original telemetry sample.
+const ORIGINAL_LAYOUT: MapConfig['layout'] = {
+  bumpers: BUMPERS,
+  bumperRadius: BUMPER_RADIUS,
+  bigBumperRadius: BIG_BUMPER_RADIUS,
+  boxSpawnAnchors: ['topMid', 'bottomMid']
+};
+const ORIGINAL_THEME: MapConfig['theme'] = {
+  sky: 0x253141, fog: 0x46566d,
+  tableLeft: 0x33445b, tableRight: 0x27384d,
+  plinth: 0xf0e6c8, frame: 0xdcae4f, frameDark: 0x91672d,
+  fieldBase: 0x318f91, stripeA: '#4fb7b8', stripeB: '#318f91',
+  line: 'rgba(255,255,255,.88)', bumperBase: 0x704941,
+  bumperDrum: 0xd65761, bumperCap: 0xffdf82,
+  leftGoal: 0x5266db, rightGoal: 0xef604e, accent: '#fff0a8',
+  pattern: 'stadium', gateStyle: 'classic'
 };
 
 export const MAPS: Record<MapId, MapConfig> = {
@@ -308,7 +326,6 @@ export const MAPS: Record<MapId, MapConfig> = {
       bigBumperBoostMult: 0.92,
       bigBumperRestitution: 1.04,
       boostPadAccel: 0.9,
-      rampLaunchSpeed: 0.92,
       babbleDragPerTick: 1.06,
       ballDragPerTick: 1.05,
       beachBallDragPerTick: 1.03,
@@ -372,7 +389,6 @@ export const MAPS: Record<MapId, MapConfig> = {
       bigBumperBoostMult: 1.1,
       bigBumperRestitution: 1.08,
       boostPadAccel: 1.18,
-      rampLaunchSpeed: 1.15,
       babbleDragPerTick: 1.038,
       ballDragPerTick: 1.025,
       beachBallDragPerTick: 1.01,
@@ -436,7 +452,6 @@ export const MAPS: Record<MapId, MapConfig> = {
       bigBumperBoostMult: 0.96,
       bigBumperRestitution: 0.98,
       boostPadAccel: 0.92,
-      rampLaunchSpeed: 0.9,
       babbleDragPerTick: 1.045,
       ballDragPerTick: 1.04,
       beachBallDragPerTick: 1.018,
@@ -446,6 +461,66 @@ export const MAPS: Record<MapId, MapConfig> = {
       blockRestitution: 0.95,
       babbleDensity: 3.25,
       ballDensityBase: 3.1
+    }
+  },
+  original: {
+    id: 'original',
+    label: 'Original A · Tight',
+    shortLabel: 'Original A',
+    description: 'Original-game candidate A: geometry-normalized speed and stronger low-speed stopping for the smaller clone field.',
+    layout: ORIGINAL_LAYOUT,
+    theme: { ...ORIGINAL_THEME, accent: '#fff0a8' },
+    physics: {
+      ...PHYSICS_1X,
+      babbleImpulseScale: 0.98, maxSpeed: 0.58,
+      settleSpeed: 2.2, lowSpeedBrakeThreshold: 1.75, lowSpeedBrakeFactor: 0.9,
+      bumperBoost: 1, bumperMinExitBall: 1, bumperMinExitBabble: 1,
+      bigBumperBoostMult: 1, bigBumperRestitution: 0.96,
+      boostPadAccel: 0.95,
+      babbleDragPerTick: 1.045, ballDragPerTick: 1.045, beachBallDragPerTick: 1.02,
+      babbleRestitution: 0.95, ballRestitution: 0.95,
+      wallRestitution: 0.95, blockRestitution: 0.95,
+      babbleDensity: 1.05, ballDensityBase: 1.15
+    }
+  },
+  originalGlide: {
+    id: 'originalGlide',
+    label: 'Original B · Empirical',
+    shortLabel: 'Original B',
+    description: 'Original-game candidate B: recommended direct conversion of observed 16 m/s launches and measured drag.',
+    layout: ORIGINAL_LAYOUT,
+    theme: { ...ORIGINAL_THEME, accent: '#9eefff', frame: 0x65bed1 },
+    physics: {
+      ...PHYSICS_1X,
+      babbleImpulseScale: 0.99, maxSpeed: 0.66,
+      settleSpeed: 1.7, lowSpeedBrakeThreshold: 1.4, lowSpeedBrakeFactor: 0.96,
+      bumperBoost: 1, bumperMinExitBall: 1, bumperMinExitBabble: 1,
+      bigBumperBoostMult: 1, bigBumperRestitution: 1,
+      boostPadAccel: 1,
+      babbleDragPerTick: 1.057, ballDragPerTick: 1.053, beachBallDragPerTick: 1.025,
+      babbleRestitution: 1.05, ballRestitution: 1.05,
+      wallRestitution: 1.03, blockRestitution: 1.05,
+      babbleDensity: 1, ballDensityBase: 1
+    }
+  },
+  originalBounce: {
+    id: 'originalBounce',
+    label: 'Original C · Glide',
+    shortLabel: 'Original C',
+    description: 'Original-game candidate C: lively upper bound for glide and restitution uncertainty in sparse snapshots.',
+    layout: ORIGINAL_LAYOUT,
+    theme: { ...ORIGINAL_THEME, accent: '#ffb4c1', frame: 0xd97682 },
+    physics: {
+      ...PHYSICS_1X,
+      babbleImpulseScale: 1, maxSpeed: 0.72,
+      settleSpeed: 1.25, lowSpeedBrakeThreshold: 1, lowSpeedBrakeFactor: 1.02,
+      bumperBoost: 1.1, bumperMinExitBall: 1.08, bumperMinExitBabble: 1.06,
+      bigBumperBoostMult: 1.05, bigBumperRestitution: 1.08,
+      boostPadAccel: 1.05,
+      babbleDragPerTick: 1.063, ballDragPerTick: 1.058, beachBallDragPerTick: 1.026,
+      babbleRestitution: 1.12, ballRestitution: 1.08,
+      wallRestitution: 1.08, blockRestitution: 1.12,
+      babbleDensity: 0.95, ballDensityBase: 0.85
     }
   }
 } as const;

@@ -1,10 +1,7 @@
 import {
-  BIG_BUMPER_RADIUS,
   BOX_SELECTION_WEIGHTS,
   BOX_TYPE_IDS,
   BOX_TYPES,
-  BUMPER_RADIUS,
-  BUMPERS,
   BabbleState,
   BoxState,
   BoxType,
@@ -36,10 +33,8 @@ import { stepPhysics } from './physics';
 import { PHYSICS_CONFIG } from './physicsConfig';
 import type { BallImpactObservation } from './airborne';
 import {
-  BABBLE_RAMP_VERTICAL_VELOCITY,
-  BEACH_BALL_RAMP_VERTICAL_VELOCITY,
-  BALL_MAX_HEIGHT,
-  BALL_RAMP_VERTICAL_VELOCITY,
+  BABBLE_IMPACT_MAX_VERTICAL_VELOCITY,
+  BEACH_BALL_ACTIVATION_VERTICAL_VELOCITY,
   BALL_REST_HEIGHT,
   ballImpactLiftVelocity,
   ballRestHeight,
@@ -61,9 +56,9 @@ export const BOX_LIFETIME_TURNS = 3;
 export const SETTLE_SPEED = PHYSICS_CONFIG.settleSpeed;
 export const MAX_RESOLVE_MS = 8000;
 // BABBLE_TURN_MS is a server-side test hook (used by scripts/box-control-check.mjs,
-// where headless WebGL is too slow to finish a scripted turn in 15s). Browsers have
-// no `process`, so players always get the standard 15s turn.
-const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 15000;
+// where headless WebGL is too slow to finish a scripted turn in 20s). Browsers have
+// no `process`, so players get the original-game 20s planning window.
+const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 20000;
 const ALL_AIMED_RESOLVE_GRACE_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_ALL_AIMED_GRACE_MS)) || 3000;
 export const MAX_SPEED = PHYSICS_CONFIG.maxSpeed;
 export const BUMPER_BOOST = PHYSICS_CONFIG.bumperBoost;
@@ -73,7 +68,6 @@ export const BUMPER_MIN_EXIT_BABBLE = PHYSICS_CONFIG.bumperMinExitBabble;
 // Low-speed brake: extra per-tick decay below this speed so pieces stop
 // crisply instead of gliding for seconds at a visible crawl.
 export const LOW_SPEED_BRAKE_THRESHOLD = PHYSICS_CONFIG.lowSpeedBrakeThreshold;
-const LOW_SPEED_BRAKE_FACTOR = PHYSICS_CONFIG.lowSpeedBrakeFactor;
 // Big Bumpers power play: noticeably stronger corner hits plus higher restitution.
 export const BIG_BUMPER_BOOST_MULT = PHYSICS_CONFIG.bigBumperBoostMult;
 export const BIG_BUMPER_RESTITUTION = PHYSICS_CONFIG.bigBumperRestitution;
@@ -82,9 +76,8 @@ const RAMP_EVENT_TTL_MS = 1500;
 // Boost pad acceleration (units/s^2) applied while a mover sits on the pad.
 // Tuned strong enough that crossing the pad visibly slingshots the mover.
 export const BOOST_PAD_ACCEL = PHYSICS_CONFIG.boostPadAccel;
-// Ramp wedge: movers riding up the slope get redirected along the ramp
-// direction and launched off the lip at a minimum exit speed.
-export const RAMP_LAUNCH_SPEED = PHYSICS_CONFIG.rampLaunchSpeed;
+// Trampolines are physical Rapier 3D wedges; no minimum exit speed or boost
+// constant exists in the rule layer.
 export { BALL_MAX_HEIGHT, BALL_REST_HEIGHT, ballRestHeight } from './airborne';
 export { RAMP_HALF_LEN, RAMP_HALF_WIDTH } from './types';
 
@@ -101,7 +94,6 @@ const ballAtKickoff = (vel: Vec = { x: 0, y: 0 }) => ({
 });
 
 export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: MapId = 'stadium'): GameState {
-  const length = GAME_LENGTHS[mode];
   const selectedMap = normalizeMapId(mapId);
   return {
     roomCode,
@@ -153,15 +145,6 @@ function matchConfig(mode: GameMode, mapId: MapId) {
 
 const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
 const tune = (state: GameState, key: keyof typeof PHYSICS_CONFIG) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
-const ballState = (vel: Vec = { x: 0, y: 0 }) => ({
-  pos: { x: FIELD.width / 2, y: FIELD.height / 2 },
-  vel,
-  height: BALL_REST_HEIGHT,
-  verticalVelocity: 0,
-  radius: FIELD.ballRadius,
-  lastTouchedBy: null,
-  spin: { x: 0, y: 0 }
-});
 
 function syncBallVerticalDefaults(state: GameState) {
   const v = normalizeBallVertical(state.ball.radius, state.ball.height, state.ball.verticalVelocity);
@@ -404,16 +387,12 @@ function beginResolving(state: GameState, now: number) {
   for (const intent of Object.values(state.pendingIntents)) {
     const babble = state.babbles.find(b => b.id === intent.babbleId);
     if (!babble) continue;
-    if (babble.effects.some(e => e.type === 'redCard' && e.untilTurn >= state.turn)) {
-      babble.vel = { x: 0, y: 0 };
-      continue;
-    }
+
     const boost = babble.effects.some(e => e.type === 'boost' && e.untilTurn >= state.turn) ? 1.35 : 1;
     const bigHead = babble.effects.some(e => e.type === 'bigHead' && e.untilTurn >= state.turn) ? 1.3 : 1;
-    const yellowCard = babble.effects.some(e => e.type === 'yellowCard' && e.untilTurn >= state.turn) ? 0.55 : 1;
     const impulseScale = tune(state, 'babbleImpulseScale');
-    babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * yellowCard * impulseScale;
-    babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * yellowCard * impulseScale;
+    babble.vel.x += Math.cos(intent.aimAngle) * intent.impulse * boost * bigHead * impulseScale;
+    babble.vel.y += Math.sin(intent.aimAngle) * intent.impulse * boost * bigHead * impulseScale;
     babble.lastLaunchedTurn = state.turn;
   }
   state.phase = 'resolving';
@@ -461,11 +440,26 @@ export function collectPowerBox(state: GameState, babble: BabbleState, now = Dat
 }
 
 export function usePowerPlay(state: GameState, playerId: string, use: PowerPlayUse, now = Date.now()) {
+  if (state.phase !== 'planning') return false;
+  const raw = use as unknown;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const candidate = raw as Record<string, unknown>;
+  if (typeof candidate.type !== 'string' || candidate.type.length > 40) return false;
+  if (candidate.targetBabbleId !== undefined && typeof candidate.targetBabbleId !== 'string') return false;
+  if (candidate.angle !== undefined && (typeof candidate.angle !== 'number' || !Number.isFinite(candidate.angle))) return false;
+  if (candidate.position !== undefined) {
+    const p = candidate.position;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return false;
+    const v = p as Record<string, unknown>;
+    if (typeof v.x !== 'number' || !Number.isFinite(v.x) || typeof v.y !== 'number' || !Number.isFinite(v.y)) return false;
+  }
+  const safeUse = candidate as unknown as PowerPlayUse;
   const player = state.players[playerId];
   if (!player || !player.connected) return false;
-  const type = normalizeBoxType(use.type);
+  const type = normalizeBoxType(safeUse.type);
   if (!type) return false;
-  const canonicalUse: PowerPlayUse = { ...use, type };
+  if (type === 'redCard' && (!safeUse.targetBabbleId || !state.babbles.some(b => b.id === safeUse.targetBabbleId))) return false;
+  const canonicalUse: PowerPlayUse = { ...safeUse, type };
   const inventory = state.powerPlayInventories[player.side];
   // players may only spend the box they personally hold (legacy holder-less items stay usable)
   const itemIndex = inventory.findIndex(item => item.type === type && item.availableTurn <= state.turn && (!item.holderId || item.holderId === playerId));
@@ -666,15 +660,11 @@ function applyBallImpactLift(state: GameState, impacts: readonly BallImpactObser
   const lift = ballImpactLiftVelocity(impacts, beachBallActive(state));
   if (lift > 0) state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, lift);
   for (const impact of impacts) {
-    const hop = Math.max(0, Math.min(BABBLE_RAMP_VERTICAL_VELOCITY * 0.82, (impact.impactSpeed - 260) / 420));
+    const hop = Math.max(0, Math.min(BABBLE_IMPACT_MAX_VERTICAL_VELOCITY * 0.82, (impact.impactSpeed - 260) / 420));
     if (hop > 0) launchBabbleHop(state, impact.babbleId, hop);
   }
 }
 
-function launchBallAirborne(state: GameState, verticalVelocity: number) {
-  syncBallVerticalDefaults(state);
-  state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, verticalVelocity);
-}
 
 function launchBabbleHop(state: GameState, babbleId: string | undefined, verticalVelocity: number) {
   if (!babbleId) return;
@@ -744,11 +734,10 @@ function clampSpeed(vel: Vec, max = MAX_SPEED) {
 
 function resolveFieldObjects(state: GameState, dt: number, now = Date.now()) {
   const boostPadAccel = tune(state, 'boostPadAccel');
-  const rampLaunchSpeed = tune(state, 'rampLaunchSpeed');
   const maxSpeed = tune(state, 'maxSpeed');
-  const movers: { pos: Vec; vel: Vec; radius: number; ghosted: boolean; mover: 'ball' | 'babble'; moverId?: string }[] = [
-    { pos: state.ball.pos, vel: state.ball.vel, radius: state.ball.radius, ghosted: false, mover: 'ball' },
-    ...state.babbles.map(b => ({ pos: b.pos, vel: b.vel, radius: b.radius, ghosted: b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn), mover: 'babble' as const, moverId: b.id }))
+  const movers: { pos: Vec; vel: Vec; radius: number; height: number; verticalVelocity: number; ghosted: boolean; mover: 'ball' | 'babble'; moverId?: string }[] = [
+    { pos: state.ball.pos, vel: state.ball.vel, radius: state.ball.radius, height: state.ball.height, verticalVelocity: state.ball.verticalVelocity, ghosted: false, mover: 'ball' },
+    ...state.babbles.map(b => ({ pos: b.pos, vel: b.vel, radius: b.radius, height: b.height, verticalVelocity: b.verticalVelocity, ghosted: b.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn), mover: 'babble' as const, moverId: b.id }))
   ];
   for (const o of state.fieldObjects) {
     if (o.untilTurn < state.turn) continue;
@@ -762,9 +751,11 @@ function resolveFieldObjects(state: GameState, dt: number, now = Date.now()) {
       } else if (o.type === 'stickyGoo') {
         if (dist(m.pos, o.pos) <= 80 + m.radius) { m.vel.x *= 0.93; m.vel.y *= 0.93; }
       } else if (o.type === 'ramp') {
-        if (!m.ghosted && resolveRamp(m.pos, m.vel, m.radius, o.pos, o.angle, rampLaunchSpeed, maxSpeed) === 'launch') {
-          if (m.mover === 'ball') launchBallAirborne(state, beachBallActive(state) ? BEACH_BALL_RAMP_VERTICAL_VELOCITY : BALL_RAMP_VERTICAL_VELOCITY);
-          else launchBabbleHop(state, m.moverId, BABBLE_RAMP_VERTICAL_VELOCITY);
+        const dx = m.pos.x - o.pos.x;
+        const dy = m.pos.y - o.pos.y;
+        const along = dx * Math.cos(o.angle) + dy * Math.sin(o.angle);
+        const lateral = -dx * Math.sin(o.angle) + dy * Math.cos(o.angle);
+        if (!m.ghosted && Math.abs(along) <= RAMP_HALF_LEN + m.radius && Math.abs(lateral) <= RAMP_HALF_WIDTH + m.radius && m.verticalVelocity > 0.05) {
           pushRampEvent(state, o.pos, m.mover, m.moverId, now);
         }
       }
@@ -780,32 +771,6 @@ function pushRampEvent(state: GameState, pos: Vec, mover: 'ball' | 'babble', mov
   state.rampEvents.push({ pos: { ...pos }, at: now, mover, moverId });
 }
 
-// Ramp wedge physics: movers travelling with the ramp direction ride up the
-// slope, get aligned to the ramp's facing and launched off the lip; movers
-// hitting the tall back face bounce off like a wall.
-function resolveRamp(pos: Vec, vel: Vec, radius: number, center: Vec, angle: number, launchSpeed = RAMP_LAUNCH_SPEED, maxSpeed = MAX_SPEED): 'launch' | 'wall' | false {
-  const dirX = Math.cos(angle), dirY = Math.sin(angle);
-  const relX = pos.x - center.x, relY = pos.y - center.y;
-  const along = relX * dirX + relY * dirY;
-  const lateral = -relX * dirY + relY * dirX;
-  if (Math.abs(along) > RAMP_HALF_LEN + radius || Math.abs(lateral) > RAMP_HALF_WIDTH + radius) return false;
-  const into = vel.x * dirX + vel.y * dirY;
-  if (into >= 0) {
-    // riding up the wedge: redirect along the ramp and guarantee launch speed
-    const speed = Math.hypot(vel.x, vel.y);
-    const exit = Math.max(speed, launchSpeed);
-    vel.x = dirX * exit;
-    vel.y = dirY * exit;
-    clampSpeed(vel, maxSpeed);
-    return 'launch';
-  }
-  // hitting the tall back of the wedge: push out and reflect
-  pos.x = center.x + dirX * (RAMP_HALF_LEN + radius) - dirY * lateral;
-  pos.y = center.y + dirY * (RAMP_HALF_LEN + radius) + dirX * lateral;
-  vel.x -= 1.8 * into * dirX;
-  vel.y -= 1.8 * into * dirY;
-  return 'wall';
-}
 
 function collectBoxesForBabbles(state: GameState, now: number) {
   for (const babble of [...state.babbles]) collectPowerBox(state, babble, now);
@@ -836,14 +801,14 @@ function safeFieldPos(p: Vec | undefined, fallback: Vec, margin: number): Vec {
   return { x: clamp(src.x, margin, FIELD.width - margin), y: clamp(src.y, margin, FIELD.height - margin) };
 }
 
-function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, now: number) {
+function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, _now: number) {
   const target = (use.targetBabbleId && state.babbles.find(b => b.id === use.targetBabbleId)) || state.babbles.find(b => b.side === side);
   switch (use.type) {
     case 'beachBall':
       state.ball.radius = FIELD.ballRadius * 1.6;
       state.beachBallUntilTurn = state.turn;
       state.ball.height = Math.max(ballRestHeight(state.ball.radius), state.ball.height);
-      state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, BEACH_BALL_RAMP_VERTICAL_VELOCITY * 0.45);
+      state.ball.verticalVelocity = Math.max(state.ball.verticalVelocity, BEACH_BALL_ACTIVATION_VERTICAL_VELOCITY * 0.45);
       state.ball.vel.x *= 1.25;
       state.ball.vel.y *= 1.25;
       break;
@@ -860,12 +825,27 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, n
     case 'bigBumpers': state.bigBumpersUntilTurn = state.turn; break;
     case 'boost': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'boost', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); if (target) addBabbleEffect(target, 'boost', state.turn + 1); break;
     case 'stickyGoo': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'stickyGoo', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: 0, untilTurn: state.turn + 1 }); break;
-    case 'ramp': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'ramp', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? -Math.PI / 4, untilTurn: state.turn + 1 }); break;
+    case 'ramp': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'ramp', owner: side, pos: safeFieldPos(use.position, { x: FIELD.width / 2, y: FIELD.height / 2 }, RAMP_HALF_LEN), angle: use.angle ?? -Math.PI / 4, untilTurn: state.turn }); break;
     case 'block': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'block', owner: side, pos: use.position ?? { x: side === 'left' ? 85 : FIELD.width - 85, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
     case 'bigHead': if (target) { target.radius = FIELD.babbleRadius * 1.45; target.height = Math.max(babbleRestHeight(target.radius), target.height); addBabbleEffect(target, 'bigHead', state.turn + 1); } break;
     case 'ghosted': if (target) addBabbleEffect(target, 'ghosted', state.turn + 1); break;
-    case 'yellowCard': if (target) addBabbleEffect(target, 'yellowCard', state.turn); break;
-    case 'redCard': if (target) { target.vel = { x: 0, y: 0 }; target.height = babbleRestHeight(target.radius); target.verticalVelocity = 0; addBabbleEffect(target, 'redCard', state.turn); addBabbleEffect(target, 'ghosted', state.turn); } break;
+    case 'yellowCard':
+      state.ball.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
+      state.ball.vel = { x: 0, y: 0 };
+      state.ball.height = ballRestHeight(state.ball.radius);
+      state.ball.verticalVelocity = 0;
+      state.ball.lastTouchedBy = null;
+      state.ball.lastTouchedBabbleId = null;
+      state.ball.lastTouchedPlayerId = null;
+      break;
+    case 'redCard':
+      if (target) {
+        target.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
+        target.vel = { x: 0, y: 0 };
+        target.height = babbleRestHeight(target.radius);
+        target.verticalVelocity = 0;
+      }
+      break;
     case 'movePlayer': if (target) { target.pos = safeFieldPos(use.position, { x: side === 'left' ? FIELD.width * 0.42 : FIELD.width * 0.58, y: FIELD.height / 2 }, target.radius); target.vel = { x: 0, y: 0 }; target.height = babbleRestHeight(target.radius); target.verticalVelocity = 0; } break;
   }
 }

@@ -67,6 +67,13 @@ const createSchema = z.object({
   mapId: z.enum(MAP_IDS as [string, ...string[]]).optional()
 });
 const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), team: z.enum(TEAM_IDS as [string, ...string[]]).optional() });
+const finiteVecSchema = z.object({ x: z.number().finite(), y: z.number().finite() }).strict();
+const powerPlaySchema = z.object({
+  type: z.string().min(1).max(40),
+  targetBabbleId: z.string().min(1).max(80).optional(),
+  position: finiteVecSchema.optional(),
+  angle: z.number().finite().optional()
+}).strict();
 
 io.on('connection', socket => {
   socket.on('room:create', (payload, cb) => {
@@ -106,9 +113,11 @@ io.on('connection', socket => {
 
   socket.on('player:power', use => {
     const room = currentRoom(socket); if (!room) return;
-    const type = normalizeBoxType(use?.type);
-    if (!use || !type) return;
-    if (!usePowerPlay(room.state, socket.id, { ...use, type })) socket.emit('room:error', 'That Power Play is not available to you right now.');
+    const parsed = powerPlaySchema.safeParse(use);
+    if (!parsed.success) return socket.emit('room:error', 'Invalid Power Play payload.');
+    const type = normalizeBoxType(parsed.data.type);
+    if (!type) return socket.emit('room:error', 'Invalid Power Play payload.');
+    if (!usePowerPlay(room.state, socket.id, { ...parsed.data, type })) socket.emit('room:error', 'That Power Play is not available to you right now.');
     flushAnalytics(room);
     room.lastActiveAt = Date.now();
   });

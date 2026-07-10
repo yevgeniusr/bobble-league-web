@@ -14,7 +14,10 @@ const MAP_SELECT_HINTS: Record<MapId, string> = {
   stadium: 'classic',
   moon: 'low gravity',
   volcano: 'lava',
-  saturn: 'heavy rings'
+  saturn: 'heavy rings',
+  original: 'original A · tight',
+  originalGlide: 'original B · empirical',
+  originalBounce: 'original C · glide'
 };
 
 // Developer console API (no cheat UI ships in the app). Available in dev
@@ -283,10 +286,10 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings,
   }, [burst]);
 
   React.useEffect(() => {
-    if (state.phase !== 'finished') return;
+    if (state.phase === 'planning') return;
     setPlacing(null);
     setAiming(null);
-    setMenuOpen(false);
+    if (state.phase === 'finished') setMenuOpen(false);
   }, [state.phase]);
 
   const matchFinished = state.phase === 'finished';
@@ -440,7 +443,7 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
   const readyCount = state.readyPlayerIds.filter(id => state.players[id]?.connected).length;
   const ready = Boolean(me && state.readyPlayerIds.includes(me.id));
   const onAbility = (type: BoxType) => {
-    if (!me) return;
+    if (!me || state.phase !== 'planning') return;
     const m = abilityMode(type);
     if (m === 'place') { setAiming(null); setPlacing({ type: type as FieldObjectType, pos: { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: me.side === 'left' ? 0 : Math.PI }); return; }
     if (m === 'instant') { setAiming(null); setPlacing(null); audioManager.play('abilityUse'); socket.emit('player:power', { type }); return; }
@@ -463,7 +466,7 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
           const mine = !item.holderId || item.holderId === you;
           const locked = item.availableTurn > state.turn;
           const active = (aiming?.type === item.type || placing?.type === item.type) && mine;
-          return <button key={`${item.type}-${i}`} type="button" className={active ? 'abilityBtn selected' : 'abilityBtn'} disabled={locked || !mine} title={mine ? BOX_TYPES[item.type].description : `Held by teammate ${holder?.name ?? '?'} — only they can use it.`} onClick={()=>onAbility(item.type as BoxType)}>
+          return <button key={`${item.type}-${i}`} type="button" className={active ? 'abilityBtn selected' : 'abilityBtn'} disabled={locked || !mine || state.phase !== 'planning'} title={mine ? BOX_TYPES[item.type].description : `Held by teammate ${holder?.name ?? '?'} — only they can use it.`} onClick={()=>onAbility(item.type as BoxType)}>
             <AbilityIcon type={item.type as BoxType}/>
             <span>{BOX_TYPES[item.type].label}{locked ? ` (turn ${item.availableTurn})` : ''}</span>
           </button>;
@@ -471,11 +474,11 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
       </div>
       <div className="barRight">
         {me && state.phase === 'planning' && <button type="button" className={ready ? 'readyBtn selected' : 'readyBtn'} disabled={ready} title="Vote to finish planning now. Changing your aim or using a Power Play clears your vote." onClick={()=>{ audioManager.play('ready'); socket.emit('player:ready'); }}>
-          {ready ? 'Ready' : 'Ready / Finish Turn'} {readyCount}/{readyTotal}
+          {ready ? 'Ready' : 'Finish Turn'} {readyCount}/{readyTotal}
         </button>}
         {aiming && <><small>{POWER_ICONS[aiming.type]} Targeting {BOX_TYPES[aiming.type].label} · {aiming.mode === 'babble' ? 'click a babblehead' : 'click a field spot'} · Esc cancels</small><button type="button" onClick={()=>setAiming(null)}>Cancel</button></>}
         {placing && <><small>{POWER_ICONS[placing.type as BoxType]} Placing {BOX_TYPES[placing.type as BoxType].label} · drag to aim · R rotates · Esc cancels</small><button type="button" onClick={()=>setPlacing(null)}>Cancel</button></>}
-        {!placing && !aiming && state.phase === 'planning' && <small className="controlsHint">Hold a babblehead & drag back to aim, release to launch</small>}
+        {!me && !placing && !aiming && state.phase === 'planning' && <small className="controlsHint">Hold a babblehead & drag back to aim, release to launch</small>}
       </div>
     </div>
   </footer>;
@@ -503,7 +506,7 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
       renderer = new BabbleLeague3DRenderer(canvas);
       rendererRef.current = renderer;
       setRenderError('');
-    } catch (err) {
+    } catch {
       rendererRef.current = null;
       setRenderError('3D renderer unavailable in this browser; gameplay state still loads.');
     }
@@ -546,6 +549,10 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
   }, [placing]);
 
   React.useEffect(() => {
+    if (state.phase !== 'planning') setMode(null);
+  }, [state.phase]);
+
+  React.useEffect(() => {
     if (!placing && !aiming) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.key === 'r' || e.key === 'R') && placing) setPlacing({ ...placing, angle: placing.angle + Math.PI / 4 });
@@ -558,7 +565,7 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
   const point = (e: React.PointerEvent<HTMLCanvasElement>) => rendererRef.current?.pointFromClient(e.clientX, e.clientY) ?? null;
   const clampPos = (p: Vec): Vec => ({ x: Math.min(FIELD.width - 40, Math.max(40, p.x)), y: Math.min(FIELD.height - 40, Math.max(40, p.y)) });
   const down = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!me) return;
+    if (!me || state.phase !== 'planning') return;
     const p = point(e);
     if (!p) return;
     if (aiming) {
@@ -603,6 +610,7 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
     }
   };
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (state.phase !== 'planning') { setMode(null); return; }
     const p = point(e);
     if (!p) return;
     if (mode?.kind === 'place' && placing) {
@@ -628,6 +636,7 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
     if (placing) setPlacing({ ...placing, pos: clampPos(p) });
   };
   const up = () => {
+    if (state.phase !== 'planning') { setMode(null); return; }
     if (mode?.kind === 'place' && placing) {
       audioManager.play('abilityUse');
       socket.emit('player:power', { type: placing.type, position: mode.anchor, angle: mode.angle });

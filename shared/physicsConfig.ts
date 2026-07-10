@@ -31,7 +31,6 @@ export const PHYSICS_CONFIG = {
   bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1.35),
 
   boostPadAccel: envNumber('BABBLE_BOOST_PAD_ACCEL', 4300),
-  rampLaunchSpeed: envNumber('BABBLE_RAMP_LAUNCH_SPEED', 780),
 
   // Rapier material tuning. Drag values are the legacy per-30Hz-tick decay
   // converted to continuous damping in shared/physics.ts.

@@ -65,10 +65,10 @@ source. Examples:
 ```bash
 BABBLE_MAX_SPEED=1450 npm test
 BABBLE_IMPULSE_SCALE=1.0 BABBLE_BALL_DENSITY=0.86 npm run smoke
-BABBLE_BUMPER_BOOST=270 BABBLE_RAMP_LAUNCH_SPEED=740 npm run render-check
+BABBLE_BUMPER_BOOST=270 npm run render-check
 ```
 
-Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano`:
+Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano|saturn|original|originalGlide|originalBounce`:
 
 ```bash
 BABBLE_MAP=moon npm run smoke
@@ -85,7 +85,7 @@ Common knobs:
 - `BABBLE_BOOST_PAD_ACCEL`: boost pad acceleration.
 - `BABBLE_BUMPER_BOOST`, `BABBLE_BUMPER_MIN_EXIT_BALL`,
   `BABBLE_BIG_BUMPER_MULT`: corner bumper strength.
-- `BABBLE_RAMP_LAUNCH_SPEED`: minimum ramp exit speed.
+- Trampolines use physical Rapier 3D wedge geometry and have no artificial boost/minimum exit-speed knob.
 - `BABBLE_BALL_DRAG_PER_TICK`, `BABBLE_DRAG_PER_TICK`: damping feel.
 
 ## Controls
