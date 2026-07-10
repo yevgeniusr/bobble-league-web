@@ -66,7 +66,7 @@ source. Examples:
 
 ```bash
 BABBLE_IMPULSE_SCALE=1.0 BABBLE_BALL_DENSITY=0.86 npm run smoke
-BABBLE_BIG_BUMPER_RESTITUTION=1.35 npm run render-check
+BABBLE_BIG_BUMPER_MOTOR_STIFFNESS=4200 npm run render-check
 ```
 
 Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano|saturn|original|originalGlide|originalBounce`:
@@ -85,7 +85,8 @@ Common knobs:
 - `BABBLE_BALL_DENSITY`: ball weight in Rapier collisions.
 - `BABBLE_GIANT_BALL_MASS_SCALE`: Giant Ball mass relative to the normal ball.
 - `BABBLE_BOOST_PAD_ACCEL`: boost pad acceleration.
-- `BABBLE_BIG_BUMPER_RESTITUTION`: powered corner-bumper elasticity.
+- `BABBLE_BUMPER_RESTITUTION` / `BABBLE_BIG_BUMPER_RESTITUTION`: physical material elasticity, clamped to Rapier's `[0,1]` range.
+- `BABBLE_BUMPER_MOTOR_STIFFNESS` / `BABBLE_BIG_BUMPER_MOTOR_STIFFNESS`: spring-plunger motor strength.
 - Trampolines use physical Rapier 3D wedge geometry and have no artificial boost/minimum exit-speed knob.
 - `BABBLE_BALL_DRAG_PER_TICK`, `BABBLE_DRAG_PER_TICK`: damping feel.
 

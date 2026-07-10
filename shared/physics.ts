@@ -31,6 +31,10 @@ const dampingFromDrag = (dragPerTick: number) => -Math.log(dragPerTick) * LEGACY
 const WORLD_GRAVITY = BABBLE_GRAVITY;
 const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
 const tune = (state: GameState, key: keyof MapPhysicsMultipliers) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
+export const clampRestitution = (value: number) => Math.max(0, Math.min(1, value));
+export const clampMotorParameter = (value: number) => Math.max(0, value);
+const restitutionTune = (state: GameState, key: 'babbleRestitution' | 'ballRestitution' | 'wallRestitution' | 'blockRestitution' | 'bigBumperRestitution') =>
+  clampRestitution(tune(state, key));
 const dragTune = (state: GameState, key: 'babbleDragPerTick' | 'ballDragPerTick' | 'beachBallDragPerTick') =>
   Math.max(0.5, Math.min(0.995, tune(state, key)));
 
@@ -86,6 +90,7 @@ interface PhysicsCache {
   rampColliders: RAPIER.Collider[];
   bumpersKey: string;
   bumperColliders: RAPIER.Collider[];
+  bumperBodies: RAPIER.RigidBody[];
   bumperHandles: Map<number, Vec>;
 }
 
@@ -208,7 +213,7 @@ function buildCache(state: GameState): PhysicsCache {
   const ballCollider = world.createCollider(
     RAPIER.ColliderDesc.ball(ballColliderRadius(state.ball.radius))
       .setFriction(0.35)
-      .setRestitution(tune(state, 'ballRestitution'))
+      .setRestitution(restitutionTune(state, 'ballRestitution'))
       .setDensity(ballDensity(state, state.ball.radius))
       .setCollisionGroups(BALL_GROUPS)
       .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
@@ -231,7 +236,7 @@ function buildCache(state: GameState): PhysicsCache {
         // upward contact normal when it strikes the larger ball.
         .setTranslation(0, babbleColliderOffsetY(b.radius), 0)
         .setFriction(0.3)
-        .setRestitution(tune(state, 'babbleRestitution'))
+        .setRestitution(restitutionTune(state, 'babbleRestitution'))
         .setDensity(babbleDensity(state, b.radius))
         .setCollisionGroups(ghosted ? GHOST_GROUPS : BABBLE_GROUPS),
       body
@@ -255,6 +260,7 @@ function buildCache(state: GameState): PhysicsCache {
     rampColliders: [],
     bumpersKey: '',
     bumperColliders: [],
+    bumperBodies: [],
     bumperHandles: new Map(),
   };
 }
@@ -463,7 +469,7 @@ function buildArena(world: RAPIER.World, state: GameState) {
   const mouthBottom = (FIELD.goalY + FIELD.goalHeight) / PX_PER_METER;
   const goalDepth = FIELD.goalDepth / PX_PER_METER;
   const t = WALL_HALF_THICKNESS;
-  const wallRestitution = tune(state, 'wallRestitution');
+  const wallRestitution = restitutionTune(state, 'wallRestitution');
   const wallY = WALL_HALF_HEIGHT;
   const floorX = w / 2;
   const floorZ = h / 2;
@@ -492,29 +498,58 @@ function buildArena(world: RAPIER.World, state: GameState) {
   }
 }
 
-// Corner bumpers are Rapier colliders, not post-step overlap corrections. A
-// powered bumper is represented by a larger collider and a superelastic
-// restitution coefficient; direction and energy transfer come from contacts.
+// Corner bumpers are physical spring-loaded plungers: a dynamic cylinder moves
+// only along a prismatic joint aimed toward field centre, and a Rapier motor
+// restores it after compression. This creates powered rebounds through contact
+// forces while keeping restitution in Rapier's documented [0,1] range.
 function syncBumpers(state: GameState, cache: PhysicsCache) {
   const map = mapOf(state);
   const big = state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
   const radiusPx = big ? map.layout.bigBumperRadius : map.layout.bumperRadius;
-  const restitution = big ? tune(state, 'bigBumperRestitution') : PHYSICS_CONFIG.bumperRestitution;
-  const key = `${big}:${radiusPx}:${restitution}:${map.layout.bumpers.map(p => `${p.x},${p.y}`).join('|')}`;
+  const restitution = big ? restitutionTune(state, 'bigBumperRestitution') : clampRestitution(PHYSICS_CONFIG.bumperRestitution);
+  const stiffness = clampMotorParameter(big ? PHYSICS_CONFIG.bigBumperMotorStiffness : PHYSICS_CONFIG.bumperMotorStiffness);
+  const damping = clampMotorParameter(PHYSICS_CONFIG.bumperMotorDamping);
+  // Rebuild once per turn so a compressed spring cannot carry hidden energy
+  // across the explicit tabletop turn boundary.
+  const key = `${state.turn}:${big}:${radiusPx}:${restitution}:${stiffness}:${damping}:${map.layout.bumpers.map(p => `${p.x},${p.y}`).join('|')}`;
   if (key === cache.bumpersKey) return;
-  for (const c of cache.bumperColliders) cache.world.removeCollider(c, false);
+  for (const body of cache.bumperBodies) cache.world.removeRigidBody(body);
   cache.bumperColliders = [];
+  cache.bumperBodies = [];
   cache.bumperHandles.clear();
   for (const p of map.layout.bumpers) {
+    const dx = FIELD.width / 2 - p.x;
+    const dz = FIELD.height / 2 - p.y;
+    const length = Math.hypot(dx, dz) || 1;
+    const axis = { x: dx / length, y: 0, z: dz / length };
+    const position = { x: p.x / PX_PER_METER, y: WALL_HALF_HEIGHT, z: p.y / PX_PER_METER };
+    const anchor = cache.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z));
+    const plunger = cache.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(position.x, position.y, position.z)
+        .setLinearDamping(0.15)
+        .lockRotations()
+        .setCanSleep(false)
+    );
     const collider = cache.world.createCollider(
       RAPIER.ColliderDesc.cylinder(WALL_HALF_HEIGHT, radiusPx / PX_PER_METER)
-        .setTranslation(p.x / PX_PER_METER, WALL_HALF_HEIGHT, p.y / PX_PER_METER)
-        .setFriction(0.12)
+        .setFriction(0.2)
         .setRestitution(restitution)
+        .setDensity(big ? 10 : 7)
         .setCollisionGroups(ARENA_GROUPS)
-        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+      plunger
     );
+    const joint = cache.world.createImpulseJoint(
+      RAPIER.JointData.prismatic({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, axis),
+      anchor,
+      plunger,
+      true
+    ) as RAPIER.PrismaticImpulseJoint;
+    joint.setLimits(-0.18, 0.06);
+    joint.configureMotorPosition(0.04, stiffness, damping);
     cache.bumperColliders.push(collider);
+    cache.bumperBodies.push(anchor, plunger);
     cache.bumperHandles.set(collider.handle, { ...p });
   }
   cache.bumpersKey = key;
@@ -533,7 +568,7 @@ function syncBlocks(state: GameState, cache: PhysicsCache) {
         .setTranslation(o.pos.x / PX_PER_METER, BLOCK_HALF_HEIGHT, o.pos.y / PX_PER_METER)
         .setRotation(yawRotation(-o.angle))
         .setFriction(0)
-        .setRestitution(tune(state, 'blockRestitution'))
+        .setRestitution(restitutionTune(state, 'blockRestitution'))
         .setCollisionGroups(BLOCK_GROUPS)
     )
   );

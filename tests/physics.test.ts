@@ -4,8 +4,8 @@
 // full 8-betabot scripted match completing by goal.
 import { describe, expect, it } from 'vitest';
 import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, startGame, stepGame } from '../shared/game';
-import { stepPhysics } from '../shared/physics';
-import { FIELD, GameState, MapId, PlayerSide, Vec } from '../shared/types';
+import { clampMotorParameter, clampRestitution, stepPhysics } from '../shared/physics';
+import { BUMPERS, FIELD, GameState, MapId, PlayerSide, Vec } from '../shared/types';
 import { BALL_REST_HEIGHT, babbleRestHeight, ballRestHeight } from '../shared/airborne';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
@@ -292,6 +292,13 @@ describe('Rapier physics: walls and body collisions', () => {
 });
 
 describe('Rapier physics: power-play interplay', () => {
+  it('clamps hostile physical material and motor overrides to valid ranges', () => {
+    expect(clampRestitution(-0.25)).toBe(0);
+    expect(clampRestitution(0.75)).toBe(0.75);
+    expect(clampRestitution(1.7)).toBe(1);
+    expect(clampMotorParameter(-100)).toBe(0);
+    expect(clampMotorParameter(1800)).toBe(1800);
+  });
   it('replays authoritative rigid-body state tick-for-tick deterministically', () => {
     const make = () => {
       const s = setup(3, 'originalGlide');
@@ -310,6 +317,58 @@ describe('Rapier physics: power-play interplay', () => {
       stepPhysics(b, 1 / 30);
       expect({ ball: a.ball, babbles: a.babbles }).toEqual({ ball: b.ball, babbles: b.babbles });
     }
+  });
+
+  it('replays spring-motor bumper contacts deterministically', () => {
+    const make = () => {
+      const s = setup();
+      park(s);
+      s.ball.pos = { x: BUMPERS[0].x + 70, y: BUMPERS[0].y };
+      s.ball.vel = { x: -420, y: 0 };
+      return s;
+    };
+    const a = make();
+    const b = make();
+    for (let i = 0; i < 90; i++) {
+      stepPhysics(a, 1 / 30);
+      stepPhysics(b, 1 / 30);
+      expect(a.ball).toEqual(b.ball);
+    }
+  });
+
+  it('clears compressed bumper spring state at the turn boundary', () => {
+    const resetProbe = (s: GameState) => {
+      s.ball.pos = { x: BUMPERS[0].x + 70, y: BUMPERS[0].y };
+      s.ball.vel = { x: -220, y: 0 };
+      s.ball.height = ballRestHeight(s.ball.radius);
+      s.ball.verticalVelocity = 0;
+      s.ball.rotation = { x: 0, y: 0, z: 0, w: 1 };
+      s.ball.angularVelocity = { x: 0, y: 0, z: 0 };
+      s.ball.lastTouchedBy = null;
+      s.ball.lastTouchedBabbleId = null;
+      s.ball.lastTouchedPlayerId = null;
+    };
+    const carried = setup();
+    park(carried);
+    resetProbe(carried);
+    for (let i = 0; i < 4; i++) stepPhysics(carried, 1 / 30); // compress the plunger
+    carried.turn += 1;
+    park(carried);
+    resetProbe(carried);
+
+    const fresh = setup();
+    park(fresh);
+    fresh.turn = carried.turn;
+    resetProbe(fresh);
+    for (let i = 0; i < 20; i++) {
+      stepPhysics(carried, 1 / 30);
+      stepPhysics(fresh, 1 / 30);
+    }
+    expect(carried.ball.pos.x).toBeCloseTo(fresh.ball.pos.x, 1);
+    expect(carried.ball.pos.y).toBeCloseTo(fresh.ball.pos.y, 1);
+    expect(carried.ball.vel.x).toBeCloseTo(fresh.ball.vel.x, 0);
+    expect(carried.ball.vel.y).toBeCloseTo(fresh.ball.vel.y, 0);
+    expect(carried.ball.height).toBeCloseTo(fresh.ball.height, 2);
   });
 
   it('safely synchronizes radius-only collider changes and expiry', () => {

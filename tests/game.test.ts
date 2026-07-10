@@ -530,6 +530,7 @@ describe('classic Babble League shared rules', () => {
   });
 
   it('bumpers reflect the ball through Rapier contact and emit a hit event', () => {
+
     const s = createInitialState('BUMP', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
@@ -549,21 +550,21 @@ describe('classic Babble League shared rules', () => {
     expect(s.bumperEvents[0].pos).toEqual({ x: BUMPERS[0].x, y: BUMPERS[0].y });
   });
 
-  it('bumpers do not manufacture a minimum exit speed from a weak graze', () => {
-    const s = createInitialState('MINEXIT', 3);
+  it('spring bumpers can add controlled physical energy without a scripted exit speed', () => {
+    const s = createInitialState('BUMPERWEAK', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
     s.phase = 'resolving';
     s.resolvingStartedAt = 1000;
-    // park babbles away from the bumper so only the ball interacts with it
     s.babbles.forEach((b, i) => { b.pos = { x: 400 + i * 60, y: 310 }; b.vel = { x: 0, y: 0 }; });
     s.ball.pos = { x: BUMPERS[0].x + 51, y: BUMPERS[0].y };
-    s.ball.vel = { x: -40, y: 0 }; // barely creeping into the bumper
+    s.ball.vel = { x: -40, y: 0 }; // barely creeping into the powered spring
     stepGame(s, {}, 1033, seq([0.5]));
-    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeGreaterThan(0);
-    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeLessThan(80);
-    expect(s.ball.vel.x).toBeGreaterThan(0); // reflected away from the corner
+    const speed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
+    expect(speed).toBeGreaterThan(40); // energy came from the Rapier motor/contact
+    expect(speed).toBeLessThan(120); // no fixed high minimum or velocity rewrite
+    expect(s.ball.vel.x).toBeGreaterThan(0);
   });
 
   it(`allows up to ${MAX_RESOLVE_MS / 1000} seconds of resolution and zeroes all velocities before the next turn`, () => {
