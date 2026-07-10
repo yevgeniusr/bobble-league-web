@@ -284,7 +284,9 @@ describe('Rapier physics: power-play interplay', () => {
     expect(ball.rotation).toBeDefined();
     expect(Math.abs(ball.rotation!.x) + Math.abs(ball.rotation!.y) + Math.abs(ball.rotation!.z)).toBeGreaterThan(0.05);
     expect(ball.angularVelocity).toBeDefined();
+    expect(Math.abs(ball.angularVelocity!.x)).toBeGreaterThan(1);
     expect(Math.abs(ball.angularVelocity!.y)).toBeGreaterThan(1);
+    expect(Math.abs(ball.angularVelocity!.z)).toBeGreaterThan(1);
     expect(Math.hypot(ball.angularVelocity!.x, ball.angularVelocity!.y, ball.angularVelocity!.z)).toBeLessThan(Math.hypot(4, 7, -3));
   });
 
@@ -297,16 +299,21 @@ describe('Rapier physics: power-play interplay', () => {
     s.ball.pos = { x: 550, y: 310 };
     s.ball.vel = { x: 0, y: 0 };
     let maxYaw = 0;
+    let maxAngularSpeed = 0;
     let maxRotationVector = 0;
 
     run(s, 12, 1000, () => {
       const a = s.ball.angularVelocity!;
       const q = s.ball.rotation!;
       maxYaw = Math.max(maxYaw, Math.abs(a.y));
+      maxAngularSpeed = Math.max(maxAngularSpeed, Math.hypot(a.x, a.y, a.z));
       maxRotationVector = Math.max(maxRotationVector, Math.hypot(q.x, q.y, q.z));
     });
 
-    // Original capture p95 angular speed is ~6.22rad/s and includes strong yaw.
+    // Original capture: total angular p95 7.41rad/s, yaw p99 7.23rad/s,
+    // yaw maximum 9.55rad/s. This glancing shot should land in that active range.
+    expect(maxAngularSpeed).toBeGreaterThan(5);
+    expect(maxAngularSpeed).toBeLessThan(10);
     expect(maxYaw).toBeGreaterThan(5);
     expect(maxYaw).toBeLessThan(10);
     expect(maxRotationVector).toBeGreaterThan(0.1);

@@ -101,8 +101,11 @@ describe('3D renderer coordinate mapping', () => {
     const q = authoritativeBallQuaternion({ rotation: { x: 1, y: 2, z: 3, w: 4 } });
     expect(q).not.toBeNull();
     expect(Math.hypot(q!.x, q!.y, q!.z, q!.w)).toBeCloseTo(1, 6);
+    expect(q!.x).not.toBe(0);
     expect(q!.y).not.toBe(0); // yaw/twist from glancing impacts is preserved
+    expect(q!.z).not.toBe(0);
     expect(authoritativeBallQuaternion({ rotation: { x: Number.NaN, y: 0, z: 0, w: 1 } })).toBeNull();
+    expect(authoritativeBallQuaternion({ rotation: { x: 0, y: 0, z: 0, w: 0 } })).toBeNull();
     expect(authoritativeBallQuaternion({})).toBeNull();
   });
 

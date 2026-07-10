@@ -1256,9 +1256,11 @@ describe('move ball ability', () => {
 
     s.powerPlayInventories.left.push({ type: 'moveBall', availableTurn: 1, holderId: 'l' });
     s.ball.vel = { x: 300, y: -200 };
+    s.ball.angularVelocity = { x: 5, y: 4, z: -3 };
     expect(usePowerPlay(s, 'l', { type: 'moveBall', position: { x: -400, y: 99999 } }, 1000)).toBe(true);
     expect(s.ball.pos).toEqual({ x: FIELD.ballRadius, y: FIELD.height - FIELD.ballRadius });
     expect(s.ball.vel).toEqual({ x: 0, y: 0 });
+    expect(s.ball.angularVelocity).toEqual({ x: 0, y: 0, z: 0 });
     expect(s.ball.lastTouchedBy).toBeNull();
 
     s.powerPlayInventories.left.push({ type: 'moveBall', availableTurn: 1, holderId: 'l' });

@@ -24,7 +24,7 @@ const stat = values => {
   const xs = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (!xs.length) return null;
   const q = p => xs[Math.min(xs.length - 1, Math.floor(xs.length * p))];
-  return { count: xs.length, min: xs[0], p50: q(0.5), p90: q(0.9), p99: q(0.99), max: xs.at(-1) };
+  return { count: xs.length, min: xs[0], p50: q(0.5), p90: q(0.9), p95: q(0.95), p99: q(0.99), max: xs.at(-1) };
 };
 
 function walk(value, visitor) {
