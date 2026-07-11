@@ -88,7 +88,9 @@ app.get('/api/config', (req, res) => {
   loyaltyEndpoint: browserIntegrationEnabled && loyalty.enabled ? loyalty.endpoint : null
   });
 });
-if (!isProd) app.get('/api/analytics/debug', (_, res) => res.json({ xtremepush: xtremepush.debugSnapshot() }));
+if (process.env.ENABLE_ANALYTICS_DEBUG === 'true') {
+  app.get('/api/analytics/debug', (_, res) => res.json({ xtremepush: xtremepush.debugSnapshot() }));
+}
 app.get('/api/xtremepush/sdk.js', async (_, res) => {
   res.type('application/javascript');
   if (!xtremepushSdkKey) return res.status(204).send('');
