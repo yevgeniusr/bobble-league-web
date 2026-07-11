@@ -247,12 +247,16 @@ function formatXtremepushTimestamp(value: unknown) {
 
 function userIdFor(payload: AnalyticsPayload) {
   const playerName = stringOrNull(payload.playerName);
-  if (playerName) return `babble-player:${slug(playerName)}`;
+  if (playerName) return userIdForNickname(playerName);
   const holderId = stringOrNull(payload.holderId);
   if (holderId) return `babble-player:${slug(holderId)}`;
   const roomCode = stringOrNull(payload.roomCode) ?? 'unknown-room';
   const side = stringOrNull(payload.scoringSide);
   return side ? `babble-room:${slug(roomCode)}:side:${side}` : `babble-room:${slug(roomCode)}`;
+}
+
+export function userIdForNickname(nickname: string) {
+  return `babble-player:${slug(nickname)}`;
 }
 
 function userAttributesFor(payload: AnalyticsPayload) {

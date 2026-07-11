@@ -4,7 +4,7 @@
 // full 8-betabot scripted match completing by goal.
 import { describe, expect, it } from 'vitest';
 import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, resetGame, startGame, stepGame } from '../shared/game';
-import { clampMotorParameter, clampRestitution, stepPhysics } from '../shared/physics';
+import { clampMotorParameter, clampRestitution, freePhysics, stepPhysics } from '../shared/physics';
 import { BUMPERS, FIELD, GameState, MapId, PlayerSide, Vec } from '../shared/types';
 import { BALL_REST_HEIGHT, babbleRestHeight, ballRestHeight } from '../shared/airborne';
 
@@ -28,6 +28,8 @@ function park(s: GameState, except: string[] = []) {
     if (except.includes(b.id)) continue;
     b.pos = { x: 170 + i * 60, y: 30 };
     b.vel = { x: 0, y: 0 };
+    b.height = babbleRestHeight(b.radius);
+    b.verticalVelocity = 0;
     i++;
   }
 }
@@ -105,6 +107,18 @@ describe('Rapier physics: goals and gates', () => {
     expect(b.pos.x).toBeLessThan(-b.radius);
     expect(b.pos.x).toBeGreaterThan(-FIELD.goalDepth - 2);
     expect(s.score).toEqual({ left: 0, right: 0 });
+  });
+
+  it('lets babble centres use the visible top and bottom edges of the goal mouth', () => {
+    for (const y of [FIELD.goalY + 3, FIELD.goalY + FIELD.goalHeight - 3]) {
+      const s = setup();
+      park(s, ['left-1']);
+      const b = s.babbles.find(x => x.id === 'left-1')!;
+      b.pos = { x: 75, y };
+      b.vel = { x: -700, y: 0 };
+      for (let i = 0; i < 20; i++) stepPhysics(s, 1 / 30);
+      expect(b.pos.x).toBeLessThan(0);
+    }
   });
 
   it('lets a goalie get behind a near-line ball and physically push it back out', () => {
@@ -353,6 +367,7 @@ describe('Rapier physics: power-play interplay', () => {
     resetProbe(carried);
     for (let i = 0; i < 4; i++) stepPhysics(carried, 1 / 30); // compress the plunger
     carried.turn += 1;
+    freePhysics(carried);
     park(carried);
     resetProbe(carried);
 
@@ -363,12 +378,8 @@ describe('Rapier physics: power-play interplay', () => {
     for (let i = 0; i < 20; i++) {
       stepPhysics(carried, 1 / 30);
       stepPhysics(fresh, 1 / 30);
+      expect(carried.ball).toEqual(fresh.ball);
     }
-    expect(carried.ball.pos.x).toBeCloseTo(fresh.ball.pos.x, 1);
-    expect(carried.ball.pos.y).toBeCloseTo(fresh.ball.pos.y, 1);
-    expect(carried.ball.vel.x).toBeCloseTo(fresh.ball.vel.x, 0);
-    expect(carried.ball.vel.y).toBeCloseTo(fresh.ball.vel.y, 0);
-    expect(carried.ball.height).toBeCloseTo(fresh.ball.height, 2);
   });
 
   it('clears compressed bumper state across reset and rematch at turn one', () => {
@@ -395,11 +406,8 @@ describe('Rapier physics: power-play interplay', () => {
     for (let i = 0; i < 20; i++) {
       stepPhysics(rematch, 1 / 30);
       stepPhysics(fresh, 1 / 30);
+      expect(rematch.ball).toEqual(fresh.ball);
     }
-    expect(rematch.ball.pos.x).toBeCloseTo(fresh.ball.pos.x, 1);
-    expect(rematch.ball.pos.y).toBeCloseTo(fresh.ball.pos.y, 1);
-    expect(rematch.ball.vel.x).toBeCloseTo(fresh.ball.vel.x, 0);
-    expect(rematch.ball.vel.y).toBeCloseTo(fresh.ball.vel.y, 0);
   });
 
   it('safely synchronizes radius-only collider changes and expiry', () => {

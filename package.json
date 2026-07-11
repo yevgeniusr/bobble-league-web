@@ -14,6 +14,7 @@
     "smoke": "node scripts/stage1-smoke.mjs",
     "render-check": "node scripts/stage2-render-check.mjs",
     "box-check": "node scripts/box-control-check.mjs",
+    "menu-check": "node scripts/main-menu-check.mjs",
     "test:watch": "vitest",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit",

@@ -13,6 +13,7 @@ import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialStat
 import { freePhysics } from '../shared/physics';
 import { BOX_TYPES, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId, normalizeBoxType } from '../shared/types';
 import { createXtremepushSender } from './xtremepush';
+import { createLoyaltyService } from './loyalty';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadLocalEnv();
@@ -22,6 +23,19 @@ const xtremepush = createXtremepushSender({
   appToken: process.env.XTREMEPUSH_APP_TOKEN,
   apiBase: process.env.XTREMEPUSH_API_BASE
 });
+const xtremepushSdkKey = process.env.XTREMEPUSH_SDK_KEY?.trim() ?? '';
+const publicHostname = (process.env.PUBLIC_HOSTNAME ?? 'bobble.rachkovan.com').trim().toLowerCase();
+const allowLocalXtremepush = process.env.XTREMEPUSH_ALLOW_LOCAL === 'true';
+const loyalty = createLoyaltyService({
+  sdkKey: xtremepushSdkKey,
+  endpoint: process.env.XTREMEPUSH_LOYALTY_ENDPOINT,
+  privateKey: process.env.XTREMEPUSH_LOYALTY_PRIVATE_KEY || readLocalKey('private.key'),
+  publicKey: process.env.XTREMEPUSH_LOYALTY_PUBLIC_KEY || readLocalKey('public.key'),
+  keyId: process.env.XTREMEPUSH_LOYALTY_KEY_ID,
+  tokenTtlSeconds: Number(process.env.XTREMEPUSH_LOYALTY_TOKEN_TTL ?? 300)
+});
+const loyaltyTokenSchema = z.object({ nickname: z.string().trim().min(1).max(18) }).strict();
+const loyaltyRate = new Map<string, { count: number; resetAt: number }>();
 // Dev/test cheat hooks (window.__babbleDev on the client) are rejected in
 // production unless the deployment explicitly opts in with ENABLE_CHEATS=true.
 const cheatsEnabled = !isProd || process.env.ENABLE_CHEATS === 'true';
@@ -38,17 +52,93 @@ type Room = { state: GameState; inputs: Record<string, typeof blankInput>; lastA
 const rooms = new Map<string, Room>();
 
 const app = express();
+app.set('trust proxy', 1);
 app.disable('x-powered-by');
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      // Xtremepush's current vendor SDK evaluates its generated command
+      // dispatcher at runtime; keep eval scoped to scripts and every network
+      // origin separately allowlisted below.
+      scriptSrc: ["'self'", "'unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      mediaSrc: ["'self'", 'blob:'],
+      connectSrc: ["'self'", 'https://api.xtremepush.com'],
+      frameSrc: loyalty.endpoint ? [`https://${loyalty.endpoint}`] : ["'none'"],
+      workerSrc: ["'self'", 'blob:'],
+      frameAncestors: ["'none'"]
+    }
+  }
+}));
 app.use(compression());
 app.use(express.json());
 app.get('/healthz', (_, res) => res.json({ ok: true, rooms: rooms.size, uptime: process.uptime() }));
-app.get('/api/config', (_, res) => res.json({ xtremepushBackend: xtremepush.enabled }));
-app.get('/api/analytics/debug', (_, res) => res.json({ xtremepush: xtremepush.debugSnapshot() }));
+app.get('/api/config', (req, res) => {
+  res.setHeader('cache-control', 'no-store');
+  const browserIntegrationEnabled = allowLocalXtremepush || req.hostname.toLowerCase() === publicHostname;
+  return res.json({
+  xtremepushBackend: xtremepush.enabled,
+  xtremepushSdkKey: browserIntegrationEnabled ? xtremepushSdkKey || null : null,
+  loyaltyEnabled: browserIntegrationEnabled && loyalty.enabled,
+  loyaltyEndpoint: browserIntegrationEnabled && loyalty.enabled ? loyalty.endpoint : null
+  });
+});
+if (!isProd) app.get('/api/analytics/debug', (_, res) => res.json({ xtremepush: xtremepush.debugSnapshot() }));
 app.get('/api/xtremepush/sdk.js', async (_, res) => {
   res.type('application/javascript');
+  if (!xtremepushSdkKey) return res.status(204).send('');
+  try {
+    const upstream = await fetch(`https://cdn.webpu.sh/${encodeURIComponent(xtremepushSdkKey)}/sdk.js`, {
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!upstream.ok) throw new Error('Xtremepush SDK unavailable');
+    const contentType = upstream.headers.get('content-type') ?? '';
+    if (!/(?:java|ecma)script/i.test(contentType)) throw new Error('Unexpected Xtremepush SDK content type');
+    const body = await upstream.arrayBuffer();
+    if (body.byteLength > 2_000_000) throw new Error('Xtremepush SDK too large');
+    res.setHeader('cache-control', 'public, max-age=300');
+    return res.send(Buffer.from(body));
+  } catch {
+    res.setHeader('cache-control', 'no-store');
+    return res.status(502).send('// Xtremepush SDK temporarily unavailable.');
+  }
+});
+app.post('/api/loyalty/token', (req, res) => {
   res.setHeader('cache-control', 'no-store');
-  return res.status(204).send('');
+  if (!loyalty.enabled) return res.status(503).json({ error: 'Loyalty is not configured.' });
+  const parsed = loyaltyTokenSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Enter a nickname first.' });
+  const now = Date.now();
+  if (loyaltyRate.size > 5_000) {
+    for (const [key, value] of loyaltyRate) if (value.resetAt <= now) loyaltyRate.delete(key);
+  }
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const rate = loyaltyRate.get(ip);
+  if (!rate || rate.resetAt <= now) loyaltyRate.set(ip, { count: 1, resetAt: now + 60_000 });
+  else if (++rate.count > 30) return res.status(429).json({ error: 'Too many loyalty sessions.' });
+  try {
+    const guest = loyalty.guestSession(readCookie(req.headers.cookie, 'babble_loyalty_guest'));
+    if (!guest) return res.status(503).json({ error: 'Loyalty is not configured.' });
+    if (guest.created) {
+      res.cookie('babble_loyalty_guest', guest.cookie, {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: 'lax',
+        maxAge: 365 * 24 * 60 * 60 * 1000,
+        path: '/'
+      });
+    }
+    const issued = loyalty.issueToken(parsed.data.nickname, guest.id);
+    if (!issued) return res.status(503).json({ error: 'Loyalty is not configured.' });
+    return res.json(issued);
+  } catch {
+    return res.status(500).json({ error: 'Could not create loyalty session.' });
+  }
 });
 
 if (isProd) {
@@ -259,6 +349,20 @@ function loadLocalEnv() {
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
     process.env[key] = value;
   }
+}
+
+function readCookie(header: string | undefined, name: string) {
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const [key, ...value] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(value.join('='));
+  }
+  return undefined;
+}
+
+function readLocalKey(filename: string) {
+  const file = path.resolve(process.cwd(), filename);
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : undefined;
 }
 
 setInterval(() => {

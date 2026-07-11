@@ -1,7 +1,7 @@
-import type { AnalyticsEvent, AnalyticsEventName, AnalyticsPayload } from '../../shared/analytics';
+import type { AnalyticsEvent } from '../../shared/analytics';
 
-type XtremepushFn = (command: 'event', name: AnalyticsEventName, payload: AnalyticsPayload) => void;
-type BrowserWindow = Window & { xtremepush?: XtremepushFn & { q?: unknown[] } };
+type XtremepushFn = (...args: unknown[]) => void;
+type BrowserWindow = Window & { XtremePushObject?: string; XPInterfaceInstance?: unknown; xtremepush?: XtremepushFn & { q?: unknown[] } };
 
 type AnalyticsDeps = {
   fetcher?: typeof fetch;
@@ -27,6 +27,11 @@ export function createXtremepushAnalytics(deps: AnalyticsDeps = {}): XtremepushA
 
   const installQueue = () => {
     if (!win) return null;
+    // The vendor SDK resolves its command queue through
+    // window[window.XtremePushObject]. The dashboard-generated bootstrap uses
+    // "xtremepush" here; setting the indirection is required even when our
+    // queue function already exists.
+    win.XtremePushObject = 'xtremepush';
     if (win.xtremepush) return win.xtremepush;
     const queued = ((...args: unknown[]) => {
       queued.q = queued.q ?? [];
@@ -59,25 +64,48 @@ export function createXtremepushAnalytics(deps: AnalyticsDeps = {}): XtremepushA
           return false;
         }
         try {
-          const res = await fetcher('/api/config');
+          const res = await fetcher('/api/config', { signal: AbortSignal.timeout(10_000) });
+          if (!res.ok) throw new Error('Xtremepush config unavailable');
           const config = (await res.json()) as { xtremepushSdkKey?: string | null };
-          const key = config.xtremepushSdkKey?.trim();
+          const key = typeof config.xtremepushSdkKey === 'string' ? config.xtremepushSdkKey.trim() : '';
           if (!key) {
             disabled = true;
             pending.length = 0;
             return false;
           }
           installQueue();
-          enabled = true;
           const existing = Array.from(doc.querySelectorAll('script[data-xtremepush-sdk]')).some(script => (script as HTMLScriptElement).dataset.xtremepushSdk === key);
-          if (!existing) {
-            const script = doc.createElement('script');
-            script.async = true;
-            script.src = `${sdkBaseUrl}/sdk.js`;
-            script.dataset.xtremepushSdk = key;
-            script.onerror = () => { disabled = true; enabled = false; pending.length = 0; };
-            doc.head.appendChild(script);
+          let loaded = Boolean(existing && win.XPInterfaceInstance);
+          if (!loaded) {
+            loaded = await new Promise<boolean>(resolve => {
+              const script = existing
+                ? doc.querySelector('script[data-xtremepush-sdk]') as HTMLScriptElement | null
+                : doc.createElement('script');
+              if (!script) return resolve(false);
+              let settled = false;
+              const finish = (ok: boolean) => {
+                if (settled) return;
+                settled = true;
+                globalThis.clearTimeout(timeout);
+                resolve(ok && Boolean(win.XPInterfaceInstance));
+              };
+              const timeout = globalThis.setTimeout(() => finish(false), 15_000);
+              script.onload = () => finish(true);
+              script.onerror = () => finish(false);
+              if (!existing) {
+                script.async = true;
+                script.src = `${sdkBaseUrl}/sdk.js`;
+                script.dataset.xtremepushSdk = key;
+                doc.head.appendChild(script);
+              }
+            });
           }
+          if (!loaded) {
+            disabled = true;
+            pending.length = 0;
+            return false;
+          }
+          enabled = true;
           flush();
           return true;
         } catch {
@@ -104,4 +132,15 @@ void xtremepushAnalytics.init();
 
 export function trackAnalyticsEvent(event: AnalyticsEvent) {
   return xtremepushAnalytics.track(event);
+}
+
+export function initXtremepush() {
+  return xtremepushAnalytics.init();
+}
+
+export function xtremepushCommand(...args: unknown[]) {
+  const fn = (window as BrowserWindow).xtremepush;
+  if (!fn) return false;
+  fn(...args);
+  return true;
 }

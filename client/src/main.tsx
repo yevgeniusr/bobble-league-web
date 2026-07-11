@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, BoxTypeInput, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec, normalizeBoxType } from '../../shared/types';
-import { trackAnalyticsEvent } from './analytics';
+import { initXtremepush, trackAnalyticsEvent, xtremepushCommand } from './analytics';
 import { AudioSettings, audioManager, loadAudioSettings, saveAudioSettings } from './audio';
 import { buildMatchEndSummary } from './matchEnd';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
@@ -10,6 +10,8 @@ import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
 const socket: Sock = io();
+let refreshLoyaltyToken: (() => void) | null = null;
+let loyaltyExpiryHandlerInstalled = false;
 const MAP_SELECT_HINTS: Record<MapId, string> = {
   stadium: 'classic',
   moon: 'low gravity',
@@ -56,12 +58,13 @@ function App() {
   const [conn, setConn] = React.useState<'connected' | 'reconnecting'>('connected');
   const [audioSettings, setAudioSettings] = React.useState<AudioSettings>(() => loadAudioSettings());
   const stateRef = React.useRef<GameState | null>(null);
+  const leavingRef = React.useRef(false);
   const nameRef = React.useRef(name);
   stateRef.current = state;
   nameRef.current = name;
 
   React.useEffect(() => {
-    socket.on('game:state', (s, playerId) => { setState(s); if (playerId) setYou(playerId); });
+    socket.on('game:state', (s, playerId) => { if (leavingRef.current) return; setState(s); if (playerId) setYou(playerId); });
     socket.on('room:error', setError);
     socket.on('analytics:event', trackAnalyticsEvent);
     // reconnect robustness: on transport loss show a banner, then automatically
@@ -110,10 +113,12 @@ function App() {
   const patchAudio = (patch: Partial<AudioSettings>) => setAudioSettings(s => ({ ...s, ...patch }));
 
   function createRoom() {
+    leavingRef.current = false;
     localStorage.setItem('babble:name', name);
     socket.emit('room:create', { name, mode, mapId }, res => res.ok ? (setRoomCode(res.roomCode), setError('')) : setError(res.error));
   }
   function joinRoom() {
+    leavingRef.current = false;
     localStorage.setItem('babble:name', name);
     socket.emit('room:join', { roomCode: roomCode.toUpperCase(), name }, res => res.ok ? (setError(''), setRoomCode(res.roomCode)) : setError(res.error));
   }
@@ -155,13 +160,143 @@ function App() {
               <button onClick={joinRoom}>Join room</button>
             </div>
           </div>
+          <LoyaltyWidget nickname={name}/>
           {error && <p className="lobbyError">{error}</p>}
         </section>
       </div>
     </section>}
-    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
+    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ leavingRef.current = true; socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
   </main>;
+}
+
+function LoyaltyWidget({ nickname }: { nickname: string }) {
+  const hostRef = React.useRef<HTMLDivElement>(null);
+  const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
+  const generationRef = React.useRef(0);
+  const [config, setConfig] = React.useState<{ loyaltyEnabled: boolean; loyaltyEndpoint: string | null } | null>(null);
+  const [status, setStatus] = React.useState<'loading' | 'mounting' | 'ready' | 'unavailable' | 'error'>('loading');
+  const [message, setMessage] = React.useState('Preparing rewards…');
+
+  React.useEffect(() => {
+    let active = true;
+    fetch('/api/config', { signal: AbortSignal.timeout(10_000) }).then(r => {
+      if (!r.ok) throw new Error('Config unavailable');
+      return r.json();
+    }).then(value => {
+      if (!active) return;
+      const next = value as { loyaltyEnabled?: boolean; loyaltyEndpoint?: string | null };
+      setConfig({ loyaltyEnabled: Boolean(next.loyaltyEnabled), loyaltyEndpoint: next.loyaltyEndpoint ?? null });
+      if (!next.loyaltyEnabled) { setStatus('unavailable'); setMessage('Rewards will appear when Loyalty is configured.'); }
+    }).catch(() => { if (active) { setStatus('error'); setMessage('Rewards are temporarily unavailable.'); } });
+    return () => { active = false; };
+  }, []);
+
+  React.useEffect(() => {
+    const endpoint = config?.loyaltyEndpoint;
+    const cleanName = nickname.trim();
+    if (!config?.loyaltyEnabled || !endpoint || !cleanName || !hostRef.current) return;
+    const generation = ++generationRef.current;
+    const controller = new AbortController();
+    let installedRefresh: (() => void) | null = null;
+    let readyFallback: number | null = null;
+    const timer = window.setTimeout(async () => {
+      try {
+        setStatus('loading');
+        setMessage(`Signing in ${cleanName}…`);
+        const sdkReady = await initXtremepush();
+        if (!sdkReady || controller.signal.aborted || generation !== generationRef.current) throw new Error('SDK unavailable');
+        const response = await fetch('/api/loyalty/token', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ nickname: cleanName }),
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error('Token unavailable');
+        const session = await response.json() as { token: string; userId: string };
+        if (controller.signal.aborted || generation !== generationRef.current || !hostRef.current) return;
+        hostRef.current.replaceChildren();
+        xtremepushCommand('set', 'user_id', session.userId);
+        xtremepushCommand('set', 'loyalty_endpoint', `https://${endpoint}`);
+        xtremepushCommand('set', 'loyalty_token', session.token);
+        refreshLoyaltyToken = () => {
+          void fetch('/api/loyalty/token', {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname: cleanName }), signal: controller.signal
+          }).then(r => r.ok ? r.json() : Promise.reject()).then((fresh: { token: string }) => {
+            if (generation === generationRef.current && !controller.signal.aborted) xtremepushCommand('set', 'loyalty_token', fresh.token);
+          }).catch(() => { if (!controller.signal.aborted) setMessage('Rewards session expired. Re-enter your nickname to reconnect.'); });
+        };
+        installedRefresh = refreshLoyaltyToken;
+        if (!loyaltyExpiryHandlerInstalled) {
+          xtremepushCommand('on', 'loyalty_token_expired', () => refreshLoyaltyToken?.());
+          loyaltyExpiryHandlerInstalled = true;
+        }
+        xtremepushCommand('mountLoyalty', 420, 520, hostRef.current);
+        iframeRef.current = hostRef.current.querySelector('iframe');
+        const revealMountedFrame = () => {
+          if (generation === generationRef.current && iframeRef.current) {
+            setStatus('ready');
+            setMessage('');
+          }
+        };
+        iframeRef.current?.addEventListener('load', revealMountedFrame, { once: true });
+        setStatus('mounting');
+        setMessage('Loading your rewards…');
+        // Current Loyalty builds do not consistently emit the documented
+        // postMessage `ready` event, even after the authenticated iframe and
+        // player endpoints load successfully. Reveal the mounted iframe after
+        // a grace period; a later authenticated `error` event still wins.
+        readyFallback = window.setTimeout(() => {
+          if (generation !== generationRef.current) return;
+          iframeRef.current = hostRef.current?.querySelector('iframe') ?? null;
+          if (iframeRef.current) {
+            setStatus(current => current === 'mounting' ? 'ready' : current);
+            setMessage(current => current === 'Loading your rewards…' ? '' : current);
+          }
+        }, 5000);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setStatus('error');
+        setMessage(error instanceof Error && error.message === 'SDK unavailable' ? 'Rewards SDK is not configured.' : 'Could not open rewards right now.');
+      }
+    }, 450);
+    return () => {
+      window.clearTimeout(timer);
+      if (readyFallback !== null) window.clearTimeout(readyFallback);
+      controller.abort();
+      iframeRef.current = null;
+      hostRef.current?.replaceChildren();
+      if (refreshLoyaltyToken === installedRefresh) refreshLoyaltyToken = null;
+    };
+  }, [config, nickname]);
+
+  React.useEffect(() => {
+    const endpoint = config?.loyaltyEndpoint;
+    if (!endpoint) return;
+    const onMessage = (event: MessageEvent) => {
+      const mountedFrame = iframeRef.current ?? hostRef.current?.querySelector('iframe') ?? null;
+      if (mountedFrame) iframeRef.current = mountedFrame;
+      if (event.origin !== `https://${endpoint}` || event.source !== mountedFrame?.contentWindow || !event.data || event.data.source !== 'Scrimmage') return;
+      if (event.data.type === 'ready') { setStatus('ready'); setMessage(''); }
+      if (event.data.type === 'error') {
+        if (event.data.payload?.type === 'wysiwyg:empty-config') {
+          setStatus('unavailable');
+          setMessage('Rewards are connected, but no active widget is published in Xtremepush yet.');
+        } else {
+          setStatus('error');
+          setMessage('Rewards authentication failed.');
+        }
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [config?.loyaltyEndpoint]);
+
+  return <section className={`loyaltyCard ${status}`} aria-label="Babble League rewards">
+    <div className="loyaltyHeading"><span>★</span><div><b>Babble Rewards</b><small>Signed in as {nickname.trim() || 'your nickname'}</small></div></div>
+    {message && <p className="loyaltyStatus" role="status">{message}</p>}
+    <div ref={hostRef} className="loyaltyHost" aria-hidden={status !== 'ready'}/>
+  </section>;
 }
 
 function AnimeCatMascot() {

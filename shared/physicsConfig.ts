@@ -22,9 +22,9 @@ export const PHYSICS_CONFIG = {
   // Bumpers use valid material restitution plus a physical prismatic motor.
   bumperRestitution: envNumber('BABBLE_BUMPER_RESTITUTION', 0.98),
   bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1),
-  bumperMotorStiffness: envNumber('BABBLE_BUMPER_MOTOR_STIFFNESS', 1800),
-  bigBumperMotorStiffness: envNumber('BABBLE_BIG_BUMPER_MOTOR_STIFFNESS', 3600),
-  bumperMotorDamping: envNumber('BABBLE_BUMPER_MOTOR_DAMPING', 12),
+  bumperMotorStiffness: envNumber('BABBLE_BUMPER_MOTOR_STIFFNESS', 8000),
+  bigBumperMotorStiffness: envNumber('BABBLE_BIG_BUMPER_MOTOR_STIFFNESS', 30000),
+  bumperMotorDamping: envNumber('BABBLE_BUMPER_MOTOR_DAMPING', 18),
 
   boostPadAccel: envNumber('BABBLE_BOOST_PAD_ACCEL', 4300),
 

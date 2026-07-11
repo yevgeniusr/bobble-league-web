@@ -108,23 +108,23 @@ Open http://localhost:3000 in two browser windows and join the same room code.
 
 ## Xtremepush analytics
 
-Set the public Xtremepush web SDK key in the server environment:
+Set the Xtremepush server/runtime configuration:
 
 ```bash
-XTREMEPUSH_SDK_KEY=your-public-web-sdk-key
+XTREMEPUSH_APP_TOKEN=...                       # server-side analytics token
+XTREMEPUSH_SDK_KEY=...                         # public web SDK key
+XTREMEPUSH_LOYALTY_ENDPOINT=p1234.p.loyalty.eu.xtremepush.com
+XTREMEPUSH_LOYALTY_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----\n...'
+XTREMEPUSH_LOYALTY_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----\n...'
+XTREMEPUSH_LOYALTY_KEY_ID=primary              # optional JWT kid
+XTREMEPUSH_LOYALTY_TOKEN_TTL=300
+PUBLIC_HOSTNAME=bobble.rachkovan.com             # browser SDK is exposed only here
+XTREMEPUSH_ALLOW_LOCAL=false                    # opt in only for local SDK QA
 ```
 
-Local development also reads this value from `.env` if it is not already set in
-the process environment. The server exposes only the public web SDK key at
-`GET /api/config`; it never logs the key or requires it for gameplay. If the key
-is missing, config loading fails, or the SDK script fails to load, analytics
-events become a resilient no-op.
+Local development reads these values from `.env` when they are not already in the process environment. The SDK key and Loyalty endpoint are public browser configuration; the RSA private key remains server-only. The backend verifies that the configured private/public keys match before enabling `/api/loyalty/token`, then binds each browser to a signed, HttpOnly guest identity and signs short-lived RS256 tokens whose `sub` combines that opaque identity with the entered nickname. A freely supplied nickname alone can therefore never mint another browser's Loyalty identity. `private.key`, `public.key`, and `*.pem` are gitignored and must be configured as deployment secrets rather than committed.
 
-The browser loads the Xtremepush Web SDK asynchronously from the same-origin
-`/api/xtremepush/sdk.js` route. The server fetches the configured Xtremepush CDN
-SDK and serves a no-op command queue fallback if the upstream SDK is unavailable,
-so CDN failures do not surface as gameplay or smoke-test failures. Events are
-sent with the SDK queue as `xtremepush('event', eventName, payload)`.
+The browser loads the Xtremepush Web SDK asynchronously from the same-origin `/api/xtremepush/sdk.js` route. The server proxies the configured Xtremepush CDN SDK with a timeout, content-type check, and size cap; upstream failures return a non-success response so the client cannot mistake an inert queue for a working SDK. The main-menu Loyalty widget sets `user_id`, `loyalty_endpoint`, and its short-lived `loyalty_token` before calling `mountLoyalty`; expired tokens are refreshed through the backend. Without complete browser/Loyalty configuration, backend analytics continues and the widget reports an explicit unavailable state.
 
 Tracked events:
 

@@ -30,7 +30,7 @@ import {
   normalizeMapId
 } from './types';
 import { buildAbilityUsedEvent, buildBoxPickupEvent, buildGoalScoredEvent, recordAnalyticsEvent } from './analytics';
-import { applyBabblePlanarImpulse, stepPhysics } from './physics';
+import { applyBabblePlanarImpulse, freePhysics, stepPhysics } from './physics';
 import { PHYSICS_CONFIG } from './physicsConfig';
 import {
   BALL_REST_HEIGHT,
@@ -257,6 +257,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   buildBabbles(state);
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
+  freePhysics(state);
   pushEvent(state, `Kickoff on ${MAPS[state.mapId].label}! First to ${state.mode}.`);
 }
 
@@ -286,6 +287,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
   for (const p of Object.values(state.players)) p.score = 0;
   buildBabbles(state);
+  freePhysics(state);
   pushEvent(state, `Reset to ${length.length} first-to-${mode} on ${MAPS[state.mapId].label}.`);
 }
 
@@ -765,7 +767,7 @@ export const GOAL_TRIGGER_EPS = 0.5;
 
 function detectGoal(state: GameState): PlayerSide | null {
   const b = state.ball;
-  if (b.pos.y < FIELD.goalY + b.radius || b.pos.y > FIELD.goalY + FIELD.goalHeight - b.radius) return null;
+  if (b.pos.y < FIELD.goalY || b.pos.y > FIELD.goalY + FIELD.goalHeight) return null;
   const swapped = state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn >= state.turn;
   const leftGoalScorer: PlayerSide = swapped ? 'left' : 'right';
   const rightGoalScorer: PlayerSide = swapped ? 'right' : 'left';
@@ -835,6 +837,11 @@ function resetForPlanning(state: GameState, _rng: Rng) {
   state.bumperEvents = [];
   state.rampEvents = [];
   state.kickoffAt = Date.now();
+  // A tabletop turn has no hidden solver state. Recreate the deterministic
+  // Rapier world at the same boundary where authoritative velocities and
+  // spring mechanisms are reset, so a compressed bumper/contact island cannot
+  // influence the next turn or rematch.
+  freePhysics(state);
 }
 
 function allSettled(state: GameState) {

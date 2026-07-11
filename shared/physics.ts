@@ -469,6 +469,9 @@ function buildArena(world: RAPIER.World, state: GameState) {
   const h = FIELD.height / PX_PER_METER;
   const mouthTop = FIELD.goalY / PX_PER_METER;
   const mouthBottom = (FIELD.goalY + FIELD.goalHeight) / PX_PER_METER;
+  // Arcade mouth clearance: a ball/player centre can use the complete visible
+  // opening instead of colliding with the sharp corner of a hidden cuboid.
+  const edgeClearance = FIELD.ballRadius / PX_PER_METER;
   const goalDepth = FIELD.goalDepth / PX_PER_METER;
   const t = WALL_HALF_THICKNESS;
   const wallRestitution = restitutionTune(state, 'wallRestitution');
@@ -487,16 +490,18 @@ function buildArena(world: RAPIER.World, state: GameState) {
   for (const side of ['left', 'right'] as const) {
     const x = side === 'left' ? -t : w + t;
     // Solid wall segments above and below the goal mouth.
-    fixedCuboid(world, x, wallY, mouthTop / 2, t, WALL_HALF_HEIGHT, mouthTop / 2, ARENA_GROUPS, wallRestitution);
-    fixedCuboid(world, x, wallY, (mouthBottom + h) / 2, t, WALL_HALF_HEIGHT, (h - mouthBottom) / 2, ARENA_GROUPS, wallRestitution);
+    const topEnd = mouthTop - edgeClearance;
+    const bottomStart = mouthBottom + edgeClearance;
+    fixedCuboid(world, x, wallY, topEnd / 2, t, WALL_HALF_HEIGHT, topEnd / 2, ARENA_GROUPS, wallRestitution);
+    fixedCuboid(world, x, wallY, (bottomStart + h) / 2, t, WALL_HALF_HEIGHT, (h - bottomStart) / 2, ARENA_GROUPS, wallRestitution);
     // The mouth is completely open to both ball and babbleheads. The goal is a
     // real pocket with rear and side walls, so a goalie can enter, get behind a
     // ball resting near the line, and push it back onto the field.
     const backX = side === 'left' ? -goalDepth - t : w + goalDepth + t;
-    fixedCuboid(world, backX, wallY, (mouthTop + mouthBottom) / 2, t, WALL_HALF_HEIGHT, (mouthBottom - mouthTop) / 2 + t, ARENA_GROUPS, wallRestitution);
+    fixedCuboid(world, backX, wallY, (mouthTop + mouthBottom) / 2, t, WALL_HALF_HEIGHT, (mouthBottom - mouthTop) / 2 + edgeClearance + t, ARENA_GROUPS, wallRestitution);
     const pocketCenterX = side === 'left' ? -goalDepth / 2 : w + goalDepth / 2;
-    fixedCuboid(world, pocketCenterX, wallY, mouthTop - t, goalDepth / 2 + t, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
-    fixedCuboid(world, pocketCenterX, wallY, mouthBottom + t, goalDepth / 2 + t, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
+    fixedCuboid(world, pocketCenterX, wallY, mouthTop - edgeClearance - t, goalDepth / 2 + t, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
+    fixedCuboid(world, pocketCenterX, wallY, mouthBottom + edgeClearance + t, goalDepth / 2 + t, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
   }
 }
 
@@ -530,7 +535,8 @@ function syncBumpers(state: GameState, cache: PhysicsCache) {
     const dz = FIELD.height / 2 - p.y;
     const length = Math.hypot(dx, dz) || 1;
     const axis = { x: dx / length, y: 0, z: dz / length };
-    const position = { x: p.x / PX_PER_METER, y: WALL_HALF_HEIGHT, z: p.y / PX_PER_METER };
+    const bumperHalfHeight = 0.65;
+    const position = { x: p.x / PX_PER_METER, y: bumperHalfHeight, z: p.y / PX_PER_METER };
     const anchor = cache.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z));
     const plunger = cache.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -540,10 +546,10 @@ function syncBumpers(state: GameState, cache: PhysicsCache) {
         .setCanSleep(false)
     );
     const collider = cache.world.createCollider(
-      RAPIER.ColliderDesc.cylinder(WALL_HALF_HEIGHT, radiusPx / PX_PER_METER)
+      RAPIER.ColliderDesc.roundCone(bumperHalfHeight - 0.06, radiusPx / PX_PER_METER - 0.06, 0.06)
         .setFriction(0.2)
         .setRestitution(restitution)
-        .setDensity(big ? 10 : 7)
+        .setDensity(7)
         .setCollisionGroups(ARENA_GROUPS)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       plunger
@@ -554,8 +560,8 @@ function syncBumpers(state: GameState, cache: PhysicsCache) {
       plunger,
       true
     ) as RAPIER.PrismaticImpulseJoint;
-    joint.setLimits(-0.18, 0.06);
-    joint.configureMotorPosition(0.04, stiffness, damping);
+    joint.setLimits(-0.25, 0.14);
+    joint.configureMotorPosition(0.1, stiffness, damping);
     cache.bumperColliders.push(collider);
     cache.bumperBodies.push(anchor, plunger);
     cache.bumperHandles.set(collider.handle, { ...p });

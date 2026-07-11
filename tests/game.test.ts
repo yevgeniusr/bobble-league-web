@@ -543,9 +543,9 @@ describe('classic Babble League shared rules', () => {
     stepGame(s, {}, 1033, seq([0.5]));
 
     expect(s.ball.vel.x).toBeGreaterThan(0);
-    const exitSpeed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
-    expect(exitSpeed).toBeGreaterThan(300); // intentionally lively physical material
-    expect(exitSpeed).toBeLessThan(380); // still no scripted minimum/velocity rewrite
+    const exitSpeed3d = Math.hypot(s.ball.vel.x, s.ball.vel.y, s.ball.verticalVelocity * 50);
+    expect(exitSpeed3d).toBeGreaterThan(390); // motor + cone converts contact into a trampoline-like jump
+    expect(s.ball.verticalVelocity).toBeGreaterThan(4);
     expect(s.bumperEvents.length).toBeGreaterThanOrEqual(1);
     expect(s.bumperEvents[0].pos).toEqual({ x: BUMPERS[0].x, y: BUMPERS[0].y });
   });
@@ -563,7 +563,7 @@ describe('classic Babble League shared rules', () => {
     stepGame(s, {}, 1033, seq([0.5]));
     const speed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
     expect(speed).toBeGreaterThan(40); // energy came from the Rapier motor/contact
-    expect(speed).toBeLessThan(120); // no fixed high minimum or velocity rewrite
+    expect(speed).toBeLessThan(250); // bounded physical motor response, not a velocity rewrite
     expect(s.ball.vel.x).toBeGreaterThan(0);
   });
 
@@ -885,16 +885,15 @@ describe('classic Babble League shared rules', () => {
       s.phase = 'resolving';
       s.resolvingStartedAt = 1000;
       if (big) s.bigBumpersUntilTurn = s.turn;
-      const radius = big ? MAPS.stadium.layout.bigBumperRadius : MAPS.stadium.layout.bumperRadius;
-      s.ball.pos = { x: BUMPERS[0].x + radius + s.ball.radius - 2, y: BUMPERS[0].y };
+      s.ball.pos = { x: BUMPERS[0].x + 55, y: BUMPERS[0].y };
       s.ball.vel = { x: -300, y: 0 };
       stepGame(s, {}, 1033, seq([0.5]));
-      return s.ball.vel.x;
+      return Math.hypot(s.ball.vel.x, s.ball.vel.y, s.ball.verticalVelocity * 50);
     };
     const normal = run(false);
     const big = run(true);
     expect(normal).toBeGreaterThan(0);
-    expect(big).toBeGreaterThan(normal + 20);
+    expect(big).toBeGreaterThan(normal + 30);
   });
 
   it('accumulates authoritative ball spin matching travelled distance over radius', () => {
@@ -1014,6 +1013,16 @@ describe('goal mouth scoring and clearance window', () => {
     stepGame(s, {}, 1033, seq([0.5]));
     expect(s.score.right).toBe(1);
     expect(s.phase).toBe('finished');
+  });
+
+  it('uses the complete visible gate opening without hidden top/bottom insets', () => {
+    for (const y of [FIELD.goalY + 2, FIELD.goalY + FIELD.goalHeight - 2]) {
+      const s = setup();
+      s.ball.pos = { x: -1, y };
+      s.ball.vel = { x: -80, y: 0 };
+      stepGame(s, {}, 4000, seq([0.5]));
+      expect(s.score.right).toBe(1);
+    }
   });
 
   it('does not score outside the mouth height even when far past the line', () => {

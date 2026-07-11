@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { drainAnalyticsEvents } from '../shared/analytics';
 import { addPlayer, collectPowerBox, createInitialState, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { FIELD } from '../shared/types';
 import { createXtremepushAnalytics } from '../client/src/analytics';
 import { buildHitEventBody, buildImportProfileBody, createXtremepushSender } from '../server/xtremepush';
+import { createLoyaltyService, normalizeLoyaltyEndpoint } from '../server/loyalty';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
@@ -14,6 +16,8 @@ function fakeBrowser() {
     head: {
       appendChild: (script: HTMLScriptElement) => {
         scripts.push(script);
+        (win as unknown as { XPInterfaceInstance?: object }).XPInterfaceInstance = {};
+        queueMicrotask(() => script.onload?.call(script, new Event('load')));
         return script;
       }
     },
@@ -153,7 +157,7 @@ describe('Xtremepush browser analytics client', () => {
 
     expect(analytics.track(event)).toBe(false);
     await expect(analytics.init()).resolves.toBe(false);
-    expect(fetcher).toHaveBeenCalledWith('/api/config');
+    expect(fetcher).toHaveBeenCalledWith('/api/config', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect((browser.win as unknown as { xtremepush?: unknown }).xtremepush).toBeUndefined();
     expect(browser.scripts).toHaveLength(0);
     expect(analytics.track(event)).toBe(false);
@@ -167,11 +171,55 @@ describe('Xtremepush browser analytics client', () => {
     expect(analytics.track(event)).toBe(false);
     await expect(analytics.init()).resolves.toBe(true);
 
-    const win = browser.win as unknown as { xtremepush: { q: unknown[] } };
+    const win = browser.win as unknown as { XtremePushObject: string; xtremepush: { q: unknown[] } };
+    expect(win.XtremePushObject).toBe('xtremepush');
     expect(win.xtremepush.q).toEqual([['event', 'gamePlayer', event.payload]]);
     const script = browser.scripts[0];
     expect(script?.src).toBe('https://cdn.example.test/sdk.js');
     expect(script?.dataset.xtremepushSdk).toBe('public-test-key');
+  });
+});
+
+describe('Xtremepush Loyalty authentication', () => {
+  const keys = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+  });
+
+  it('signs a short-lived RS256 JWT mapped to the nickname profile id', () => {
+    const service = createLoyaltyService({
+      sdkKey: 'public-sdk-key', endpoint: 'p123.p.loyalty.eu.xtremepush.com',
+      privateKey: keys.privateKey, publicKey: keys.publicKey, keyId: 'primary', tokenTtlSeconds: 120
+    });
+    expect(service.enabled).toBe(true);
+    const guest = service.guestSession()!;
+    const restored = service.guestSession(guest.cookie)!;
+    expect(restored.id).toBe(guest.id);
+    expect(restored.created).toBe(false);
+    expect(service.guestSession(`${guest.cookie}tampered`)!.id).not.toBe(guest.id);
+    const issued = service.issueToken(' Yev ', guest.id, 1_000)!;
+    const subject = `babble-player:yev:guest:${guest.id}`;
+    expect(issued.userId).toBe(subject);
+    expect(issued.expiresAt).toBe(1_120);
+    const [header64, payload64, signature64] = issued.token.split('.');
+    expect(JSON.parse(Buffer.from(header64, 'base64url').toString())).toEqual({ alg: 'RS256', typ: 'JWT', kid: 'primary' });
+    expect(JSON.parse(Buffer.from(payload64, 'base64url').toString())).toEqual({ sub: subject, exp: 1_120 });
+    const verifier = createVerify('RSA-SHA256');
+    verifier.update(`${header64}.${payload64}`); verifier.end();
+    expect(verifier.verify(keys.publicKey, Buffer.from(signature64, 'base64url'))).toBe(true);
+  });
+
+  it('stays disabled for mismatched, weak, or invalid deployment configuration', () => {
+    const other = generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    const weak = generateKeyPairSync('rsa', { modulusLength: 1024, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    expect(createLoyaltyService({ sdkKey: 'sdk', endpoint: 'p1.p.loyalty.eu.xtremepush.com', privateKey: keys.privateKey, publicKey: other.publicKey }).enabled).toBe(false);
+    expect(createLoyaltyService({ sdkKey: 'sdk', endpoint: 'p1.p.loyalty.eu.xtremepush.com', privateKey: weak.privateKey, publicKey: weak.publicKey }).enabled).toBe(false);
+    expect(normalizeLoyaltyEndpoint('https://p1.p.loyalty.eu.xtremepush.com/')).toBe('p1.p.loyalty.eu.xtremepush.com');
+    expect(normalizeLoyaltyEndpoint('https://example.com/path')).toBe('');
+    const safeTtl = createLoyaltyService({ sdkKey: 'sdk', endpoint: 'p1.p.loyalty.eu.xtremepush.com', privateKey: keys.privateKey, publicKey: keys.publicKey, tokenTtlSeconds: Number.NaN });
+    const guest = safeTtl.guestSession()!;
+    expect(safeTtl.issueToken('Yev', guest.id, 1_000)?.expiresAt).toBe(1_300);
   });
 });
 
