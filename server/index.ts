@@ -90,6 +90,8 @@ app.get('/api/config', (req, res) => {
 });
 if (process.env.ENABLE_ANALYTICS_DEBUG === 'true') {
   app.get('/api/analytics/debug', (_, res) => res.json({ xtremepush: xtremepush.debugSnapshot() }));
+} else {
+  app.get('/api/analytics/debug', (_, res) => res.status(404).json({ error: 'Not found.' }));
 }
 app.get('/api/xtremepush/sdk.js', async (_, res) => {
   res.type('application/javascript');
