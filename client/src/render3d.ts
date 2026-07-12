@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ARENA_BARRIERS, ARENA_FLOORS, ARENA_WALL_HEIGHT, GOAL_COLLISION_BOTTOM, GOAL_COLLISION_TOP } from '../../shared/arena';
 import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec, normalizeMapId } from '../../shared/types';
 import { babbleRestHeight, ballRestHeight } from '../../shared/airborne';
 
@@ -68,7 +69,6 @@ const DESKTOP_CAMERA: RendererCameraLayout = {
   target: { x: 0, y: 0.4, z: 0 }
 };
 
-const WIDE_CAMERA_ASPECT = 16 / 9;
 const FIT_CAMERA_ASPECT = 16 / 10;
 const PORTRAIT_CAMERA_ASPECT = 390 / 844;
 const PORTRAIT_CAMERA_FOV = 70;
@@ -78,25 +78,15 @@ function smoothstep(value: number): number {
   return clamped * clamped * (3 - 2 * clamped);
 }
 
-function cameraFitEnvelope(): THREE.Vector3[] {
-  const halfFieldX = FIELD.width / 100;
-  const halfFieldZ = FIELD.height / 100;
-  const goalBackX = halfFieldX + fieldRadiusToWorld(FIELD.goalDepth);
-  const goalTopZ = fieldToWorld({ x: 0, y: FIELD.goalY }).z;
-  const goalBottomZ = fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight }).z;
+export function arenaCameraFitEnvelope(): THREE.Vector3[] {
   const points: THREE.Vector3[] = [];
-
-  for (const x of [-halfFieldX, halfFieldX]) {
-    for (const z of [-halfFieldZ, halfFieldZ]) {
-      points.push(new THREE.Vector3(x, 1.02, z), new THREE.Vector3(x, 3, z));
+  for (const barrier of arenaBarrierWorldLayout()) {
+    for (const x of [barrier.x - barrier.width / 2, barrier.x + barrier.width / 2]) {
+      for (const z of [barrier.z - barrier.depth / 2, barrier.z + barrier.depth / 2]) {
+        points.push(new THREE.Vector3(x, TURF_Y, z), new THREE.Vector3(x, TURF_Y + barrier.height, z));
+      }
     }
   }
-  for (const x of [-goalBackX, goalBackX]) {
-    for (const z of [goalTopZ, goalBottomZ]) {
-      points.push(new THREE.Vector3(x, 1.02, z), new THREE.Vector3(x, 3, z));
-    }
-  }
-
   return points;
 }
 
@@ -112,7 +102,7 @@ function cameraDistanceScaleForFit(aspect: number, fov: number): number {
 
   // Moving the camera backward along its view ray only increases view-space
   // depth, so the exact extra distance needed for each envelope point is direct.
-  for (const point of cameraFitEnvelope()) {
+  for (const point of arenaCameraFitEnvelope()) {
     const relative = point.clone().sub(position);
     const depth = relative.dot(forward);
     const requiredDepth = Math.max(
@@ -130,14 +120,12 @@ export function cameraLayoutForViewport(width: number, height: number): Renderer
   const narrowProgress = smoothstep((FIT_CAMERA_ASPECT - aspect) / (FIT_CAMERA_ASPECT - PORTRAIT_CAMERA_ASPECT));
   const fov = THREE.MathUtils.lerp(DESKTOP_CAMERA.fov, PORTRAIT_CAMERA_FOV, narrowProgress);
   const fullFitScale = cameraDistanceScaleForFit(aspect, fov);
-  const fitProgress = smoothstep((WIDE_CAMERA_ASPECT - aspect) / (WIDE_CAMERA_ASPECT - FIT_CAMERA_ASPECT));
-  const distanceScale = THREE.MathUtils.lerp(1, fullFitScale, fitProgress);
   return {
     fov,
     position: {
-      x: DESKTOP_CAMERA.target.x + (DESKTOP_CAMERA.position.x - DESKTOP_CAMERA.target.x) * distanceScale,
-      y: DESKTOP_CAMERA.target.y + (DESKTOP_CAMERA.position.y - DESKTOP_CAMERA.target.y) * distanceScale,
-      z: DESKTOP_CAMERA.target.z + (DESKTOP_CAMERA.position.z - DESKTOP_CAMERA.target.z) * distanceScale
+      x: DESKTOP_CAMERA.target.x + (DESKTOP_CAMERA.position.x - DESKTOP_CAMERA.target.x) * fullFitScale,
+      y: DESKTOP_CAMERA.target.y + (DESKTOP_CAMERA.position.y - DESKTOP_CAMERA.target.y) * fullFitScale,
+      z: DESKTOP_CAMERA.target.z + (DESKTOP_CAMERA.position.z - DESKTOP_CAMERA.target.z) * fullFitScale
     },
     target: { ...DESKTOP_CAMERA.target }
   };
@@ -182,18 +170,83 @@ export function bumperVisualFootprint(mapId: MapId, powered = false): { collider
   };
 }
 
-export function goalVisualMetrics(): { leftGoalLineX: number; rightGoalLineX: number; mouthTopZ: number; mouthBottomZ: number; mouthHalfHeight: number; depth: number; pocketFloorDepth: number; pocketFloorWidth: number; sideWallLength: number } {
+export function bumperColliderVisualProfile(mapId: MapId, powered = false): { radius: number; height: number; wireframe: true } {
+  return {
+    radius: bumperVisualRadii(mapId, powered).collider,
+    height: ARENA_WALL_HEIGHT,
+    wireframe: true
+  };
+}
+
+export type ArenaBarrierWorld = { id: string; x: number; z: number; width: number; depth: number; height: number; tone: (typeof ARENA_BARRIERS)[number]['tone'] };
+export type ArenaFloorWorld = { id: string; x: number; z: number; width: number; depth: number };
+export const ARENA_BARRIER_SCREEN_PRIMITIVE = 'lineSegments' as const;
+export const ARENA_FRAME_SCREEN_OPACITY = 0.34;
+export const ARENA_GOAL_SCREEN_OPACITY = 0.48;
+
+export function arenaBarrierScreenObject(
+  geometry: THREE.BufferGeometry,
+  material: THREE.LineBasicMaterial,
+  primitive: typeof ARENA_BARRIER_SCREEN_PRIMITIVE
+): THREE.LineSegments {
+  if (primitive !== 'lineSegments') throw new Error(`Unsupported arena barrier primitive: ${primitive}`);
+  return new THREE.LineSegments(geometry, material);
+}
+
+export function arenaBarrierWorldLayout(): ArenaBarrierWorld[] {
+  return ARENA_BARRIERS.map(barrier => {
+    const world = fieldToWorld(barrier.center);
+    return {
+      id: barrier.id,
+      x: world.x,
+      z: world.z,
+      width: fieldRadiusToWorld(barrier.halfSize.x * 2),
+      depth: fieldRadiusToWorld(barrier.halfSize.y * 2),
+      height: barrier.height,
+      tone: barrier.tone
+    };
+  });
+}
+
+export function arenaFloorWorldLayout(): ArenaFloorWorld[] {
+  return ARENA_FLOORS.map(floor => {
+    const world = fieldToWorld(floor.center);
+    return {
+      id: floor.id,
+      x: world.x,
+      z: world.z,
+      width: fieldRadiusToWorld(floor.halfSize.x * 2),
+      depth: fieldRadiusToWorld(floor.halfSize.y * 2)
+    };
+  });
+}
+
+export function arenaBarrierVisualProfile(barrier: ArenaBarrierWorld): { baseHeight: number; screenHeight: number; primitive: typeof ARENA_BARRIER_SCREEN_PRIMITIVE } {
+  const baseHeight = Math.min(0.6, barrier.height);
+  return {
+    baseHeight,
+    screenHeight: Math.max(0, barrier.height - baseHeight),
+    primitive: ARENA_BARRIER_SCREEN_PRIMITIVE
+  };
+}
+
+export function goalVisualMetrics(): { leftGoalLineX: number; rightGoalLineX: number; mouthTopZ: number; mouthBottomZ: number; mouthHalfHeight: number; collisionTopZ: number; collisionBottomZ: number; collisionHalfHeight: number; depth: number; pocketFloorDepth: number; pocketFloorWidth: number; sideWallLength: number } {
   const mouthTopZ = fieldToWorld({ x: 0, y: FIELD.goalY }).z;
   const mouthBottomZ = fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight }).z;
+  const collisionTopZ = fieldToWorld({ x: 0, y: GOAL_COLLISION_TOP }).z;
+  const collisionBottomZ = fieldToWorld({ x: 0, y: GOAL_COLLISION_BOTTOM }).z;
   return {
     leftGoalLineX: -FIELD_X / 2,
     rightGoalLineX: FIELD_X / 2,
     mouthTopZ,
     mouthBottomZ,
     mouthHalfHeight: (mouthBottomZ - mouthTopZ) / 2,
+    collisionTopZ,
+    collisionBottomZ,
+    collisionHalfHeight: (collisionBottomZ - collisionTopZ) / 2,
     depth: fieldRadiusToWorld(FIELD.goalDepth),
     pocketFloorDepth: fieldRadiusToWorld(FIELD.goalDepth),
-    pocketFloorWidth: mouthBottomZ - mouthTopZ,
+    pocketFloorWidth: collisionBottomZ - collisionTopZ,
     sideWallLength: fieldRadiusToWorld(FIELD.goalDepth)
   };
 }
@@ -313,6 +366,7 @@ export class BabbleLeague3DRenderer {
   private board = new THREE.Group();
   private dynamic = new THREE.Group();
   private goalTint: Record<'left' | 'right', THREE.MeshStandardMaterial[]> = { left: [], right: [] };
+  private goalLineTint: Record<'left' | 'right', THREE.LineBasicMaterial[]> = { left: [], right: [] };
   private boardMapId: MapId | null = null;
   // persistent rolling state so the ball markings physically roll with travel
   private ballQuat = new THREE.Quaternion();
@@ -355,6 +409,7 @@ export class BabbleLeague3DRenderer {
   dispose() {
     window.removeEventListener('resize', this.resize);
     this.clearDynamic();
+    this.clearBoard();
     for (const t of this.textCache.values()) t.dispose();
     for (const g of this.geoCache.values()) g.dispose();
     for (const m of this.matCache.values()) m.dispose();
@@ -457,15 +512,26 @@ export class BabbleLeague3DRenderer {
     if (!m) { m = make(); this.matCache.set(key, m); }
     return m;
   }
-  private clearDynamic() {
-    this.dynamic.traverse(o => {
+  private clearGroup(group: THREE.Group) {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    group.traverse(o => {
       const mesh = o as THREE.Mesh;
-      if (mesh.geometry && !this.geoCacheHas(mesh.geometry)) mesh.geometry.dispose();
+      if (mesh.geometry) geometries.add(mesh.geometry);
       const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-      for (const m of mats) { if (!this.matCacheHas(m)) { const tex = (m as THREE.MeshBasicMaterial).map; if (tex && !this.texCacheHas(tex)) tex.dispose(); m.dispose(); } }
+      for (const material of mats) materials.add(material);
     });
-    this.dynamic.clear();
+    for (const geometry of geometries) if (!this.geoCacheHas(geometry)) geometry.dispose();
+    for (const material of materials) {
+      if (this.matCacheHas(material)) continue;
+      const texture = (material as THREE.Material & { map?: THREE.Texture | null }).map;
+      if (texture && !this.texCacheHas(texture)) texture.dispose();
+      material.dispose();
+    }
+    group.clear();
   }
+  private clearDynamic() { this.clearGroup(this.dynamic); }
+  private clearBoard() { this.clearGroup(this.board); }
   private geoCacheHas(g: THREE.BufferGeometry) { for (const v of this.geoCache.values()) if (v === g) return true; return false; }
   private matCacheHas(m: THREE.Material) { for (const v of this.matCache.values()) if (v === m) return true; return false; }
   private texCacheHas(t: THREE.Texture) { for (const v of this.textCache.values()) if (v === t) return true; return false; }
@@ -477,8 +543,9 @@ export class BabbleLeague3DRenderer {
   // -- static arena -----------------------------------------------------
   private ensureBoard(mapId: MapId) {
     if (this.boardMapId === mapId) return;
-    this.board.clear();
+    this.clearBoard();
     this.goalTint = { left: [], right: [] };
+    this.goalLineTint = { left: [], right: [] };
     const theme = MAPS[mapId].theme;
     this.renderer.setClearColor(theme.sky, 1);
     this.scene.fog = new THREE.Fog(theme.fog, mapId === 'moon' ? 42 : 34, mapId === 'volcano' ? 62 : 70);
@@ -490,6 +557,8 @@ export class BabbleLeague3DRenderer {
     const g = this.board;
     const map = MAPS[mapId];
     const theme = map.theme;
+    const fieldFloor = arenaFloorWorldLayout().find(floor => floor.id === 'field');
+    if (!fieldFloor) throw new Error('Shared arena is missing its field floor');
     // Flat two-tone broadcast deck outside the authoritative field surface.
     this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(theme.tableLeft, 0.85), -(FIELD_X / 4 + 2), -0.45, 0);
     this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(theme.tableRight, 0.85), FIELD_X / 4 + 2, -0.45, 0);
@@ -497,25 +566,79 @@ export class BabbleLeague3DRenderer {
     this.mesh(g, new THREE.BoxGeometry(FIELD_X + 3, 0.76, FIELD_Z + 2.9), this.mat(theme.plinth, 0.7), 0, 0, 0, true);
     this.mesh(g, new THREE.BoxGeometry(FIELD_X + 1.4, 0.9, FIELD_Z + 1.2), this.mat(theme.frame, 0.55, { emissive: mapId === 'volcano' ? 0x3b1208 : 0 }), 0, 0.42, 0, true);
     this.mesh(g, new THREE.BoxGeometry(FIELD_X + 0.5, 0.34, FIELD_Z + 0.3), this.mat(theme.frameDark, 0.5), 0, 0.9, 0, true);
-    // raised rim walls (top/bottom + short corner returns beside goals)
-    const rimMat = this.mat(theme.frame, 0.45, { emissive: mapId === 'volcano' ? 0x4a1608 : 0 });
-    for (const s of [-1, 1] as const) {
-      this.mesh(g, new THREE.BoxGeometry(FIELD_X + 0.5, 0.6, 0.42), rimMat, 0, 1.22, s * (FIELD_Z / 2 + 0.03), true);
-      for (const e of [-1, 1] as const) this.mesh(g, new THREE.BoxGeometry(0.42, 0.6, 2.2), rimMat, e * (FIELD_X / 2 + 0.03), 1.22, s * (FIELD_Z / 2 - 1.05), true);
-    }
     // Rounded signal studs along the frame corners.
     const stud = new THREE.SphereGeometry(0.22, this.lowPower ? 10 : 20, this.lowPower ? 6 : 12);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) this.mesh(g, stud, this.mat(theme.bumperCap, 0.35), sx * (FIELD_X / 2 + 0.55), 1.02, sz * (FIELD_Z / 2 + 0.55), true);
     // Map-specific PlanetBall court slab; markings stay texture-only.
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X, 0.24, FIELD_Z), this.mat(theme.fieldBase, 0.85), 0, 0.82, 0);
-    const turfMat = new THREE.MeshStandardMaterial({ map: this.turfTexture(mapId), roughness: 0.88, metalness: 0.02, emissive: new THREE.Color(mapId === 'volcano' ? 0x180604 : 0x000000), emissiveIntensity: mapId === 'volcano' ? 0.25 : 0 });
-    this.matCache.set(`turfSurface:${mapId}`, turfMat);
-    const turf = new THREE.Mesh(this.geo('turfPlane', () => new THREE.PlaneGeometry(FIELD_X, FIELD_Z)), turfMat);
-    turf.rotation.x = -Math.PI / 2; turf.position.y = TURF_Y; turf.receiveShadow = true; g.add(turf);
+    this.mesh(
+      g,
+      this.geo('arenaFloorSlab:field', () => new THREE.BoxGeometry(fieldFloor.width, 0.24, fieldFloor.depth)),
+      this.mat(theme.fieldBase, 0.85),
+      fieldFloor.x,
+      0.82,
+      fieldFloor.z
+    );
+    const turfMat = this.texturedMat(`turfSurface:${mapId}`, () => new THREE.MeshStandardMaterial({ map: this.turfTexture(mapId), roughness: 0.88, metalness: 0.02, emissive: new THREE.Color(mapId === 'volcano' ? 0x180604 : 0x000000), emissiveIntensity: mapId === 'volcano' ? 0.25 : 0 }));
+    const turf = new THREE.Mesh(this.geo('arenaFloorTurf:field', () => new THREE.PlaneGeometry(fieldFloor.width, fieldFloor.depth)), turfMat);
+    turf.rotation.x = -Math.PI / 2;
+    turf.position.set(fieldFloor.x, TURF_Y, fieldFloor.z);
+    turf.receiveShadow = true;
+    g.add(turf);
+    this.addArenaBarriers(mapId);
     this.addGoal(-1, mapId); this.addGoal(1, mapId);
     // Every bumper remains aligned with the authoritative physics colliders.
     for (const w of mapBumperWorldPositions(mapId)) this.addBumper(w.x, w.z, mapId);
     this.addTournamentExterior(mapId);
+  }
+
+  private addArenaBarriers(mapId: MapId) {
+    const theme = MAPS[mapId].theme;
+    const materials = new Map<string, { base: THREE.MeshStandardMaterial; screen: THREE.LineBasicMaterial }>();
+    const forTone = (tone: ArenaBarrierWorld['tone']) => {
+      const cached = materials.get(tone);
+      if (cached) return cached;
+      const side = tone === 'leftGoal' ? 'left' : tone === 'rightGoal' ? 'right' : null;
+      const color = side === 'left' ? theme.leftGoal : side === 'right' ? theme.rightGoal : theme.plinth;
+      const cacheKey = `arenaBarrier:${mapId}:${tone}`;
+      const material = <T extends THREE.Material>(suffix: string, make: () => T): T => {
+        const existing = this.matCache.get(`${cacheKey}:${suffix}`) as T | undefined;
+        if (existing) return existing;
+        const created = make();
+        this.matCache.set(`${cacheKey}:${suffix}`, created);
+        return created;
+      };
+      const set = {
+        base: material('base', () => new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.05 })),
+        screen: material('screen', () => new THREE.LineBasicMaterial({
+          color,
+          transparent: true,
+          opacity: side ? ARENA_GOAL_SCREEN_OPACITY : ARENA_FRAME_SCREEN_OPACITY,
+          depthWrite: false
+        }))
+      };
+      if (side) {
+        if (!this.goalTint[side].includes(set.base)) this.goalTint[side].push(set.base);
+        if (!this.goalLineTint[side].includes(set.screen)) this.goalLineTint[side].push(set.screen);
+      }
+      materials.set(tone, set);
+      return set;
+    };
+
+    for (const barrier of arenaBarrierWorldLayout()) {
+      const mat = forTone(barrier.tone);
+      const visual = arenaBarrierVisualProfile(barrier);
+      const baseGeometry = this.geo(`arenaBarrierBase:${barrier.id}`, () => new THREE.BoxGeometry(barrier.width, visual.baseHeight, barrier.depth));
+      this.mesh(this.board, baseGeometry, mat.base, barrier.x, TURF_Y + visual.baseHeight / 2, barrier.z, true);
+      const screenGeometry = this.geo(`arenaBarrierScreen:${barrier.id}`, () => {
+        const box = new THREE.BoxGeometry(barrier.width, visual.screenHeight, barrier.depth);
+        const edges = new THREE.EdgesGeometry(box);
+        box.dispose();
+        return edges;
+      });
+      const screen = arenaBarrierScreenObject(screenGeometry, mat.screen, visual.primitive);
+      screen.position.set(barrier.x, TURF_Y + visual.baseHeight + visual.screenHeight / 2, barrier.z);
+      this.board.add(screen);
+    }
   }
 
   private addTournamentExterior(mapId: MapId) {
@@ -603,70 +726,37 @@ export class BabbleLeague3DRenderer {
     const metrics = goalVisualMetrics();
     const x = side < 0 ? metrics.leftGoalLineX : metrics.rightGoalLineX;
     const halfGoal = metrics.mouthHalfHeight;
-    const depth = metrics.depth;
-    const pocketX = x + side * depth / 2;
+    const pocketFloor = arenaFloorWorldLayout().find(floor => floor.id === `${key}-goal-pocket`);
+    if (!pocketFloor) throw new Error(`Shared arena is missing its ${key} goal floor`);
+    const pocketHalf = pocketFloor.depth / 2;
+    const depth = pocketFloor.width;
     const backX = x + side * depth;
     // dedicated tintable materials so Swap Goals can visibly recolor the gates
-    const frameTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.32, metalness: 0.06 });
-    const mouthTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.55, metalness: 0.03, transparent: true, opacity: 0.46 });
-    const panelTint = new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.62, metalness: 0.03, transparent: true, opacity: 0.28, depthWrite: false });
-    this.goalTint[key].push(frameTint, mouthTint, panelTint);
-    this.matCache.set(`goalFrame:${key}`, frameTint);
-    this.matCache.set(`goalMouth:${key}`, mouthTint);
-    this.matCache.set(`goalPanel:${key}`, panelTint);
-    const cream = this.mat(PLANETBALL.white, 0.35);
-    // Rectangular goal mouth and pocket, aligned to the Rapier mouth strip and
-    // back-wall depth. Circular hoops looked like bogus colliders here.
+    const frameTint = this.texturedMat(`goalFrame:${mapId}:${key}`, () => new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.32, metalness: 0.06 })) as THREE.MeshStandardMaterial;
+    const mouthTint = this.texturedMat(`goalMouth:${mapId}:${key}`, () => new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.55, metalness: 0.03, transparent: true, opacity: 0.46 })) as THREE.MeshStandardMaterial;
+    this.goalTint[key].push(frameTint, mouthTint);
+    // The floor line is the scoring aperture. The surrounding cage is rendered
+    // separately from the exact shared collider rectangles.
     const mouth = this.mesh(g, new THREE.BoxGeometry(0.12, 0.05, halfGoal * 2), mouthTint, x, TURF_Y + 0.03, 0);
     mouth.receiveShadow = false;
     // Extend the board and textured turf through the complete physical pocket.
     // A goalie therefore remains visibly supported after crossing the line.
-    this.mesh(g, new THREE.BoxGeometry(depth, 0.24, halfGoal * 2), this.mat(theme.fieldBase, 0.85), pocketX, 0.82, 0);
+    this.mesh(
+      g,
+      this.geo('arenaFloorSlab:goal-pocket', () => new THREE.BoxGeometry(pocketFloor.width, 0.24, pocketFloor.depth)),
+      this.mat(theme.fieldBase, 0.85),
+      pocketFloor.x,
+      0.82,
+      pocketFloor.z
+    );
     const pocketTurf = new THREE.Mesh(
-      this.geo(`goalPocketTurf:${mapId}`, () => new THREE.PlaneGeometry(depth, halfGoal * 2)),
+      this.geo('arenaFloorTurf:goal-pocket', () => new THREE.PlaneGeometry(pocketFloor.width, pocketFloor.depth)),
       this.matCache.get(`turfSurface:${mapId}`)!
     );
     pocketTurf.rotation.x = -Math.PI / 2;
-    pocketTurf.position.set(pocketX, TURF_Y + 0.002, 0);
+    pocketTurf.position.set(pocketFloor.x, TURF_Y + 0.002, pocketFloor.z);
     pocketTurf.receiveShadow = true;
     g.add(pocketTurf);
-    const backPanel = this.mesh(g, new THREE.BoxGeometry(0.08, 1.34, halfGoal * 2 + 0.22), panelTint, backX, 1.78, 0);
-    backPanel.castShadow = false;
-    for (const z of [-halfGoal, halfGoal] as const) {
-      const sideNet = this.mesh(g, new THREE.BoxGeometry(depth, 1.68, 0.06), panelTint, pocketX, 1.78, z);
-      sideNet.castShadow = false;
-    }
-    // chunky posts with cream collars and finials aligned to the mouth edges
-    for (const s of [-1, 1] as const) {
-      this.mesh(g, new THREE.CylinderGeometry(0.17, 0.23, 1.9, 20), frameTint, x, 1.78, s * halfGoal, true);
-      this.mesh(g, new THREE.CylinderGeometry(0.3, 0.34, 0.2, 20), cream, x, 0.98, s * halfGoal, true);
-      this.mesh(g, new THREE.SphereGeometry(0.24, 20, 12), cream, x, 2.82, s * halfGoal, true);
-      this.mesh(g, new THREE.BoxGeometry(depth + 0.16, 0.16, 0.16), frameTint, pocketX, 1.15, s * halfGoal, true);
-      this.mesh(g, new THREE.BoxGeometry(depth + 0.16, 0.14, 0.12), frameTint, pocketX, 2.55, s * halfGoal, true);
-    }
-    // Front crossbar and rear uprights frame a roofless pocket. No mesh covers
-    // the interior, so players remain visible and selectable from above.
-    const bar = new THREE.Mesh(this.geo(`goalBar${halfGoal.toFixed(2)}`, () => new THREE.CylinderGeometry(0.14, 0.14, halfGoal * 2, 16)), frameTint);
-    bar.position.set(x, 2.62, 0); bar.rotation.x = Math.PI / 2; bar.castShadow = true; g.add(bar);
-    for (const s of [-1, 1] as const) {
-      this.mesh(g, new THREE.BoxGeometry(0.14, 1.4, 0.12), frameTint, backX, 1.78, s * halfGoal, true);
-    }
-    // translucent net ribs in the pocket; all render-only and safely outside
-    // the physics mouth strip/back wall.
-    for (let i = -3; i <= 3; i++) {
-      const z = (i / 3) * halfGoal * 0.82;
-      const rib = new THREE.Mesh(this.geo('goalNetRib', () => new THREE.CylinderGeometry(0.022, 0.022, 1.24, 8)), cream);
-      rib.position.set(backX + side * 0.02, 1.78, z);
-      rib.castShadow = false;
-      g.add(rib);
-    }
-    for (const y of [1.25, 1.62, 1.99, 2.36]) {
-      const cord = new THREE.Mesh(this.geo('goalNetCord', () => new THREE.CylinderGeometry(0.022, 0.022, halfGoal * 1.7, 8)), cream);
-      cord.position.set(backX + side * 0.03, y, 0);
-      cord.rotation.x = Math.PI / 2;
-      cord.castShadow = false;
-      g.add(cord);
-    }
     // inward chevrons mark the trigger line without implying circular physics.
     for (const zOff of [-halfGoal * 0.55, 0, halfGoal * 0.55]) {
       const chev = new THREE.Mesh(this.geo('goalChevron', () => new THREE.ConeGeometry(0.22, 0.5, 4)), frameTint);
@@ -677,23 +767,23 @@ export class BabbleLeague3DRenderer {
     }
     if (theme.gateStyle === 'sciFi') {
       for (const y of [1.28, 2.62]) {
-        this.mesh(g, new THREE.BoxGeometry(0.08, 0.08, halfGoal * 2.05), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.65 }), x - side * 0.08, y, 0);
+        this.mesh(g, new THREE.BoxGeometry(0.08, 0.08, pocketHalf * 1.8), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.65 }), backX - side * 0.04, y, 0);
       }
     } else if (theme.gateStyle === 'volcanic') {
       for (const s of [-1, 1] as const) {
-        const spike = this.mesh(g, new THREE.ConeGeometry(0.24, 0.72, 6), this.mat(0x1f0b08, 0.7, { flat: true, emissive: 0x3b1006 }), x + side * 0.22, 3.15, s * halfGoal, true);
+        const spike = this.mesh(g, new THREE.ConeGeometry(0.24, 0.72, 6), this.mat(0x1f0b08, 0.7, { flat: true, emissive: 0x3b1006 }), backX - side * 0.12, 3.15, s * pocketHalf * 0.82, true);
         spike.rotation.x = Math.PI;
       }
     } else if (theme.gateStyle === 'orbital') {
       for (const s of [-1, 1] as const) {
         const orbit = new THREE.Mesh(this.geo('goalOrbitalPostRing', () => new THREE.TorusGeometry(0.42, 0.035, 8, 40)), frameTint);
-        orbit.position.set(x, 1.78, s * halfGoal);
+        orbit.position.set(backX, 1.78, s * pocketHalf * 0.82);
         orbit.rotation.y = Math.PI / 2;
         orbit.castShadow = true;
         g.add(orbit);
       }
       const mouthOrbit = new THREE.Mesh(this.geo('goalOrbitalMouthRing', () => new THREE.TorusGeometry(1, 0.025, 8, 64)), mouthTint);
-      mouthOrbit.position.set(x - side * 0.08, TURF_Y + 0.08, 0);
+      mouthOrbit.position.set(backX - side * 0.04, TURF_Y + 0.08, 0);
       mouthOrbit.rotation.y = Math.PI / 2;
       mouthOrbit.scale.set(halfGoal * 0.16, halfGoal * 0.82, halfGoal * 0.82);
       mouthOrbit.castShadow = false;
@@ -712,18 +802,21 @@ export class BabbleLeague3DRenderer {
       : { left: theme.leftGoal, right: theme.rightGoal };
     for (const m of this.goalTint.left) { m.color.setHex(cols.left); m.emissive.setHex(swapped ? cols.left : 0x000000); m.emissiveIntensity = swapped ? 0.45 : 0; }
     for (const m of this.goalTint.right) { m.color.setHex(cols.right); m.emissive.setHex(swapped ? cols.right : 0x000000); m.emissiveIntensity = swapped ? 0.45 : 0; }
+    for (const m of this.goalLineTint.left) m.color.setHex(cols.left);
+    for (const m of this.goalLineTint.right) m.color.setHex(cols.right);
     if (!swapped) return;
     const t = performance.now() / 1000;
     const metrics = goalVisualMetrics();
     const halfGoal = metrics.mouthHalfHeight;
+    const pocketHalf = metrics.collisionHalfHeight;
     const pulse = 0.54 + Math.sin(t * 5) * 0.22;
     for (const side of [-1, 1] as const) {
       const lineX = side < 0 ? metrics.leftGoalLineX : metrics.rightGoalLineX;
       const color = side < 0 ? cols.left : cols.right;
       const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: pulse, depthWrite: false });
       this.mesh(this.dynamic, this.geo('goalSwapMouthStrip', () => new THREE.BoxGeometry(0.1, 0.08, 1)), mat, lineX, TURF_Y + 0.09, 0).scale.z = halfGoal * 2;
-      this.mesh(this.dynamic, this.geo('goalSwapBackStrip', () => new THREE.BoxGeometry(0.08, 0.08, 1)), mat, lineX + side * metrics.depth, TURF_Y + 0.13, 0).scale.z = halfGoal * 2 + 0.2;
-      for (const z of [-halfGoal, halfGoal] as const) {
+      this.mesh(this.dynamic, this.geo('goalSwapBackStrip', () => new THREE.BoxGeometry(0.08, 0.08, 1)), mat, lineX + side * metrics.depth, TURF_Y + 0.13, 0).scale.z = pocketHalf * 2;
+      for (const z of [metrics.collisionTopZ, metrics.collisionBottomZ] as const) {
         this.mesh(this.dynamic, this.geo('goalSwapSideStrip', () => new THREE.BoxGeometry(1, 0.06, 0.08)), mat, lineX + side * metrics.depth / 2, TURF_Y + 0.11, z).scale.x = metrics.depth;
       }
     }
@@ -739,14 +832,27 @@ export class BabbleLeague3DRenderer {
     const radii = bumperVisualRadii(mapId, false);
     const sx = Math.sign(x) || 1;
     const sz = Math.sign(z) || 1;
+    const colliderVisual = bumperColliderVisualProfile(mapId, false);
+    const colliderMaterial = this.texturedMat(`bumperCollider:${mapId}:normal`, () => new THREE.LineBasicMaterial({
+      color: theme.bumperCap,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false
+    }));
+    const collider = new THREE.LineSegments(
+      this.geo(`bumperCollider:${mapId}:normal`, () => this.bumperColliderOutlineGeometry(colliderVisual.radius, colliderVisual.height)),
+      colliderMaterial
+    );
+    collider.position.set(x, TURF_Y + colliderVisual.height / 2, z);
+    g.add(collider);
     // Round contact socket only: rectangular plates read as stray artifacts
     // around circular bumpers, especially near the corner rim.
-    this.mesh(g, new THREE.CylinderGeometry(radii.socket, radii.socket, 0.14, 48), this.mat(theme.bumperCap, 0.42), x, 1.08, z, true);
-    this.mesh(g, new THREE.CylinderGeometry(radii.base, radii.base, 0.18, 48), this.mat(theme.bumperBase, 0.55), x, 1.14, z, true);
-    this.mesh(g, new THREE.CylinderGeometry(radii.collider * 0.92, radii.base, 0.28, 44), this.mat(theme.frameDark, 0.5), x, 1.24, z, true);
-    this.mesh(g, new THREE.CylinderGeometry(radii.drum * 0.94, radii.drum, 0.42, 44), this.mat(theme.bumperDrum, 0.4, { emissive: mapId === 'moon' ? 0x12334a : mapId === 'volcano' ? 0x54140c : 0 }), x, 1.56, z, true);
-    this.mesh(g, new THREE.CylinderGeometry(radii.cap, radii.cap, 0.1, 44), this.mat(theme.plinth, 0.35), x, 1.8, z, true);
-    this.mesh(g, new THREE.SphereGeometry(radii.dome, 28, 16), this.mat(theme.bumperCap, 0.3, { emissive: mapId === 'volcano' ? 0x7a2e08 : 0x12304a }), x, 1.9, z, true);
+    this.mesh(g, this.geo(`bumperSocket:${mapId}`, () => new THREE.CylinderGeometry(radii.socket, radii.socket, 0.14, 48)), this.mat(theme.bumperCap, 0.42), x, 1.08, z, true);
+    this.mesh(g, this.geo(`bumperBase:${mapId}`, () => new THREE.CylinderGeometry(radii.base, radii.base, 0.18, 48)), this.mat(theme.bumperBase, 0.55), x, 1.14, z, true);
+    this.mesh(g, this.geo(`bumperCollar:${mapId}`, () => new THREE.CylinderGeometry(radii.collider * 0.92, radii.base, 0.28, 44)), this.mat(theme.frameDark, 0.5), x, 1.24, z, true);
+    this.mesh(g, this.geo(`bumperDrum:${mapId}`, () => new THREE.CylinderGeometry(radii.drum * 0.94, radii.drum, 0.42, 44)), this.mat(theme.bumperDrum, 0.4, { emissive: mapId === 'moon' ? 0x12334a : mapId === 'volcano' ? 0x54140c : 0 }), x, 1.56, z, true);
+    this.mesh(g, this.geo(`bumperCap:${mapId}`, () => new THREE.CylinderGeometry(radii.cap, radii.cap, 0.1, 44)), this.mat(theme.plinth, 0.35), x, 1.8, z, true);
+    this.mesh(g, this.geo(`bumperDome:${mapId}`, () => new THREE.SphereGeometry(radii.dome, 28, 16)), this.mat(theme.bumperCap, 0.3, { emissive: mapId === 'volcano' ? 0x7a2e08 : 0x12304a }), x, 1.9, z, true);
     const rimRing = new THREE.Mesh(this.geo(`bumperSocketRing:${mapId}`, () => new THREE.TorusGeometry(1, 0.035, 8, 48)), this.mat(theme.frameDark, 0.42));
     rimRing.position.set(x, TURF_Y + 0.08, z);
     rimRing.rotation.x = Math.PI / 2;
@@ -754,11 +860,11 @@ export class BabbleLeague3DRenderer {
     g.add(rimRing);
     if (mapId === 'moon') {
       for (const a of [Math.PI * 0.18, Math.PI * 0.86, Math.PI * 1.54]) {
-        this.mesh(g, new THREE.SphereGeometry(0.07, 12, 8), this.mat(theme.bumperDrum, 0.35, { emissive: 0x12334a }), x + Math.cos(a) * radii.collider * 0.82, TURF_Y + 0.12, z + Math.sin(a) * radii.collider * 0.82);
+        this.mesh(g, this.geo('moonBumperStud', () => new THREE.SphereGeometry(0.07, 12, 8)), this.mat(theme.bumperDrum, 0.35, { emissive: 0x12334a }), x + Math.cos(a) * radii.collider * 0.82, TURF_Y + 0.12, z + Math.sin(a) * radii.collider * 0.82);
       }
     } else if (mapId === 'volcano') {
       for (const a of [0, Math.PI * 0.67, Math.PI * 1.34]) {
-        const rock = this.mesh(g, new THREE.ConeGeometry(0.18, 0.45, 5), this.mat(0x1f0b08, 0.76, { flat: true }), x + Math.cos(a) * radii.socket, 1.35, z + Math.sin(a) * radii.socket, true);
+        const rock = this.mesh(g, this.geo('volcanoBumperRock', () => new THREE.ConeGeometry(0.18, 0.45, 5)), this.mat(0x1f0b08, 0.76, { flat: true }), x + Math.cos(a) * radii.socket, 1.35, z + Math.sin(a) * radii.socket, true);
         rock.rotation.x = Math.PI;
       }
     } else if (mapId === 'saturn') {
@@ -1175,6 +1281,31 @@ export class BabbleLeague3DRenderer {
     return geo;
   }
 
+  private bumperColliderOutlineGeometry(radius: number, height: number) {
+    const segments = 16;
+    const positions: number[] = [];
+    const halfHeight = height / 2;
+    for (let index = 0; index < segments; index++) {
+      const angle = index * Math.PI * 2 / segments;
+      const next = (index + 1) * Math.PI * 2 / segments;
+      for (const y of [-halfHeight, halfHeight]) {
+        positions.push(
+          Math.cos(angle) * radius, y, Math.sin(angle) * radius,
+          Math.cos(next) * radius, y, Math.sin(next) * radius
+        );
+      }
+      if (index % 4 === 0) {
+        positions.push(
+          Math.cos(angle) * radius, -halfHeight, Math.sin(angle) * radius,
+          Math.cos(angle) * radius, halfHeight, Math.sin(angle) * radius
+        );
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    return geometry;
+  }
+
   // -- bumper hit FX ------------------------------------------------------
   private addBumperFx(state: GameState) {
     const now = Date.now();
@@ -1183,7 +1314,20 @@ export class BabbleLeague3DRenderer {
     if (big) {
       const t = performance.now() / 1000;
       const radii = bumperVisualRadii(map.id, true);
+      const colliderVisual = bumperColliderVisualProfile(map.id, true);
+      const colliderMaterial = this.texturedMat(`bumperCollider:${map.id}:super`, () => new THREE.LineBasicMaterial({
+        color: map.theme.accent,
+        transparent: true,
+        opacity: 0.58,
+        depthWrite: false
+      }));
       for (const w of mapBumperWorldPositions(map.id)) {
+        const collider = new THREE.LineSegments(
+          this.geo(`bumperCollider:${map.id}:super`, () => this.bumperColliderOutlineGeometry(colliderVisual.radius, colliderVisual.height)),
+          colliderMaterial
+        );
+        collider.position.set(w.x, TURF_Y + colliderVisual.height / 2, w.z);
+        this.dynamic.add(collider);
         // persistent super-charged bumper shell: enlarged glowing drum + dome
         this.mesh(this.dynamic, this.geo(`bigBumperBase:${map.id}`, () => new THREE.CylinderGeometry(radii.base, radii.socket, 0.34, 40)), this.mat(map.theme.bumperBase, 0.5), w.x, 1.2, w.z, true);
         this.mesh(this.dynamic, this.geo(`bigBumperDrum:${map.id}`, () => new THREE.CylinderGeometry(radii.drum * 0.96, radii.drum, 0.52, 40)), this.mat(map.theme.bumperDrum, 0.35, { emissive: map.theme.bumperBase }), w.x, 1.6, w.z, true);

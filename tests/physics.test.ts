@@ -4,7 +4,7 @@
 // full 8-betabot scripted match completing by goal.
 import { describe, expect, it } from 'vitest';
 import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, resetGame, startGame, stepGame } from '../shared/game';
-import { clampMotorParameter, clampRestitution, freePhysics, stepPhysics } from '../shared/physics';
+import { clampRestitution, freePhysics, stepPhysics } from '../shared/physics';
 import { BUMPERS, FIELD, GameState, MapId, PlayerSide, Vec } from '../shared/types';
 import { BALL_REST_HEIGHT, babbleRestHeight, ballRestHeight } from '../shared/airborne';
 
@@ -80,8 +80,8 @@ describe('Rapier physics: goals and gates', () => {
       const angle = (k / 16) * Math.PI * 2;
       s.ball.pos = { x: FIELD.width / 2, y: FIELD.height / 2 };
       s.ball.vel = { x: Math.cos(angle) * 1250, y: Math.sin(angle) * 1250 };
-      // Transient bounds allow brief penetration into the thick (50px) walls
-      // while restitution resolves a max-speed impact; never past a wall.
+      // Transient bounds allow brief penetration while restitution resolves a
+      // max-speed impact against the thin 20px wall; never past the wall.
       run(s, 320, 1000, () => {
         expect(s.ball.pos.x).toBeGreaterThan(-FIELD.goalDepth - s.ball.radius - 40);
         expect(s.ball.pos.x).toBeLessThan(FIELD.width + FIELD.goalDepth + s.ball.radius + 40);
@@ -147,9 +147,49 @@ describe('Rapier physics: goals and gates', () => {
       expect(b.pos.x).toBeGreaterThan(-2);
     }
   });
+
+  it('has no hidden goal-pocket wing protruding into the field', () => {
+    for (const y of [FIELD.goalY - 55, FIELD.goalY + FIELD.goalHeight + 55]) {
+      const s = setup();
+      park(s);
+      s.ball.pos = { x: 90, y };
+      s.ball.vel = { x: -320, y: 0 };
+      let minimumX = s.ball.pos.x;
+      for (let i = 0; i < 20; i++) {
+        stepPhysics(s, 1 / 30);
+        minimumX = Math.min(minimumX, s.ball.pos.x);
+      }
+      expect(minimumX).toBeLessThanOrEqual(s.ball.radius + 5);
+    }
+  });
+
+  it('lets a real ball trajectory cross both visible aperture edges', () => {
+    for (const y of [FIELD.goalY + 2, FIELD.goalY + FIELD.goalHeight - 2]) {
+      const s = setup(1);
+      park(s);
+      s.ball.pos = { x: 80, y };
+      s.ball.vel = { x: -700, y: 0 };
+      run(s, 20);
+      expect(s.score.right).toBe(1);
+    }
+  });
 });
 
 describe('Rapier physics: walls and body collisions', () => {
+  it('contains a ball travelling at super-bumper speed behind a thin visible wall', () => {
+    const s = setup();
+    park(s);
+    // Keep the wall probe outside both the goal aperture and the strengthened
+    // corner bumper footprint so this test isolates thin-wall CCD.
+    s.ball.pos = { x: 420, y: 160 };
+    s.ball.vel = { x: -4500, y: 0 };
+    for (let i = 0; i < 4; i++) {
+      stepPhysics(s, 1 / 30);
+      expect(s.ball.pos.x).toBeGreaterThanOrEqual(s.ball.radius - 1);
+    }
+    expect(s.ball.vel.x).toBeGreaterThan(0);
+  });
+
   it('reflects the ball off the top wall', () => {
     const s = setup();
     park(s);
@@ -306,12 +346,10 @@ describe('Rapier physics: walls and body collisions', () => {
 });
 
 describe('Rapier physics: power-play interplay', () => {
-  it('clamps hostile physical material and motor overrides to valid ranges', () => {
+  it('clamps hostile physical material overrides to valid ranges', () => {
     expect(clampRestitution(-0.25)).toBe(0);
     expect(clampRestitution(0.75)).toBe(0.75);
     expect(clampRestitution(1.7)).toBe(1);
-    expect(clampMotorParameter(-100)).toBe(0);
-    expect(clampMotorParameter(1800)).toBe(1800);
   });
   it('replays authoritative rigid-body state tick-for-tick deterministically', () => {
     const make = () => {
@@ -333,7 +371,7 @@ describe('Rapier physics: power-play interplay', () => {
     }
   });
 
-  it('replays spring-motor bumper contacts deterministically', () => {
+  it('replays planar bumper contacts deterministically', () => {
     const make = () => {
       const s = setup();
       park(s);
@@ -350,7 +388,95 @@ describe('Rapier physics: power-play interplay', () => {
     }
   });
 
-  it('clears compressed bumper spring state at the turn boundary', () => {
+  it('keeps airborne bumper contacts planar and boosts only once per pass', () => {
+    const makeBall = (contact: boolean) => {
+      const s = setup(3, 'moon');
+      park(s);
+      s.ball.pos = { x: 670, y: contact ? 190 : 310 };
+      s.ball.vel = { x: -1500, y: 0 };
+      s.ball.height = 1.8;
+      s.ball.verticalVelocity = 0;
+      return s;
+    };
+    const contactBall = makeBall(true);
+    const controlBall = makeBall(false);
+    let ballHits = 0;
+    for (let i = 0; i < 8; i++) {
+      ballHits += stepPhysics(contactBall, 1 / 30).bumperHits.length;
+      stepPhysics(controlBall, 1 / 30);
+    }
+    expect(ballHits).toBe(1);
+    expect(contactBall.ball.height).toBeCloseTo(controlBall.ball.height, 6);
+    expect(contactBall.ball.verticalVelocity).toBeCloseTo(controlBall.ball.verticalVelocity, 6);
+
+    const makeBabble = (contact: boolean) => {
+      const s = setup(3, 'moon');
+      park(s, ['left-1']);
+      const babble = s.babbles.find(candidate => candidate.id === 'left-1')!;
+      babble.pos = { x: 600, y: contact ? 190 : 310 };
+      babble.vel = { x: -300, y: 0 };
+      babble.height = 1.4;
+      babble.verticalVelocity = 5;
+      s.ball.pos = { x: 900, y: 310 };
+      return { s, babble };
+    };
+    const contactBabble = makeBabble(true);
+    const controlBabble = makeBabble(false);
+    const babbleResult = stepPhysics(contactBabble.s, 1 / 30);
+    stepPhysics(controlBabble.s, 1 / 30);
+    expect(babbleResult.bumperHits).toHaveLength(1);
+    expect(contactBabble.babble.height).toBeCloseTo(controlBabble.babble.height, 6);
+    expect(contactBabble.babble.verticalVelocity).toBeCloseTo(controlBabble.babble.verticalVelocity, 6);
+  });
+
+  it('preserves a rising ball vertical trajectory through a bumper hit', () => {
+    const make = (contact: boolean) => {
+      const s = setup(3, 'moon');
+      park(s);
+      s.ball.pos = { x: 606, y: contact ? 190 : 310 };
+      s.ball.vel = { x: -300, y: 0 };
+      s.ball.height = 1.4;
+      s.ball.verticalVelocity = 8;
+      return s;
+    };
+    const contact = make(true);
+    const control = make(false);
+
+    expect(stepPhysics(contact, 1 / 30).bumperHits).toHaveLength(1);
+    stepPhysics(control, 1 / 30);
+
+    expect(contact.ball.height).toBeCloseTo(control.ball.height, 6);
+    expect(contact.ball.verticalVelocity).toBeCloseTo(control.ball.verticalVelocity, 6);
+  });
+
+  it('sweeps every map bumper so a max-speed ball cannot tunnel through', () => {
+    const s = setup(3, 'moon');
+    park(s);
+    s.ball.pos = { x: 750, y: 190 };
+    s.ball.vel = { x: -9000, y: 0 };
+
+    const result = stepPhysics(s, 1 / 30);
+
+    expect(result.bumperHits).toContainEqual({ x: 550, y: 190 });
+    expect(s.ball.pos.x).toBeGreaterThan(550);
+    expect(s.ball.vel.x).toBeGreaterThan(0);
+  });
+
+  it('lets a ball above the visible bumper column pass without an invisible hit', () => {
+    const s = setup(3, 'moon');
+    park(s);
+    s.ball.pos = { x: 606, y: 190 };
+    s.ball.vel = { x: -300, y: 0 };
+    s.ball.height = 5.6;
+    s.ball.verticalVelocity = 0;
+
+    const result = stepPhysics(s, 1 / 30);
+
+    expect(result.bumperHits).toHaveLength(0);
+    expect(s.ball.vel.x).toBeLessThan(0);
+  });
+
+  it('does not carry bumper contact state across turn boundaries', () => {
     const resetProbe = (s: GameState) => {
       s.ball.pos = { x: BUMPERS[0].x + 70, y: BUMPERS[0].y };
       s.ball.vel = { x: -220, y: 0 };
@@ -365,7 +491,7 @@ describe('Rapier physics: power-play interplay', () => {
     const carried = setup();
     park(carried);
     resetProbe(carried);
-    for (let i = 0; i < 4; i++) stepPhysics(carried, 1 / 30); // compress the plunger
+    for (let i = 0; i < 4; i++) stepPhysics(carried, 1 / 30);
     carried.turn += 1;
     freePhysics(carried);
     park(carried);
@@ -382,7 +508,7 @@ describe('Rapier physics: power-play interplay', () => {
     }
   });
 
-  it('clears compressed bumper state across reset and rematch at turn one', () => {
+  it('rebuilds fixed bumper contacts across reset and rematch at turn one', () => {
     const resetProbe = (s: GameState) => {
       park(s);
       s.phase = 'resolving';

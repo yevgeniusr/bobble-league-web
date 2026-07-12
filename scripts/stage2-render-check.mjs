@@ -3,8 +3,9 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { waitPlayerIdentity } from './browser-smoke-helpers.mjs';
 
-const PORT = process.env.STAGE2_PORT || String(3700 + (process.pid % 400));
+const PORT = process.env.STAGE2_PORT || String(12000 + (process.pid % 1000));
 const url = `http://127.0.0.1:${PORT}`;
 const mapId = process.env.BABBLE_MAP || 'stadium';
 const displayedRoomCode = () => document.querySelector('.roomCodeValue')?.textContent?.trim() || document.querySelector('.menuRoomCode')?.textContent?.trim() || '';
@@ -28,10 +29,11 @@ try {
     if (m.type() === 'error' && !/Failed to load resource: the server responded with a status of 400/.test(m.text())) errors.push('console: ' + m.text());
   });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await waitPlayerIdentity(page);
   if (await page.locator('select.mapSelect').count()) await page.locator('select.mapSelect').first().selectOption(mapId);
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /create room/i.test(b.textContent || ''))?.click());
+  await page.getByRole('button', { name: /create room/i }).click();
   await waitRoomCode(page);
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /start match/i.test(b.textContent || ''))?.click());
+  await page.getByRole('button', { name: /start match/i }).click();
   await page.waitForFunction(() => /planning/.test(document.body.innerText), null, { timeout: 10000 });
   await delay(4000); // let the rAF animation pump run
   const fallback = await page.locator('.renderFallback').count();
@@ -46,5 +48,5 @@ try {
   const out = { ok: fallback === 0 && errors.length === 0, mapId, fallback, errors: errors.slice(0, 5), hasControlsHint: /drag back to aim/i.test(hudText) };
   console.log(JSON.stringify(out, null, 2));
   await browser.close();
-  if (!out.ok) process.exit(1);
+  if (!out.ok) process.exitCode = 1;
 } finally { server.kill('SIGTERM'); }

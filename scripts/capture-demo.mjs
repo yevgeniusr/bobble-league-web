@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { waitPlayerIdentity } from './browser-smoke-helpers.mjs';
 import { writeFile } from 'node:fs/promises';
 const url = process.env.BABBLE_URL || 'http://127.0.0.1:3117';
 const out = process.env.OUT || 'tmp/our-gameplay.png';
@@ -8,6 +9,7 @@ const errors = [];
 page.on('pageerror', e => errors.push(String(e)));
 page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 await page.goto(url, { waitUntil: 'domcontentloaded' });
+await waitPlayerIdentity(page);
 await page.locator('button', { hasText: /create room/i }).click({ force: true, timeout: 8000 });
 await page.waitForTimeout(1000);
 await page.evaluate(() => {

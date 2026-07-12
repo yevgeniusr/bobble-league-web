@@ -1,29 +1,12 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, MAPS, MAP_IDS } from '../shared/types';
-import { arenaSkylineLayout, arenaSkylinePositions, authoritativeBallQuaternion, ballRenderElevation, ballVisualProfile, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, cameraLayoutForViewport, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, resourcePylonLayout, resourcePylonPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { ARENA_BARRIER_SCREEN_PRIMITIVE, ARENA_FRAME_SCREEN_OPACITY, ARENA_GOAL_SCREEN_OPACITY, arenaBarrierScreenObject, arenaBarrierVisualProfile, arenaBarrierWorldLayout, arenaCameraFitEnvelope, arenaFloorWorldLayout, arenaSkylineLayout, arenaSkylinePositions, authoritativeBallQuaternion, ballRenderElevation, ballVisualProfile, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperColliderVisualProfile, bumperVisualFootprint, bumperVisualRadii, cameraLayoutForViewport, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, resourcePylonLayout, resourcePylonPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { ARENA_WALL_HEIGHT } from '../shared/arena';
 import { BALL_REST_HEIGHT } from '../shared/airborne';
 
 function playableEnvelope(): THREE.Vector3[] {
-  const halfFieldX = FIELD.width / 100;
-  const halfFieldZ = FIELD.height / 100;
-  const goalBackX = halfFieldX + fieldRadiusToWorld(FIELD.goalDepth);
-  const goalTopZ = fieldToWorld({ x: 0, y: FIELD.goalY }).z;
-  const goalBottomZ = fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight }).z;
-  const envelope: THREE.Vector3[] = [];
-
-  for (const x of [-halfFieldX, halfFieldX]) {
-    for (const z of [-halfFieldZ, halfFieldZ]) {
-      envelope.push(new THREE.Vector3(x, 1.02, z), new THREE.Vector3(x, 3, z));
-    }
-  }
-  for (const x of [-goalBackX, goalBackX]) {
-    for (const z of [goalTopZ, goalBottomZ]) {
-      envelope.push(new THREE.Vector3(x, 1.02, z), new THREE.Vector3(x, 3, z));
-    }
-  }
-
-  return envelope;
+  return arenaCameraFitEnvelope();
 }
 
 function projectedEnvelope(width: number, height: number): THREE.Vector3[] {
@@ -47,15 +30,16 @@ describe('3D renderer coordinate mapping', () => {
     expect(fieldRadiusToWorld(50)).toBe(1);
   });
 
-  it('preserves the established camera at the 16:9 desktop reference', () => {
-    expect(cameraLayoutForViewport(1600, 900)).toEqual({
-      fov: 42,
-      position: { x: 0, y: 16.2, z: 14.4 },
-      target: { x: 0, y: 0.4, z: 0 }
-    });
+  it('preserves the established camera angle while fitting the collider skyline', () => {
+    const layout = cameraLayoutForViewport(1600, 900);
+    expect(layout.fov).toBe(42);
+    expect(layout.target).toEqual({ x: 0, y: 0.4, z: 0 });
+    expect(layout.position.y).toBeGreaterThanOrEqual(16.2);
+    expect(layout.position.z).toBeGreaterThanOrEqual(14.4);
   });
 
   it.each([
+    ['16:9 desktop', 1600, 900, 0.98],
     ['16:10 desktop', 1440, 900, 0.98],
     ['4:3 tablet', 1024, 768, 0.98],
     ['square', 844, 844, 0.98],
@@ -178,6 +162,16 @@ describe('3D renderer coordinate mapping', () => {
       expect(big.drum).toBeLessThanOrEqual(big.collider * 1.04);
       expect(normal.socket).toBeLessThanOrEqual(normal.collider + 0.22);
       expect(big.socket).toBeLessThanOrEqual(big.collider + 0.24);
+      expect(bumperColliderVisualProfile(mapId, false)).toEqual({
+        radius: normal.collider,
+        height: ARENA_WALL_HEIGHT,
+        wireframe: true
+      });
+      expect(bumperColliderVisualProfile(mapId, true)).toEqual({
+        radius: big.collider,
+        height: ARENA_WALL_HEIGHT,
+        wireframe: true
+      });
     }
   });
 
@@ -190,8 +184,47 @@ describe('3D renderer coordinate mapping', () => {
     expect(metrics.mouthHalfHeight).toBeCloseTo(fieldRadiusToWorld(FIELD.goalHeight) / 2);
     expect(metrics.depth).toBeCloseTo(fieldRadiusToWorld(FIELD.goalDepth));
     expect(metrics.pocketFloorDepth).toBeCloseTo(metrics.depth);
-    expect(metrics.pocketFloorWidth).toBeCloseTo(fieldRadiusToWorld(FIELD.goalHeight));
+    expect(metrics.collisionTopZ).toBeCloseTo(fieldToWorld({ x: 0, y: FIELD.goalY - FIELD.ballRadius }).z);
+    expect(metrics.collisionBottomZ).toBeCloseTo(fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight + FIELD.ballRadius }).z);
+    expect(metrics.pocketFloorWidth).toBeCloseTo(fieldRadiusToWorld(FIELD.goalHeight + FIELD.ballRadius * 2));
     expect(metrics.sideWallLength).toBeCloseTo(metrics.depth);
+  });
+
+  it('exposes a visible world-space surface for every authoritative arena barrier', () => {
+    const barriers = arenaBarrierWorldLayout();
+    const floors = arenaFloorWorldLayout();
+    expect(barriers).toHaveLength(12);
+    expect(new Set(barriers.map(barrier => barrier.id)).size).toBe(barriers.length);
+    expect(floors.map(floor => floor.id).sort()).toEqual(['field', 'left-goal-pocket', 'right-goal-pocket']);
+    for (const barrier of barriers) {
+      expect([barrier.x, barrier.z, barrier.width, barrier.depth, barrier.height].every(Number.isFinite)).toBe(true);
+      expect(barrier.width).toBeGreaterThan(0);
+      expect(barrier.depth).toBeGreaterThan(0);
+      expect(barrier.height).toBe(5);
+    }
+
+    const leftUpperPocket = barriers.find(barrier => barrier.id === 'left-goal-upper')!;
+    expect(leftUpperPocket.width).toBeCloseTo(fieldRadiusToWorld(FIELD.goalDepth));
+    expect(leftUpperPocket.z + leftUpperPocket.depth / 2).toBeCloseTo(fieldToWorld({ x: 0, y: FIELD.goalY - FIELD.ballRadius }).z);
+    expect(ARENA_BARRIER_SCREEN_PRIMITIVE).toBe('lineSegments');
+    expect(ARENA_FRAME_SCREEN_OPACITY).toBeGreaterThanOrEqual(0.1);
+    expect(ARENA_GOAL_SCREEN_OPACITY).toBeGreaterThanOrEqual(ARENA_FRAME_SCREEN_OPACITY);
+    for (const barrier of barriers) {
+      expect(arenaBarrierVisualProfile(barrier)).toEqual({
+        baseHeight: 0.6,
+        screenHeight: 4.4,
+        primitive: 'lineSegments'
+      });
+    }
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    const geometry = new THREE.EdgesGeometry(box);
+    box.dispose();
+    const material = new THREE.LineBasicMaterial();
+    const screen = arenaBarrierScreenObject(geometry, material, ARENA_BARRIER_SCREEN_PRIMITIVE);
+    expect(screen).toBeInstanceOf(THREE.LineSegments);
+    expect(screen).not.toBeInstanceOf(THREE.Mesh);
+    geometry.dispose();
+    material.dispose();
   });
 
   it('derives ball roll rotation from authoritative spin so it matches travel direction', () => {

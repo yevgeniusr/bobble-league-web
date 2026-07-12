@@ -19,12 +19,12 @@ const envNumber = (name: string, fallback: number) => {
 export const PHYSICS_CONFIG = {
   babbleImpulseScale: envNumber('BABBLE_IMPULSE_SCALE', 0.9),
   settleSpeed: envNumber('BABBLE_SETTLE_SPEED', 24),
-  // Bumpers use valid material restitution plus a physical prismatic motor.
+  // Bumpers add one deterministic planar delta-speed on contact. Super power
+  // is derived from the normal value so the competitive 5x contract cannot
+  // drift through a second tuning knob.
   bumperRestitution: envNumber('BABBLE_BUMPER_RESTITUTION', 0.98),
-  bigBumperRestitution: envNumber('BABBLE_BIG_BUMPER_RESTITUTION', 1),
-  bumperMotorStiffness: envNumber('BABBLE_BUMPER_MOTOR_STIFFNESS', 8000),
-  bigBumperMotorStiffness: envNumber('BABBLE_BIG_BUMPER_MOTOR_STIFFNESS', 30000),
-  bumperMotorDamping: envNumber('BABBLE_BUMPER_MOTOR_DAMPING', 18),
+  bumperPlanarDeltaSpeed: envNumber('BABBLE_BUMPER_PLANAR_DELTA_SPEED', 400),
+  superBumperPowerMultiplier: 5,
 
   boostPadAccel: envNumber('BABBLE_BOOST_PAD_ACCEL', 4300),
 

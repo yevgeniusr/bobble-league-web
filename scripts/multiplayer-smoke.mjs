@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { waitPlayerIdentity } from './browser-smoke-helpers.mjs';
 
 const url = process.env.BABBLE_URL || 'http://127.0.0.1:3117';
 const mapId = process.env.BABBLE_MAP || 'stadium';
@@ -39,20 +40,21 @@ try {
   }
 
   await host.goto(url, { waitUntil: 'domcontentloaded' });
+  await waitPlayerIdentity(host);
   if (await host.locator('select.mapSelect').count()) await host.locator('select.mapSelect').first().selectOption(mapId);
-  await host.evaluate(() => [...document.querySelectorAll('button')].find(b => /create room/i.test(b.textContent || ''))?.click());
+  await host.getByRole('button', { name: /create room/i }).click();
   const roomCode = await waitRoomCode(host);
   if (!/^[A-Z0-9]{4,8}$/.test(roomCode)) throw new Error(`Invalid displayed room code: ${roomCode}`);
 
   await guest.goto(url, { waitUntil: 'domcontentloaded' });
-  if (await guest.locator('input.codeInput').count()) {
-    await guest.locator('input.codeInput').fill(roomCode);
-    await guest.evaluate(() => [...document.querySelectorAll('button')].find(b => /^join room$/i.test((b.textContent || '').trim()))?.click());
-  }
+  await waitPlayerIdentity(guest);
+  await guest.getByRole('tab', { name: 'Join room' }).click();
+  await guest.locator('input.codeInput').fill(roomCode);
+  await guest.getByRole('button', { name: /^join room/i }).click();
   const guestCode = await waitRoomCode(guest);
   if (guestCode !== roomCode) throw new Error(`Guest joined ${guestCode}, expected ${roomCode}`);
 
-  await host.evaluate(() => [...document.querySelectorAll('button')].find(b => /start match/i.test(b.textContent || ''))?.click());
+  await host.getByRole('button', { name: /start match/i }).click();
   const hostText = await waitMatchPhase(host);
   const guestText = await waitMatchPhase(guest);
   if (!hostText.includes(roomCode) || !guestText.includes(roomCode)) throw new Error('Room code not visible after start');

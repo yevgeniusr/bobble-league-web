@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { waitPlayerIdentity } from './browser-smoke-helpers.mjs';
 
 // port outside box-control-check's dynamic 3200-3599 range to avoid stale-server collisions
 const PORT = process.env.HUD_PORT || '3699';
@@ -16,6 +17,7 @@ try {
   page.on('crash', () => console.error('PAGE CRASHED (renderer/GPU process died)'));
   page.on('console', m => { if (m.type() === 'error') console.error('console:', m.text()); });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await waitPlayerIdentity(page);
   await page.locator('button', { hasText: /create room/i }).click({ force: true, timeout: 10000, noWaitAfter: true });
   // waitForSelector('.roomCodeValue', visible) can flake here (tiny inline <b>),
   // and this is only a screenshot helper — the room chip text is proof enough.

@@ -135,7 +135,7 @@ export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano', 'saturn'
 export type MapPhysicsMultipliers = {
   babbleImpulseScale: number;
   settleSpeed: number;
-  bigBumperRestitution: number;
+  bumperPower: number;
   boostPadAccel: number;
   babbleDragPerTick: number;
   ballDragPerTick: number;
@@ -186,7 +186,7 @@ export type MapConfig = {
 const PHYSICS_1X: MapPhysicsMultipliers = {
   babbleImpulseScale: 1,
   settleSpeed: 1,
-  bigBumperRestitution: 1,
+  bumperPower: 1,
   boostPadAccel: 1,
   babbleDragPerTick: 1,
   ballDragPerTick: 1,
@@ -306,7 +306,7 @@ export const MAPS: Record<MapId, MapConfig> = {
       ...PHYSICS_1X,
       babbleImpulseScale: 0.88,
       settleSpeed: 0.75,
-      bigBumperRestitution: 1.04,
+      bumperPower: 1.04,
       boostPadAccel: 0.9,
       babbleDragPerTick: 1.06,
       ballDragPerTick: 1.05,
@@ -362,7 +362,7 @@ export const MAPS: Record<MapId, MapConfig> = {
       ...PHYSICS_1X,
       babbleImpulseScale: 0.98,
       settleSpeed: 0.9,
-      bigBumperRestitution: 1.08,
+      bumperPower: 1.08,
       boostPadAccel: 1.18,
       babbleDragPerTick: 1.038,
       ballDragPerTick: 1.025,
@@ -418,7 +418,7 @@ export const MAPS: Record<MapId, MapConfig> = {
       ...PHYSICS_1X,
       babbleImpulseScale: 0.86,
       settleSpeed: 0.82,
-      bigBumperRestitution: 0.98,
+      bumperPower: 0.98,
       boostPadAccel: 0.92,
       babbleDragPerTick: 1.045,
       ballDragPerTick: 1.04,
@@ -441,7 +441,7 @@ export const MAPS: Record<MapId, MapConfig> = {
     physics: {
       ...PHYSICS_1X,
       babbleImpulseScale: 0.98,
-      settleSpeed: 2.2, bigBumperRestitution: 0.96,
+      settleSpeed: 2.2, bumperPower: 0.96,
       boostPadAccel: 0.95,
       babbleDragPerTick: 1.045, ballDragPerTick: 1.045, beachBallDragPerTick: 1.02,
       babbleRestitution: 0.95, ballRestitution: 0.95,
@@ -459,7 +459,7 @@ export const MAPS: Record<MapId, MapConfig> = {
     physics: {
       ...PHYSICS_1X,
       babbleImpulseScale: 0.99,
-      settleSpeed: 1.7, bigBumperRestitution: 1,
+      settleSpeed: 1.7, bumperPower: 1,
       boostPadAccel: 1,
       babbleDragPerTick: 1.057, ballDragPerTick: 1.053, beachBallDragPerTick: 1.025,
       babbleRestitution: 1.05, ballRestitution: 1.05,
@@ -477,7 +477,7 @@ export const MAPS: Record<MapId, MapConfig> = {
     physics: {
       ...PHYSICS_1X,
       babbleImpulseScale: 1,
-      settleSpeed: 1.25, bigBumperRestitution: 1.08,
+      settleSpeed: 1.25, bumperPower: 1.08,
       boostPadAccel: 1.05,
       babbleDragPerTick: 1.063, ballDragPerTick: 1.058, beachBallDragPerTick: 1.026,
       babbleRestitution: 1.12, ballRestitution: 1.08,

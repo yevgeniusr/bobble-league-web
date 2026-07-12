@@ -31,11 +31,13 @@ authoritative: explicit launches use `applyImpulse`, Boost pads use `addForce`,
 Sticky Goo changes rigid-body damping, and teleports/resizes synchronize once.
 Rapier then owns gravity, floor contacts, lift, landing, bounce, carry, collision
 response, and quaternion/angular motion until the turn settles. The ball,
-babbleheads, walls, open goal pockets, blocks, physical corner bumpers, and
-Trampolines all use 3D colliders. Public `GameState` remains the stable network
-snapshot boundary and receives projected Rapier state after each step. The
-browser never imports the physics module; it renders server state only, so no
-Rapier WASM ships in the client bundle.
+babbleheads, walls, open goal pockets, blocks, and Trampolines use 3D colliders.
+Bumpers run through a deterministic swept-circle resolver after each Rapier
+step: it reflects and accelerates only field-plane velocity while preserving the
+exact Rapier height and vertical velocity. Public `GameState` remains the stable
+network snapshot boundary and receives projected physics state after each step.
+The browser never imports the physics module; it renders server state only, so
+no Rapier WASM ships in the client bundle.
 
 ### Maps
 
@@ -68,7 +70,7 @@ source. Examples:
 
 ```bash
 BABBLE_IMPULSE_SCALE=1.0 BABBLE_BALL_DENSITY=0.86 npm run smoke
-BABBLE_BIG_BUMPER_MOTOR_STIFFNESS=4200 npm run render-check
+BABBLE_BUMPER_PLANAR_DELTA_SPEED=450 npm run render-check
 ```
 
 Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano|saturn|original|originalGlide|originalBounce`:
@@ -77,7 +79,7 @@ Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano|saturn|original|or
 BABBLE_MAP=moon npm run smoke
 BABBLE_MAP=volcano npm run betabots
 BABBLE_MAP=moon node scripts/stage2-render-check.mjs
-BABBLE_MAP=volcano node scripts/box-control-check.mjs
+BABBLE_MAP=volcano npm run box-check
 ```
 
 Common knobs:
@@ -87,8 +89,8 @@ Common knobs:
 - `BABBLE_BALL_DENSITY`: ball weight in Rapier collisions.
 - `BABBLE_GIANT_BALL_MASS_SCALE`: Giant Ball mass relative to the normal ball.
 - `BABBLE_BOOST_PAD_ACCEL`: boost pad acceleration.
-- `BABBLE_BUMPER_RESTITUTION` / `BABBLE_BIG_BUMPER_RESTITUTION`: physical material elasticity, clamped to Rapier's `[0,1]` range.
-- `BABBLE_BUMPER_MOTOR_STIFFNESS` / `BABBLE_BIG_BUMPER_MOTOR_STIFFNESS`: spring-plunger motor strength.
+- `BABBLE_BUMPER_RESTITUTION`: planar bumper reflection coefficient, clamped to `[0,1]`.
+- `BABBLE_BUMPER_PLANAR_DELTA_SPEED`: normal bumper delta velocity in field px/s; super bumpers always derive exactly `5x` this power.
 - Trampolines use physical Rapier 3D wedge geometry and have no artificial boost/minimum exit-speed knob.
 - `BABBLE_BALL_DRAG_PER_TICK`, `BABBLE_DRAG_PER_TICK`: damping feel.
 

@@ -28,6 +28,7 @@ import {
   usePowerPlay
 } from '../shared/game';
 import { BOX_SELECTION_WEIGHTS, BOX_TYPE_IDS, BOX_TYPES, BUMPERS, FIELD, FORMATION_IDS, FORMATIONS, MAPS, MAP_IDS, MapId, normalizeBoxType } from '../shared/types';
+import { bumperPlanarDeltaVelocity } from '../shared/physics';
 import { PHYSICS_CONFIG } from '../shared/physicsConfig';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
@@ -529,28 +530,27 @@ describe('classic Unicup shared rules', () => {
     }
   });
 
-  it('bumpers reflect the ball through Rapier contact and emit a hit event', () => {
-
+  it('bumpers accelerate the ball strongly across the field without lifting it', () => {
     const s = createInitialState('BUMP', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
     startGame(s, seq([0.5]));
     s.phase = 'resolving';
     s.resolvingStartedAt = 1000;
-    s.ball.pos = { x: BUMPERS[0].x + 55, y: BUMPERS[0].y };
+    const contactDistance = MAPS.stadium.layout.bumperRadius + s.ball.radius - 1;
+    s.ball.pos = { x: BUMPERS[0].x + contactDistance, y: BUMPERS[0].y };
     s.ball.vel = { x: -300, y: 0 };
 
     stepGame(s, {}, 1033, seq([0.5]));
 
     expect(s.ball.vel.x).toBeGreaterThan(0);
-    const exitSpeed3d = Math.hypot(s.ball.vel.x, s.ball.vel.y, s.ball.verticalVelocity * 50);
-    expect(exitSpeed3d).toBeGreaterThan(390); // motor + cone converts contact into a trampoline-like jump
-    expect(s.ball.verticalVelocity).toBeGreaterThan(4);
+    expect(Math.hypot(s.ball.vel.x, s.ball.vel.y)).toBeGreaterThan(600);
+    expect(s.ball.verticalVelocity).toBeLessThanOrEqual(0.1);
     expect(s.bumperEvents.length).toBeGreaterThanOrEqual(1);
     expect(s.bumperEvents[0].pos).toEqual({ x: BUMPERS[0].x, y: BUMPERS[0].y });
   });
 
-  it('spring bumpers can add controlled physical energy without a scripted exit speed', () => {
+  it('accelerates even a slow ball with a strong one-shot planar bump', () => {
     const s = createInitialState('BUMPERWEAK', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
     addPlayer(s, 'r', 'Righty', 'tigers', 'right');
@@ -558,13 +558,23 @@ describe('classic Unicup shared rules', () => {
     s.phase = 'resolving';
     s.resolvingStartedAt = 1000;
     s.babbles.forEach((b, i) => { b.pos = { x: 400 + i * 60, y: 310 }; b.vel = { x: 0, y: 0 }; });
-    s.ball.pos = { x: BUMPERS[0].x + 51, y: BUMPERS[0].y };
-    s.ball.vel = { x: -40, y: 0 }; // barely creeping into the powered spring
+    const contactDistance = MAPS.stadium.layout.bumperRadius + s.ball.radius - 1;
+    s.ball.pos = { x: BUMPERS[0].x + contactDistance, y: BUMPERS[0].y };
+    s.ball.vel = { x: -40, y: 0 };
     stepGame(s, {}, 1033, seq([0.5]));
     const speed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
-    expect(speed).toBeGreaterThan(40); // energy came from the Rapier motor/contact
-    expect(speed).toBeLessThan(250); // bounded physical motor response, not a velocity rewrite
+    expect(speed).toBeGreaterThan(400);
     expect(s.ball.vel.x).toBeGreaterThan(0);
+    expect(s.ball.verticalVelocity).toBeLessThanOrEqual(0.1);
+  });
+
+  it('defines super bumper power only as exactly five times normal power', () => {
+    const tuning = PHYSICS_CONFIG as typeof PHYSICS_CONFIG & {
+      bumperPlanarDeltaSpeed?: number;
+      superBumperPowerMultiplier?: number;
+    };
+    expect(tuning.bumperPlanarDeltaSpeed).toBeGreaterThanOrEqual(400);
+    expect(tuning.superBumperPowerMultiplier).toBe(5);
   });
 
   it(`allows up to ${MAX_RESOLVE_MS / 1000} seconds of resolution and zeroes all velocities before the next turn`, () => {
@@ -876,7 +886,11 @@ describe('classic Unicup shared rules', () => {
     expect(launchSpeed(true)).toBeCloseTo(launchSpeed(false), 6);
   });
 
-  it('big bumpers use larger, more elastic physical colliders', () => {
+  it('super bumpers use larger colliders and impart exactly five times the planar speed', () => {
+    const normalDelta = bumperPlanarDeltaVelocity(BUMPERS[0], { x: BUMPERS[0].x + 1, y: BUMPERS[0].y }, false);
+    const superDelta = bumperPlanarDeltaVelocity(BUMPERS[0], { x: BUMPERS[0].x + 1, y: BUMPERS[0].y }, true);
+    expect(Math.hypot(superDelta.x, superDelta.y)).toBeCloseTo(Math.hypot(normalDelta.x, normalDelta.y) * 5, 8);
+
     const run = (big: boolean) => {
       const s = createInitialState('BIGHIT', 3);
       addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
@@ -885,15 +899,17 @@ describe('classic Unicup shared rules', () => {
       s.phase = 'resolving';
       s.resolvingStartedAt = 1000;
       if (big) s.bigBumpersUntilTurn = s.turn;
-      s.ball.pos = { x: BUMPERS[0].x + 55, y: BUMPERS[0].y };
-      s.ball.vel = { x: -300, y: 0 };
+      const radius = big ? MAPS.stadium.layout.bigBumperRadius : MAPS.stadium.layout.bumperRadius;
+      s.ball.pos = { x: BUMPERS[0].x + radius + s.ball.radius - 1, y: BUMPERS[0].y };
+      s.ball.vel = { x: 0, y: 0 };
       stepGame(s, {}, 1033, seq([0.5]));
-      return Math.hypot(s.ball.vel.x, s.ball.vel.y, s.ball.verticalVelocity * 50);
+      expect(s.ball.verticalVelocity).toBeLessThanOrEqual(0.1);
+      return Math.hypot(s.ball.vel.x, s.ball.vel.y);
     };
     const normal = run(false);
     const big = run(true);
-    expect(normal).toBeGreaterThan(0);
-    expect(big).toBeGreaterThan(normal + 30);
+    expect(normal).toBeGreaterThanOrEqual(400);
+    expect(big).toBeGreaterThan(normal * 4.9);
   });
 
   it('accumulates authoritative ball spin matching travelled distance over radius', () => {

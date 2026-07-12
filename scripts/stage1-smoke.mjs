@@ -43,7 +43,7 @@ try {
     // These spawn their own servers on separate ports.
     await run(process.execPath, ['scripts/stage2-render-check.mjs']);
     console.log('[stage1-smoke] stage2 render check passed');
-    await run(process.execPath, ['scripts/box-control-check.mjs']);
+    await run(process.execPath, ['--import', 'tsx', 'scripts/box-control-check.mjs']);
     console.log('[stage1-smoke] box control check passed');
   }
   console.log('[stage1-smoke] ALL SMOKES PASSED');

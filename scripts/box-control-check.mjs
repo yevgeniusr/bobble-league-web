@@ -6,22 +6,25 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import * as THREE from 'three';
+import { waitPlayerIdentity } from './browser-smoke-helpers.mjs';
+import { cameraLayoutForViewport, fieldToWorld } from '../client/src/render3d.ts';
 
 // unique default port per run so a stale server from an old run can never be
 // mistaken for the one we spawn (a stale one would miss BABBLE_TURN_MS below)
 const PORT = process.env.BOXCHECK_PORT || String(3200 + (process.pid % 400));
 const url = `http://127.0.0.1:${PORT}`;
 const mapId = process.env.BABBLE_MAP || 'stadium';
-const FIELD = { width: 1100, height: 620 };
 const TURF_Y = 1.02;
 
 function makeProjector(box) {
-  const cam = new THREE.PerspectiveCamera(42, box.width / box.height, 0.1, 200);
-  cam.position.set(0, 16.2, 14.4);
-  cam.lookAt(0, 0.4, 0);
+  const layout = cameraLayoutForViewport(box.width, box.height);
+  const cam = new THREE.PerspectiveCamera(layout.fov, box.width / box.height, 0.1, 200);
+  cam.position.set(layout.position.x, layout.position.y, layout.position.z);
+  cam.lookAt(layout.target.x, layout.target.y, layout.target.z);
   cam.updateMatrixWorld();
   return (fx, fy, worldY = TURF_Y) => {
-    const v = new THREE.Vector3((fx - FIELD.width / 2) / 50, worldY, (fy - FIELD.height / 2) / 50);
+    const world = fieldToWorld({ x: fx, y: fy });
+    const v = new THREE.Vector3(world.x, worldY, world.z);
     v.project(cam);
     return { x: box.x + (v.x + 1) / 2 * box.width, y: box.y + (1 - v.y) / 2 * box.height };
   };
@@ -49,10 +52,11 @@ try {
   // opt into the developer console hook (no cheat UI exists in the app)
   await page.addInitScript(() => localStorage.setItem('babble:devtools', '1'));
   await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await waitPlayerIdentity(page);
   if (await page.locator('select.mapSelect').count()) await page.locator('select.mapSelect').first().selectOption(mapId);
-  await page.locator('button', { hasText: /create room/i }).click({ force: true });
+  await page.getByRole('button', { name: /create room/i }).click();
   await page.waitForSelector('.roomCodeValue', { timeout: 10000 });
-  await page.locator('button', { hasText: /start match/i }).click({ force: true });
+  await page.getByRole('button', { name: /start match/i }).click();
   await page.waitForFunction(() => /planning/.test(document.body.innerText), null, { timeout: 10000 });
   await delay(600);
 

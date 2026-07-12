@@ -57,8 +57,8 @@ export const MAX_RESOLVE_MS = 8000;
 // no `process`, so players get the original-game 20s planning window.
 const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 20000;
 const ALL_AIMED_RESOLVE_GRACE_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_ALL_AIMED_GRACE_MS)) || 3000;
-// Big Bumpers are larger Rapier colliders with higher material restitution.
-export const BIG_BUMPER_RESTITUTION = PHYSICS_CONFIG.bigBumperRestitution;
+export const BUMPER_PLANAR_DELTA_SPEED = PHYSICS_CONFIG.bumperPlanarDeltaSpeed;
+export const SUPER_BUMPER_POWER_MULTIPLIER = PHYSICS_CONFIG.superBumperPowerMultiplier;
 const BUMPER_EVENT_TTL_MS = 1500;
 const RAMP_EVENT_TTL_MS = 1500;
 // Boost pad acceleration (units/s^2) applied while a mover sits on the pad.
@@ -134,7 +134,7 @@ function matchConfig(mode: GameMode, mapId: MapId) {
 }
 
 const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
-const tune = (state: GameState, key: keyof MapPhysicsMultipliers) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
+const tune = (state: GameState, key: keyof typeof PHYSICS_CONFIG & keyof MapPhysicsMultipliers) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
 
 function syncBallVerticalDefaults(state: GameState) {
   const v = normalizeBallVertical(state.ball.radius, state.ball.height, state.ball.verticalVelocity);
@@ -852,7 +852,7 @@ function resetForPlanning(state: GameState, _rng: Rng) {
   state.kickoffAt = Date.now();
   // A tabletop turn has no hidden solver state. Recreate the deterministic
   // Rapier world at the same boundary where authoritative velocities and
-  // spring mechanisms are reset, so a compressed bumper/contact island cannot
+  // bumper contact latches are reset, so a stale contact island cannot
   // influence the next turn or rematch.
   freePhysics(state);
 }

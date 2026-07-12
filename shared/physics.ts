@@ -10,6 +10,7 @@
 // then each step projects the resulting 3D state back to the public shape.
 import RAPIER from '@dimforge/rapier3d-deterministic-compat';
 
+import { ARENA_BARRIERS, ARENA_FLOORS, ARENA_WALL_HEIGHT } from './arena';
 import {
   BABBLE_GRAVITY,
   babbleRestHeight,
@@ -30,10 +31,9 @@ const dampingFromDrag = (dragPerTick: number) => -Math.log(dragPerTick) * LEGACY
 
 const WORLD_GRAVITY = BABBLE_GRAVITY;
 const mapOf = (state: GameState) => MAPS[normalizeMapId(state.mapId)];
-const tune = (state: GameState, key: keyof MapPhysicsMultipliers) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
+const tune = (state: GameState, key: keyof typeof PHYSICS_CONFIG & keyof MapPhysicsMultipliers) => PHYSICS_CONFIG[key] * mapOf(state).physics[key];
 export const clampRestitution = (value: number) => Math.max(0, Math.min(1, value));
-export const clampMotorParameter = (value: number) => Math.max(0, value);
-const restitutionTune = (state: GameState, key: 'babbleRestitution' | 'ballRestitution' | 'wallRestitution' | 'blockRestitution' | 'bigBumperRestitution') =>
+const restitutionTune = (state: GameState, key: 'babbleRestitution' | 'ballRestitution' | 'wallRestitution' | 'blockRestitution') =>
   clampRestitution(tune(state, key));
 const dragTune = (state: GameState, key: 'babbleDragPerTick' | 'ballDragPerTick' | 'beachBallDragPerTick') =>
   Math.max(0.5, Math.min(0.995, tune(state, key)));
@@ -51,13 +51,12 @@ const GHOST_GROUPS = groups(G_GHOST, G_ARENA);
 const ARENA_GROUPS = groups(G_ARENA, G_BALL | G_BABBLE | G_GHOST);
 const BLOCK_GROUPS = groups(G_BLOCK, G_BALL | G_BABBLE);
 
-const WALL_HALF_THICKNESS = 1; // meters (50px): thick walls + CCD stop tunneling
-const WALL_HALF_HEIGHT = 2.5;
 const FLOOR_HALF_THICKNESS = 0.25;
 const BLOCK_HALF_LEN = 60 / PX_PER_METER;
 const BLOCK_HALF_THICKNESS = 14 / PX_PER_METER;
-const BLOCK_HALF_HEIGHT = WALL_HALF_HEIGHT;
+const BLOCK_HALF_HEIGHT = ARENA_WALL_HEIGHT / 2;
 const RAMP_HEIGHT = 0.82; // matches client wedgeGeometry exactly
+const BUMPER_LATCH_RELEASE_MARGIN = 2;
 
 
 // -compat builds expose an async init that instantiates the inlined WASM.
@@ -89,20 +88,38 @@ interface PhysicsCache {
   rampsKey: string;
   rampColliders: RAPIER.Collider[];
   bumpersKey: string;
-  bumperColliders: RAPIER.Collider[];
-  bumperBodies: RAPIER.RigidBody[];
-  bumperHandles: Map<number, Vec>;
-  bumperBallIdentity: GameState['ball'];
+  bumperContactLatches: Set<string>;
 }
 
 const caches = new WeakMap<GameState, PhysicsCache>();
 export type PhysicsStepResult = { bumperHits: Vec[] };
+
+export function bumperPlanarDeltaVelocity(bumper: Vec, mover: Vec, powered: boolean, powerScale = 1): Vec {
+  let dx = mover.x - bumper.x;
+  let dy = mover.y - bumper.y;
+  let length = Math.hypot(dx, dy);
+  if (length < 1e-6) {
+    dx = FIELD.width / 2 - bumper.x;
+    dy = FIELD.height / 2 - bumper.y;
+    length = Math.hypot(dx, dy) || 1;
+  }
+  const multiplier = powered ? PHYSICS_CONFIG.superBumperPowerMultiplier : 1;
+  const speed = Math.max(0, PHYSICS_CONFIG.bumperPlanarDeltaSpeed) * Math.max(0, powerScale) * multiplier;
+  return { x: dx / length * speed, y: dy / length * speed };
+}
 
 type BabbleImpactSnapshot = {
   id: string;
   side: PlayerSide;
   pos: Vec;
   vel: Vec;
+};
+
+type PlanarBumperTarget = {
+  id: string;
+  body: RAPIER.RigidBody;
+  planarRadius: number;
+  start: Vec;
 };
 
 export function freePhysics(state: GameState) {
@@ -144,9 +161,27 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
 
   const touchable = new Map<number, BabbleImpactSnapshot>();
   for (const b of state.babbles) syncBabble(state, cache, b, touchable);
+  const ballStart = cache.ballBody.translation();
+  const bumperTargets: PlanarBumperTarget[] = [{
+    id: 'ball',
+    body: cache.ballBody,
+    planarRadius: ballColliderRadius(state.ball.radius) * PX_PER_METER,
+    start: { x: ballStart.x * PX_PER_METER, y: ballStart.z * PX_PER_METER }
+  }];
+  for (const b of state.babbles) {
+    const entry = cache.babbles.get(b.id)!;
+    const start = entry.body.translation();
+    bumperTargets.push({
+      id: `babble:${b.id}`,
+      body: entry.body,
+      planarRadius: babbleColliderRadius(b.radius) * PX_PER_METER,
+      start: { x: start.x * PX_PER_METER, y: start.z * PX_PER_METER }
+    });
+  }
   applyFieldForces(state, cache);
 
   world.step(events);
+  resolvePlanarBumperContacts(state, cache, bumperTargets, result);
 
   projectBall(state, cache);
   for (const b of state.babbles) projectBabble(b, cache.babbles.get(b.id)!);
@@ -167,14 +202,105 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
   const ballHandle = cache.ballCollider.handle;
   events.drainCollisionEvents((h1, h2, started) => {
     if (!started) return;
-    const bumper = cache.bumperHandles.get(h1) ?? cache.bumperHandles.get(h2);
-    if (bumper) result.bumperHits.push({ ...bumper });
     const other = h1 === ballHandle ? h2 : h2 === ballHandle ? h1 : null;
     if (other === null) return;
     const babble = touchable.get(other);
     if (babble) recordBallTouch(state, babble.id, babble.side);
   });
   return result;
+}
+
+function segmentCircleNormal(start: Vec, end: Vec, center: Vec, radius: number): Vec | null {
+  const fromCenter = (point: Vec): Vec => {
+    let x = point.x - center.x;
+    let y = point.y - center.y;
+    let length = Math.hypot(x, y);
+    if (length < 1e-6) {
+      x = FIELD.width / 2 - center.x;
+      y = FIELD.height / 2 - center.y;
+      length = Math.hypot(x, y) || 1;
+    }
+    return { x: x / length, y: y / length };
+  };
+  const sx = start.x - center.x;
+  const sy = start.y - center.y;
+  if (sx * sx + sy * sy <= radius * radius) return fromCenter(start);
+
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const a = dx * dx + dy * dy;
+  if (a < 1e-9) return null;
+  const b = 2 * (sx * dx + sy * dy);
+  const c = sx * sx + sy * sy - radius * radius;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return null;
+  const root = Math.sqrt(discriminant);
+  const hit = (-b - root) / (2 * a);
+  if (hit < 0 || hit > 1) return null;
+  return fromCenter({ x: start.x + dx * hit, y: start.y + dy * hit });
+}
+
+function resolvePlanarBumperContacts(
+  state: GameState,
+  cache: PhysicsCache,
+  targets: PlanarBumperTarget[],
+  result: PhysicsStepResult
+) {
+  const map = mapOf(state);
+  const powered = state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
+  const bumperRadius = powered ? map.layout.bigBumperRadius : map.layout.bumperRadius;
+  const restitution = clampRestitution(PHYSICS_CONFIG.bumperRestitution);
+
+  for (const target of targets) {
+    let start = target.start;
+    for (let index = 0; index < map.layout.bumpers.length; index++) {
+      const bumper = map.layout.bumpers[index];
+      const position = target.body.translation();
+      const end = { x: position.x * PX_PER_METER, y: position.z * PX_PER_METER };
+      const contactRadius = bumperRadius + target.planarRadius;
+      const latchKey = `${index}:${target.id}`;
+      if (position.y - target.planarRadius / PX_PER_METER > ARENA_WALL_HEIGHT) {
+        cache.bumperContactLatches.delete(latchKey);
+        continue;
+      }
+      const normal = segmentCircleNormal(start, end, bumper, contactRadius);
+      if (!normal) {
+        if (Math.hypot(end.x - bumper.x, end.y - bumper.y) > contactRadius + BUMPER_LATCH_RELEASE_MARGIN) {
+          cache.bumperContactLatches.delete(latchKey);
+        }
+        continue;
+      }
+
+      const velocity = target.body.linvel();
+      let vx = velocity.x * PX_PER_METER;
+      let vz = velocity.z * PX_PER_METER;
+      const inwardSpeed = vx * normal.x + vz * normal.y;
+      if (inwardSpeed < 0) {
+        vx -= (1 + restitution) * inwardSpeed * normal.x;
+        vz -= (1 + restitution) * inwardSpeed * normal.y;
+      }
+      if (!cache.bumperContactLatches.has(latchKey)) {
+        cache.bumperContactLatches.add(latchKey);
+        const delta = bumperPlanarDeltaVelocity(
+          bumper,
+          { x: bumper.x + normal.x, y: bumper.y + normal.y },
+          powered,
+          map.physics.bumperPower
+        );
+        vx += delta.x;
+        vz += delta.y;
+        result.bumperHits.push({ ...bumper });
+      }
+
+      const corrected = {
+        x: bumper.x + normal.x * (contactRadius + 0.5),
+        y: bumper.y + normal.y * (contactRadius + 0.5)
+      };
+      target.body.setTranslation({ x: corrected.x / PX_PER_METER, y: position.y, z: corrected.y / PX_PER_METER }, true);
+      target.body.setLinvel({ x: vx / PX_PER_METER, y: velocity.y, z: vz / PX_PER_METER }, true);
+      start = corrected;
+    }
+  }
 }
 
 function recordBallTouch(state: GameState, babbleId: string, side: PlayerSide) {
@@ -260,10 +386,7 @@ function buildCache(state: GameState): PhysicsCache {
     rampsKey: '',
     rampColliders: [],
     bumpersKey: '',
-    bumperColliders: [],
-    bumperBodies: [],
-    bumperHandles: new Map(),
-    bumperBallIdentity: state.ball,
+    bumperContactLatches: new Set(),
   };
 }
 
@@ -465,107 +588,47 @@ function yawRotation(angle: number): RAPIER.Rotation {
 }
 
 function buildArena(world: RAPIER.World, state: GameState) {
-  const w = FIELD.width / PX_PER_METER;
-  const h = FIELD.height / PX_PER_METER;
-  const mouthTop = FIELD.goalY / PX_PER_METER;
-  const mouthBottom = (FIELD.goalY + FIELD.goalHeight) / PX_PER_METER;
-  // Arcade mouth clearance: a ball/player centre can use the complete visible
-  // opening instead of colliding with the sharp corner of a hidden cuboid.
-  const edgeClearance = FIELD.ballRadius / PX_PER_METER;
-  const goalDepth = FIELD.goalDepth / PX_PER_METER;
-  const t = WALL_HALF_THICKNESS;
   const wallRestitution = restitutionTune(state, 'wallRestitution');
-  const wallY = WALL_HALF_HEIGHT;
-  const floorX = w / 2;
-  const floorZ = h / 2;
-  const floorHx = w / 2 + goalDepth + 2 * t;
-  const floorHz = h / 2 + 2 * t;
-
-  // Floor top is y=0. Spheres therefore rest at world y == radius.
-  fixedCuboid(world, floorX, -FLOOR_HALF_THICKNESS, floorZ, floorHx, FLOOR_HALF_THICKNESS, floorHz, ARENA_GROUPS, 0, 0.22);
-
-  // Top and bottom rails (overhang past the corners so nothing slips out).
-  fixedCuboid(world, w / 2, wallY, -t, w / 2 + 2 * t + goalDepth, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
-  fixedCuboid(world, w / 2, wallY, h + t, w / 2 + 2 * t + goalDepth, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
-  for (const side of ['left', 'right'] as const) {
-    const x = side === 'left' ? -t : w + t;
-    // Solid wall segments above and below the goal mouth.
-    const topEnd = mouthTop - edgeClearance;
-    const bottomStart = mouthBottom + edgeClearance;
-    fixedCuboid(world, x, wallY, topEnd / 2, t, WALL_HALF_HEIGHT, topEnd / 2, ARENA_GROUPS, wallRestitution);
-    fixedCuboid(world, x, wallY, (bottomStart + h) / 2, t, WALL_HALF_HEIGHT, (h - bottomStart) / 2, ARENA_GROUPS, wallRestitution);
-    // The mouth is completely open to both ball and babbleheads. The goal is a
-    // real pocket with rear and side walls, so a goalie can enter, get behind a
-    // ball resting near the line, and push it back onto the field.
-    const backX = side === 'left' ? -goalDepth - t : w + goalDepth + t;
-    fixedCuboid(world, backX, wallY, (mouthTop + mouthBottom) / 2, t, WALL_HALF_HEIGHT, (mouthBottom - mouthTop) / 2 + edgeClearance + t, ARENA_GROUPS, wallRestitution);
-    const pocketCenterX = side === 'left' ? -goalDepth / 2 : w + goalDepth / 2;
-    fixedCuboid(world, pocketCenterX, wallY, mouthTop - edgeClearance - t, goalDepth / 2 + t, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
-    fixedCuboid(world, pocketCenterX, wallY, mouthBottom + edgeClearance + t, goalDepth / 2 + t, WALL_HALF_HEIGHT, t, ARENA_GROUPS, wallRestitution);
+  for (const floor of ARENA_FLOORS) {
+    fixedCuboid(
+      world,
+      floor.center.x / PX_PER_METER,
+      -FLOOR_HALF_THICKNESS,
+      floor.center.y / PX_PER_METER,
+      floor.halfSize.x / PX_PER_METER,
+      FLOOR_HALF_THICKNESS,
+      floor.halfSize.y / PX_PER_METER,
+      ARENA_GROUPS,
+      0,
+      0.22
+    );
+  }
+  for (const wall of ARENA_BARRIERS) {
+    fixedCuboid(
+      world,
+      wall.center.x / PX_PER_METER,
+      wall.height / 2,
+      wall.center.y / PX_PER_METER,
+      wall.halfSize.x / PX_PER_METER,
+      wall.height / 2,
+      wall.halfSize.y / PX_PER_METER,
+      ARENA_GROUPS,
+      wallRestitution
+    );
   }
 }
 
-// Corner bumpers are physical spring-loaded plungers: a dynamic cylinder moves
-// only along a prismatic joint aimed toward field centre, and a Rapier motor
-// restores it after compression. This creates powered rebounds through contact
-// forces while keeping restitution in Rapier's documented [0,1] range.
+// Bumpers are resolved in the field plane after Rapier's 3D step. Keeping them
+// out of the contact solver makes vertical motion mathematically independent
+// while swept-circle detection still prevents tunnelling at competitive speed.
 function syncBumpers(state: GameState, cache: PhysicsCache) {
-  // Kickoffs, goals, resets, and rematches replace the authoritative ball
-  // object. Treat that as a physics-epoch boundary even when turn returns to 1.
-  if (cache.bumperBallIdentity !== state.ball) {
-    cache.bumpersKey = '';
-    cache.bumperBallIdentity = state.ball;
-  }
   const map = mapOf(state);
   const big = state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn >= state.turn;
   const radiusPx = big ? map.layout.bigBumperRadius : map.layout.bumperRadius;
-  const restitution = big ? restitutionTune(state, 'bigBumperRestitution') : clampRestitution(PHYSICS_CONFIG.bumperRestitution);
-  const stiffness = clampMotorParameter(big ? PHYSICS_CONFIG.bigBumperMotorStiffness : PHYSICS_CONFIG.bumperMotorStiffness);
-  const damping = clampMotorParameter(PHYSICS_CONFIG.bumperMotorDamping);
-  // Rebuild once per turn so a compressed spring cannot carry hidden energy
-  // across the explicit tabletop turn boundary.
-  const key = `${state.turn}:${big}:${radiusPx}:${restitution}:${stiffness}:${damping}:${map.layout.bumpers.map(p => `${p.x},${p.y}`).join('|')}`;
+  const restitution = clampRestitution(PHYSICS_CONFIG.bumperRestitution);
+  const key = `${big}:${radiusPx}:${restitution}:${map.layout.bumpers.map(p => `${p.x},${p.y}`).join('|')}`;
   if (key === cache.bumpersKey) return;
-  for (const body of cache.bumperBodies) cache.world.removeRigidBody(body);
-  cache.bumperColliders = [];
-  cache.bumperBodies = [];
-  cache.bumperHandles.clear();
-  for (const p of map.layout.bumpers) {
-    const dx = FIELD.width / 2 - p.x;
-    const dz = FIELD.height / 2 - p.y;
-    const length = Math.hypot(dx, dz) || 1;
-    const axis = { x: dx / length, y: 0, z: dz / length };
-    const bumperHalfHeight = 0.65;
-    const position = { x: p.x / PX_PER_METER, y: bumperHalfHeight, z: p.y / PX_PER_METER };
-    const anchor = cache.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z));
-    const plunger = cache.world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(position.x, position.y, position.z)
-        .setLinearDamping(0.15)
-        .lockRotations()
-        .setCanSleep(false)
-    );
-    const collider = cache.world.createCollider(
-      RAPIER.ColliderDesc.roundCone(bumperHalfHeight - 0.06, radiusPx / PX_PER_METER - 0.06, 0.06)
-        .setFriction(0.2)
-        .setRestitution(restitution)
-        .setDensity(7)
-        .setCollisionGroups(ARENA_GROUPS)
-        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
-      plunger
-    );
-    const joint = cache.world.createImpulseJoint(
-      RAPIER.JointData.prismatic({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, axis),
-      anchor,
-      plunger,
-      true
-    ) as RAPIER.PrismaticImpulseJoint;
-    joint.setLimits(-0.25, 0.14);
-    joint.configureMotorPosition(0.1, stiffness, damping);
-    cache.bumperColliders.push(collider);
-    cache.bumperBodies.push(anchor, plunger);
-    cache.bumperHandles.set(collider.handle, { ...p });
-  }
+  cache.bumperContactLatches.clear();
   cache.bumpersKey = key;
 }
 

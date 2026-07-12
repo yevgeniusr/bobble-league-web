@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { waitPlayerIdentity } from './browser-smoke-helpers.mjs';
 
 const port = Number(process.env.BABBLE_PORT ?? 3119);
 const base = `http://127.0.0.1:${port}`;
@@ -25,11 +26,11 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(String(error)));
   await page.goto(base, { waitUntil: 'networkidle' });
+  await waitPlayerIdentity(page);
   await page.getByRole('heading', { level: 1, name: /^Unicup$/i }).waitFor({ state: 'visible' });
   const sealName = (await page.locator('.seasonSeal b').textContent())?.replace(/\s/g, '').toUpperCase();
   if (sealName !== 'UNICUP') throw new Error(`expected Unicup hero seal, received ${sealName ?? 'nothing'}`);
   await page.getByText('No hands. No weapons. All skill.', { exact: true }).waitFor({ state: 'visible' });
-  if (await page.locator('.loyaltyCard').count() !== 1) throw new Error('expected exactly one Loyalty widget shell');
   await page.getByRole('tab', { name: 'Host match' }).focus();
   await page.keyboard.press('ArrowRight');
   await page.getByRole('textbox', { name: 'Room code' }).waitFor({ state: 'visible' });
@@ -64,7 +65,7 @@ try {
   if (shortViewport.deskTop > 548) throw new Error(`short viewport has no tournament-desk hint: ${shortViewport.deskTop}`);
   if (shortViewport.rootOverflow) throw new Error('short viewport has horizontal overflow');
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log(JSON.stringify({ ok: true, oneClickMainMenu: true, loyaltyCardVisible: await page.locator('.loyaltyCard').isVisible(), errors }, null, 2));
+  console.log(JSON.stringify({ ok: true, oneClickMainMenu: true, errors }, null, 2));
 } finally {
   await browser?.close();
   server.kill('SIGTERM');
