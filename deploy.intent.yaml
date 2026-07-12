@@ -9,7 +9,7 @@ spec:
     path: .
   targets:
     - platform: coolify
-      domain: bobble.rachkovan.com
+      domain: unicup.rachkovan.com
   build:
     dockerfile: Dockerfile
   runtimeConfig:
@@ -19,7 +19,7 @@ spec:
     env:
       NODE_ENV: production
       PORT: "3000"
-      PUBLIC_HOSTNAME: bobble.rachkovan.com
+      PUBLIC_HOSTNAME: unicup.rachkovan.com
       XTREMEPUSH_ALLOW_LOCAL: "false"
       XTREMEPUSH_LOYALTY_TOKEN_TTL: "300"
     secrets:

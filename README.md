@@ -120,7 +120,7 @@ XTREMEPUSH_LOYALTY_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----\n...'
 XTREMEPUSH_LOYALTY_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----\n...'
 XTREMEPUSH_LOYALTY_KEY_ID=primary              # optional JWT kid
 XTREMEPUSH_LOYALTY_TOKEN_TTL=300
-PUBLIC_HOSTNAME=bobble.rachkovan.com             # browser SDK is exposed only here
+PUBLIC_HOSTNAME=unicup.rachkovan.com             # browser SDK is exposed only here
 XTREMEPUSH_ALLOW_LOCAL=false                    # opt in only for local SDK QA
 ```
 

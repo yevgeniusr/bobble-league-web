@@ -24,7 +24,7 @@ const xtremepush = createXtremepushSender({
   apiBase: process.env.XTREMEPUSH_API_BASE
 });
 const xtremepushSdkKey = process.env.XTREMEPUSH_SDK_KEY?.trim() ?? '';
-const publicHostname = (process.env.PUBLIC_HOSTNAME ?? 'bobble.rachkovan.com').trim().toLowerCase();
+const publicHostname = (process.env.PUBLIC_HOSTNAME ?? 'unicup.rachkovan.com').trim().toLowerCase();
 const allowLocalXtremepush = process.env.XTREMEPUSH_ALLOW_LOCAL === 'true';
 const loyalty = createLoyaltyService({
   sdkKey: xtremepushSdkKey,
