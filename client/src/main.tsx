@@ -61,7 +61,7 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
   const [mapId, setMapId] = React.useState<MapId>('stadium');
   const [roomCode, setRoomCode] = React.useState('');
   const [error, setError] = React.useState('');
-  const [conn, setConn] = React.useState<'connected' | 'reconnecting'>('connected');
+  const [conn, setConn] = React.useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
   const [identity, setIdentity] = React.useState<UnicupIdentity | null>(null);
   const [audioSettings, setAudioSettings] = React.useState<AudioSettings>(() => loadAudioSettings());
   const stateRef = React.useRef<GameState | null>(null);
@@ -86,9 +86,9 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
         });
       }
     };
+    socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
-    socket.io.on('reconnect', onConnect);
-    return () => { socket.off('game:state'); socket.off('room:error'); socket.off('analytics:event', trackAnalyticsEvent); socket.off('disconnect', onDisconnect); socket.io.off('reconnect', onConnect); };
+    return () => { socket.off('game:state'); socket.off('room:error'); socket.off('analytics:event', trackAnalyticsEvent); socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); };
   }, []);
 
   React.useEffect(() => {
@@ -159,6 +159,8 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
     socket.emit('room:join', { roomCode: roomCode.toUpperCase(), name }, res => res.ok ? (setError(''), setRoomCode(res.roomCode)) : setError(res.error));
   }
 
+  const entryReady = identity !== null && conn === 'connected';
+
   return <main>
     {!state && <LandingPage
       name={name}
@@ -176,6 +178,7 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
       error={error}
       accountControls={accountControls}
       identity={identity}
+      ready={entryReady}
       getToken={auth.getToken}
     />}
     {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ leavingRef.current = true; socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
@@ -199,10 +202,11 @@ type LandingPageProps = {
   error: string;
   accountControls: React.ReactNode;
   identity: UnicupIdentity | null;
+  ready: boolean;
   getToken: ClerkTokenGetter;
 };
 
-function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error, accountControls, identity, getToken }: LandingPageProps) {
+function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error, accountControls, identity, ready, getToken }: LandingPageProps) {
   const [deskView, setDeskView] = React.useState<'host' | 'join'>('host');
   const hostTabRef = React.useRef<HTMLButtonElement>(null);
   const joinTabRef = React.useRef<HTMLButtonElement>(null);
@@ -279,12 +283,12 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, 
               {MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label} / {MAP_SELECT_HINTS[id]}</option>)}
             </select>
           </label>
-          <button type="button" className="primary deskSubmit" onClick={onCreateRoom}>Create room <span aria-hidden="true">&#8594;</span></button>
+          <button type="button" className="primary deskSubmit" onClick={onCreateRoom} disabled={!ready}>Create room <span aria-hidden="true">&#8594;</span></button>
         </div> : <div id="desk-panel-join" className="deskPanel" role="tabpanel" aria-labelledby="desk-tab-join">
           <label className="deskField">Room code
             <input className="codeInput" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())} maxLength={8} placeholder="ABC12" autoComplete="off"/>
           </label>
-          <button type="button" className="primary deskSubmit" onClick={onJoinRoom}>Join room <span aria-hidden="true">&#8594;</span></button>
+          <button type="button" className="primary deskSubmit" onClick={onJoinRoom} disabled={!ready}>Join room <span aria-hidden="true">&#8594;</span></button>
           <p className="deskNote">Your team and tournament kit are selected inside the room.</p>
         </div>}
 
