@@ -26,6 +26,7 @@ const xtremepush = createXtremepushSender({
 });
 const xtremepushSdkKey = process.env.XTREMEPUSH_SDK_KEY?.trim() ?? '';
 const publicHostname = (process.env.PUBLIC_HOSTNAME ?? 'unicup.rachkovan.com').trim().toLowerCase();
+const clerkFrontendOrigin = `https://clerk.${publicHostname}`;
 const allowLocalXtremepush = process.env.XTREMEPUSH_ALLOW_LOCAL === 'true';
 const clerkPublishableKey = (process.env.CLERK_PUBLISHABLE_KEY || process.env.VITE_CLERK_PUBLISHABLE_KEY)?.trim() ?? '';
 const identitySecret = process.env.UNICUP_GUEST_SECRET || process.env.CLERK_SECRET_KEY || process.env.XTREMEPUSH_LOYALTY_PRIVATE_KEY || (!isProd ? 'unicup-local-guest-secret' : '');
@@ -74,12 +75,12 @@ app.use(helmet({
       // Xtremepush's current vendor SDK evaluates its generated command
       // dispatcher at runtime; keep eval scoped to scripts and every network
       // origin separately allowlisted below.
-      scriptSrc: ["'self'", "'unsafe-eval'", 'https://*.clerk.accounts.dev', 'https://*.clerk.com', 'https://challenges.cloudflare.com'],
+      scriptSrc: ["'self'", "'unsafe-eval'", clerkFrontendOrigin, 'https://*.clerk.accounts.dev', 'https://*.clerk.com', 'https://challenges.cloudflare.com'],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       imgSrc: ["'self'", 'data:', 'blob:', 'https://img.clerk.com'],
       mediaSrc: ["'self'", 'blob:'],
-      connectSrc: ["'self'", 'https://api.xtremepush.com', 'https://*.clerk.accounts.dev', 'https://*.clerk.com', 'https://clerk-telemetry.com', 'https://*.clerk-telemetry.com'],
+      connectSrc: ["'self'", 'https://api.xtremepush.com', clerkFrontendOrigin, 'https://*.clerk.accounts.dev', 'https://*.clerk.com', 'https://clerk-telemetry.com', 'https://*.clerk-telemetry.com'],
       frameSrc: [...(loyalty.endpoint ? [`https://${loyalty.endpoint}`] : []), 'https://challenges.cloudflare.com'],
       workerSrc: ["'self'", 'blob:'],
       frameAncestors: ["'none'"]
