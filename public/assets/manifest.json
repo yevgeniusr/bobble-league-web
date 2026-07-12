@@ -20,6 +20,8 @@
     "fieldProps": "/assets/sprites/field-props.png"
   },
   "brand": {
+    "logo": "/assets/brand/unicup-logo.png",
+    "icon": "/assets/brand/unicup-icon.png",
     "heroDesktop": "/assets/brand/planetball-hero-desktop.png",
     "heroMobile": "/assets/brand/planetball-hero-mobile.png",
     "roadToBallOffice": "/assets/brand/road-to-ball-office.png"

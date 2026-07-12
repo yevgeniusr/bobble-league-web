@@ -29,7 +29,7 @@ import {
   normalizeBoxType,
   normalizeMapId
 } from './types';
-import { buildAbilityUsedEvent, buildBoxPickupEvent, buildGoalScoredEvent, recordAnalyticsEvent } from './analytics';
+import { buildAbilityUsedEvent, buildBoxPickupEvent, buildGamePlayedEvents, buildGoalScoredEvent, recordAnalyticsEvent } from './analytics';
 import { applyBabblePlanarImpulse, freePhysics, stepPhysics } from './physics';
 import { PHYSICS_CONFIG } from './physicsConfig';
 import {
@@ -162,11 +162,12 @@ export function setMap(state: GameState, mapId: MapId) {
   return true;
 }
 
-export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide): PlayerState {
+export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide, accountId?: string): PlayerState {
   const chosenSide = side ?? chooseSide(state);
   const chosenTeam = state.sideTeams[chosenSide] ?? team;
   const p: PlayerState = {
     id,
+    accountId,
     name: sanitizeName(name),
     side: chosenSide,
     team: chosenTeam,
@@ -209,9 +210,9 @@ export function reclaimPlayer(state: GameState, oldId: string, newId: string): P
 }
 
 // Find a disconnected seat matching this display name (used to auto-reclaim on rejoin).
-export function findDisconnectedSeat(state: GameState, name: string): PlayerState | null {
+export function findDisconnectedSeat(state: GameState, name: string, accountId?: string): PlayerState | null {
   const clean = sanitizeName(name);
-  return Object.values(state.players).find(p => !p.connected && p.name === clean) ?? null;
+  return Object.values(state.players).find(p => !p.connected && (accountId ? p.accountId === accountId : p.name === clean)) ?? null;
 }
 
 export function removePlayer(state: GameState, id: string) {
@@ -789,10 +790,11 @@ function handleClassicGoal(state: GameState, scorer: PlayerSide, now: number, rn
     state.phase = 'finished';
     state.winner = scorer;
     pushEvent(state, `${scorer} wins first-to-${state.mode}!`);
-    recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, lastTouchedBabbleId, lastTouchedPlayerId, ballPosition, now }));
+    recordGoalScored(state, { scoringSide: scorer, lastTouchedBy, lastTouchedBabbleId, lastTouchedPlayerId, ballPosition, now });
+    recordGamePlayed(state, now);
     return;
   }
-  recordAnalyticsEvent(state, buildGoalScoredEvent(state, { scoringSide: scorer, lastTouchedBy, lastTouchedBabbleId, lastTouchedPlayerId, ballPosition, now }));
+  recordGoalScored(state, { scoringSide: scorer, lastTouchedBy, lastTouchedBabbleId, lastTouchedPlayerId, ballPosition, now });
   state.ball = ballAtKickoff();
   placeFormation(state, 'left');
   placeFormation(state, 'right');
@@ -804,6 +806,7 @@ function endTurn(state: GameState, now: number, rng: Rng, unlockFormation = fals
     state.phase = 'finished';
     state.winner = state.score.left === state.score.right ? null : state.score.left > state.score.right ? 'left' : 'right';
     pushEvent(state, state.winner ? `${state.winner} wins on turns!` : 'Turn limit reached: draw.');
+    recordGamePlayed(state, now);
     return;
   }
   state.turn += 1;
@@ -817,6 +820,16 @@ function endTurn(state: GameState, now: number, rng: Rng, unlockFormation = fals
   expireTurnEffects(state);
   state.turnDeadlineAt = now + state.config.turnDurationMs;
   if (state.turn % state.config.boxSpawnEveryTurns === 0) spawnBox(state, now, rng);
+}
+
+function recordGoalScored(state: GameState, details: Parameters<typeof buildGoalScoredEvent>[1]) {
+  if (details.lastTouchedPlayerId && state.players[details.lastTouchedPlayerId]) {
+    recordAnalyticsEvent(state, buildGoalScoredEvent(state, details));
+  }
+}
+
+function recordGamePlayed(state: GameState, now: number) {
+  for (const event of buildGamePlayedEvents(state, now)) recordAnalyticsEvent(state, event);
 }
 
 function resetForPlanning(state: GameState, _rng: Rng) {

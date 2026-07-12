@@ -108,6 +108,26 @@ npm run build
 
 Open http://localhost:3000 in two browser windows and join the same room code.
 
+## Clerk accounts and guests
+
+The project is linked to the Unicup Clerk application through `clerk init`.
+Configure Clerk locally with `clerk env pull`; do not expose the secret key to
+the browser. Production requires:
+
+```bash
+CLERK_PUBLISHABLE_KEY=pk_...    # public, returned through /api/config
+CLERK_SECRET_KEY=sk_...         # server-only Clerk verification and metadata
+UNICUP_GUEST_SECRET=...         # server-only random secret, at least 16 bytes
+```
+
+Every visitor can play immediately. Signed-out players receive a persistent,
+HMAC-signed HttpOnly guest identity. On that browser's first Clerk sign-in, the
+server stores the same canonical Unicup account ID in Clerk private metadata;
+the guest's gameplay and Loyalty identity therefore continue after registration
+and on later devices. Clerk session tokens are verified on the server for both
+HTTP and Socket.IO requests. Nicknames remain editable display data and are
+never used as account identifiers.
+
 ## Xtremepush analytics
 
 Set the Xtremepush server/runtime configuration:
@@ -124,16 +144,16 @@ PUBLIC_HOSTNAME=unicup.rachkovan.com             # browser SDK is exposed only h
 XTREMEPUSH_ALLOW_LOCAL=false                    # opt in only for local SDK QA
 ```
 
-Local development reads these values from `.env` when they are not already in the process environment. The SDK key and Loyalty endpoint are public browser configuration; the RSA private key remains server-only. The backend verifies that the configured private/public keys match before enabling `/api/loyalty/token`, then binds each browser to a signed, HttpOnly guest identity and signs short-lived RS256 tokens whose `sub` combines that opaque identity with the entered nickname. A freely supplied nickname alone can therefore never mint another browser's Loyalty identity. `private.key`, `public.key`, and `*.pem` are gitignored and must be configured as deployment secrets rather than committed.
+Local development reads these values from `.env` when they are not already in the process environment. The SDK key and Loyalty endpoint are public browser configuration; the RSA private key remains server-only. The backend verifies that the configured private/public keys match before enabling `/api/loyalty/token`, then signs short-lived RS256 tokens whose `sub` is the server-resolved canonical Unicup account ID. The same ID is used for gameplay events, so Loyalty progress belongs to the correct guest or Clerk account rather than a nickname. `private.key`, `public.key`, and `*.pem` are gitignored and must be configured as deployment secrets rather than committed.
 
-The browser loads the Xtremepush Web SDK asynchronously from the same-origin `/api/xtremepush/sdk.js` route. The server proxies the configured Xtremepush CDN SDK with a timeout, content-type check, and size cap; upstream failures return a non-success response so the client cannot mistake an inert queue for a working SDK. The main-menu Loyalty widget sets `user_id`, `loyalty_endpoint`, and its short-lived `loyalty_token` before calling `mountLoyalty`; expired tokens are refreshed through the backend. Without complete browser/Loyalty configuration, backend analytics continues and the widget reports an explicit unavailable state.
+The browser loads the Xtremepush Web SDK asynchronously from the same-origin `/api/xtremepush/sdk.js` route. The server proxies the configured Xtremepush CDN SDK with a timeout, content-type check, and size cap; upstream failures return a non-success response so the client cannot mistake an inert queue for a working SDK. The Loyalty integration sets `user_id`, `loyalty_endpoint`, and its short-lived `loyalty_token` before calling `mountLoyalty` in Xtremepush's native floating-overlay mode; expired tokens are refreshed through the backend. Without complete browser/Loyalty configuration, gameplay remains available.
 
 Tracked events:
 
-- `gamePlayer`: room create/join/reconnect/leave/disconnect, match start, and
-  match reset lifecycle. Payload includes lifecycle, room code, player socket
-  id, player side/team/name, babble ids, connected/total players, phase, turn,
-  score, match mode/length, winner, timestamp, and future-compatible `mapId`.
+- `gamePlayed`: emitted once to every match participant when the match finishes.
+  Each user's payload includes their own `outcome` (`won`, `loss`, or `draw`),
+  player/opponent score, side/team/name, room, mode/length, winner, timestamp,
+  and map ID.
 - `abilityUsed`: emitted only after a Power Play successfully applies. Payload
   includes room code, player/holder id, side/team, ability type, target babble,
   target side/team/position, placement position/angle, field object id when
@@ -143,9 +163,14 @@ Tracked events:
   includes holder id, holder side/team, collector babble id, pickup method,
   box id/type/anchor/position, available turn, replaced ability type, turn,
   phase, score, match mode/length, winner, timestamp, and `mapId`.
-- `goalScored`: emitted when a goal is scored. Payload includes scoring side,
-  scoring team, conceding side, last touched side/team, ball position, updated
-  score, turn, phase, match mode/length, winner, timestamp, and `mapId`.
+- `goalScored`: emitted only to the player whose babblehead last touched the
+  ball. Payload includes that player's identity, scoring and conceding sides,
+  last-touch details, ball position, updated score, turn, phase, match
+  mode/length, winner, timestamp, and map ID. Untouched goals do not emit it.
+
+Gameplay context is carried in each event's `value`; it is not written into
+global Xtremepush user attributes. Profile import currently sets only the
+stable `user_id` and `first_name` fields.
 
 ## Developer console (testing hooks)
 

@@ -1,5 +1,4 @@
 import { createHash, createHmac, createPublicKey, createSign, randomBytes, timingSafeEqual } from 'node:crypto';
-import { userIdForNickname } from './xtremepush';
 
 export type LoyaltyConfig = {
   sdkKey?: string;
@@ -48,9 +47,8 @@ export function createLoyaltyService(config: LoyaltyConfig) {
       const id = verified ?? randomBytes(16).toString('hex');
       return { id, cookie: signGuestCookie(id, guestSigningKey), created: !verified };
     },
-    issueToken(nickname: string, guestId: string, nowSeconds = Math.floor(Date.now() / 1000)): LoyaltyToken | null {
-      if (!enabled || !/^[a-f0-9]{32}$/.test(guestId)) return null;
-      const userId = `${userIdForNickname(nickname)}:guest:${guestId}`;
+    issueTokenForUser(userId: string, nowSeconds = Math.floor(Date.now() / 1000)): LoyaltyToken | null {
+      if (!enabled || !/^unicup:[a-f0-9]{32}$/.test(userId)) return null;
       const expiresAt = nowSeconds + ttl;
       const header = { alg: 'RS256', typ: 'JWT', ...(keyId ? { kid: keyId } : {}) };
       const payload = { sub: userId, exp: expiresAt };

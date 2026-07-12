@@ -102,6 +102,28 @@ main {
   min-height: 100vh;
 }
 
+.authBoot {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  gap: 8px;
+  color: var(--ink);
+  background: var(--yellow);
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.authBoot img {
+  width: 190px;
+  height: 150px;
+  object-fit: contain;
+}
+
+.authBoot span {
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .panel {
   margin: 0;
   padding: 0;
@@ -175,18 +197,11 @@ main {
   font-weight: 900;
 }
 
-.brandMark span {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 3px solid var(--ink);
-  border-radius: 50%;
-  color: var(--white);
-  background: var(--blue);
-  font-family: 'Changa One', sans-serif;
-  font-size: 18px;
-  font-weight: 400;
+.brandMark img {
+  display: block;
+  width: 104px;
+  height: 70px;
+  object-fit: contain;
 }
 
 .siteHeader nav {
@@ -208,6 +223,44 @@ main {
 .siteHeader nav a:hover,
 .siteHeader nav a.navPlay {
   border-bottom-color: var(--ink);
+}
+
+.accountControls {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.accountControls button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 3px solid var(--ink);
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.accountSignIn {
+  color: var(--ink);
+  background: var(--white);
+}
+
+.accountSignUp {
+  color: var(--white);
+  background: var(--blue);
+}
+
+.accountControls.guestOnly {
+  padding: 6px 9px;
+  border: 3px solid var(--ink);
+  color: var(--muted);
+  background: var(--white);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .heroCopy {
@@ -237,18 +290,16 @@ main {
 }
 
 .heroCopy h1 {
-  display: grid;
+  display: block;
   margin: 18px 0 16px;
-  color: var(--ink);
-  font-family: 'Changa One', sans-serif;
-  font-size: 116px;
-  font-weight: 400;
-  line-height: 0.72;
-  text-transform: uppercase;
 }
 
-.heroCopy h1 span:last-child {
-  color: var(--blue);
+.heroCopy h1 img {
+  display: block;
+  width: min(430px, 100%);
+  height: 270px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .heroTagline {
@@ -411,6 +462,46 @@ main {
   animation: livePulse 1.5s steps(2, end) infinite;
 }
 
+.identityStrip {
+  display: grid;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border: 3px solid var(--ink);
+  background: #dff6f6;
+}
+
+.identityStrip span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.identityStrip i {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--aqua);
+}
+
+.identityStrip.account {
+  background: #dcf7dd;
+}
+
+.identityStrip.loading i {
+  background: #d8dde2;
+}
+
+.identityStrip small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .deskField {
   display: grid;
   gap: 6px;
@@ -521,85 +612,20 @@ main {
   accent-color: var(--blue);
 }
 
-.loyaltyCard {
-  margin-top: 18px;
-  padding-top: 15px;
-  border-top: 4px solid var(--ink);
-  color: var(--ink);
-  background: var(--white);
-  overflow: visible;
+#loyalty-frame-container {
+  position: fixed !important;
+  right: auto !important;
+  bottom: max(16px, env(safe-area-inset-bottom)) !important;
+  left: max(16px, env(safe-area-inset-left)) !important;
+  z-index: 1000 !important;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
 }
 
-.loyaltyHeading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.loyaltyHeading > span {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  place-items: center;
-  border: 3px solid var(--ink);
-  border-radius: 50%;
-  color: var(--ink);
-  background: var(--yellow);
-}
-
-.loyaltyHeading div {
-  display: grid;
-}
-
-.loyaltyHeading b {
-  font-size: 14px;
-  text-transform: uppercase;
-}
-
-.loyaltyHeading small {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.loyaltyStatus {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.loyaltyHost {
-  display: flex;
-  width: 100%;
-  min-height: 0;
-  justify-content: center;
-  margin-top: 10px;
-  visibility: hidden;
-  opacity: 0;
-  transition: height 180ms ease, opacity 180ms ease;
-}
-
-.loyaltyCard.ready .loyaltyHost {
-  height: 110px;
-  visibility: visible;
-  opacity: 1;
-}
-
-.loyaltyCard.ready .loyaltyHost:has(#loyalty-frame-container[style*='display: flex']) {
-  height: 540px;
-}
-
-.loyaltyHost iframe {
+#loyalty-frame-container iframe {
   max-width: 100%;
+  max-height: calc(100dvh - 32px);
   border: 0;
-  border-radius: 4px;
-}
-
-.loyaltyCard.unavailable .loyaltyHeading > span,
-.loyaltyCard.error .loyaltyHeading > span {
-  background: #d8dde2;
 }
 
 .lobbyError {
@@ -851,10 +877,10 @@ main {
   text-transform: uppercase;
 }
 
-.landingFooter b {
-  font-family: 'Changa One', sans-serif;
-  font-size: 20px;
-  font-weight: 400;
+.landingFooter img {
+  width: 92px;
+  height: 58px;
+  object-fit: contain;
 }
 
 .landingFooter a {
@@ -1663,7 +1689,7 @@ main {
   }
 
   .siteHeader nav {
-    gap: 15px;
+    display: none;
   }
 
   .topHud {
@@ -1810,20 +1836,14 @@ main {
     padding: 15px 16px;
   }
 
-  .brandMark b {
-    display: none;
+  .brandMark img {
+    width: 82px;
+    height: 58px;
   }
 
-  .siteHeader nav {
-    gap: 12px;
-  }
-
-  .siteHeader nav a {
-    font-size: 10px;
-  }
-
-  .siteHeader nav a:nth-child(2) {
-    display: none;
+  .accountControls button {
+    padding-inline: 8px;
+    font-size: 9px;
   }
 
   .heroCopy {
@@ -1833,7 +1853,11 @@ main {
 
   .heroCopy h1 {
     margin-top: 14px;
-    font-size: 72px;
+  }
+
+  .heroCopy h1 img {
+    width: min(330px, 86vw);
+    height: 205px;
   }
 
   .heroTagline {
@@ -2023,12 +2047,17 @@ main {
 }
 
 @media (max-width: 470px) {
-  .siteHeader nav a:nth-child(3) {
+  .accountSignIn {
     display: none;
   }
 
   .heroCopy h1 {
-    font-size: 62px;
+    margin-block: 10px;
+  }
+
+  .heroCopy h1 img {
+    width: min(285px, 82vw);
+    height: 178px;
   }
 
   .heroTagline {
@@ -2110,7 +2139,10 @@ main {
 
   .heroCopy h1 {
     margin-block: 8px;
-    font-size: 52px;
+  }
+
+  .heroCopy h1 img {
+    height: 135px;
   }
 
   .heroTagline {

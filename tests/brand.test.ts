@@ -12,6 +12,7 @@ describe('Unicup brand contract', () => {
 
   it('publishes stable paths for every brand illustration', () => {
     expect(UNICUP_BRAND.art).toEqual({
+      logo: '/assets/brand/unicup-logo.png',
       heroDesktop: '/assets/brand/planetball-hero-desktop.png',
       heroMobile: '/assets/brand/planetball-hero-mobile.png',
       roadToBallOffice: '/assets/brand/road-to-ball-office.png'

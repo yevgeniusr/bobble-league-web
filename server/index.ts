@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { buildGamePlayerEvent, drainAnalyticsEvents, GamePlayerLifecycle } from '../shared/analytics';
+import { AnalyticsEvent, drainAnalyticsEvents } from '../shared/analytics';
 import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setPlayerReady, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { freePhysics } from '../shared/physics';
 import { BOX_TYPES, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId, normalizeBoxType } from '../shared/types';
 import { createXtremepushSender } from './xtremepush';
 import { createLoyaltyService } from './loyalty';
+import { createClerkIdentityAdapter, createIdentityService, GUEST_COOKIE_NAME } from './identity';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadLocalEnv();
@@ -26,6 +27,16 @@ const xtremepush = createXtremepushSender({
 const xtremepushSdkKey = process.env.XTREMEPUSH_SDK_KEY?.trim() ?? '';
 const publicHostname = (process.env.PUBLIC_HOSTNAME ?? 'unicup.rachkovan.com').trim().toLowerCase();
 const allowLocalXtremepush = process.env.XTREMEPUSH_ALLOW_LOCAL === 'true';
+const clerkPublishableKey = (process.env.CLERK_PUBLISHABLE_KEY || process.env.VITE_CLERK_PUBLISHABLE_KEY)?.trim() ?? '';
+const identitySecret = process.env.UNICUP_GUEST_SECRET || process.env.CLERK_SECRET_KEY || process.env.XTREMEPUSH_LOYALTY_PRIVATE_KEY || (!isProd ? 'unicup-local-guest-secret' : '');
+const identity = createIdentityService({
+  secret: identitySecret,
+  clerk: createClerkIdentityAdapter({
+    secretKey: process.env.CLERK_SECRET_KEY,
+    publishableKey: clerkPublishableKey,
+    authorizedParties: [`https://${publicHostname}`, `http://localhost:${port}`, `http://127.0.0.1:${port}`]
+  })
+});
 const loyalty = createLoyaltyService({
   sdkKey: xtremepushSdkKey,
   endpoint: process.env.XTREMEPUSH_LOYALTY_ENDPOINT,
@@ -44,7 +55,7 @@ const CHEAT_BOX_COOLDOWN_MS = 800;
 const CHEAT_ALL_COOLDOWN_MS = 5000;
 
 type InterServerEvents = Record<string, never>;
-type SocketData = { roomCode?: string; playerId?: string; lastCheatAt?: number; lastCheatAllAt?: number };
+type SocketData = { roomCode?: string; playerId?: string; accountId?: string; identityKind?: 'guest' | 'account'; lastCheatAt?: number; lastCheatAllAt?: number };
 type IOServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 type IOSocket = Parameters<Parameters<IOServer['on']>[1]>[0];
 
@@ -63,13 +74,13 @@ app.use(helmet({
       // Xtremepush's current vendor SDK evaluates its generated command
       // dispatcher at runtime; keep eval scoped to scripts and every network
       // origin separately allowlisted below.
-      scriptSrc: ["'self'", "'unsafe-eval'"],
+      scriptSrc: ["'self'", "'unsafe-eval'", 'https://*.clerk.accounts.dev', 'https://*.clerk.com', 'https://challenges.cloudflare.com'],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-      imgSrc: ["'self'", 'data:', 'blob:'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https://img.clerk.com'],
       mediaSrc: ["'self'", 'blob:'],
-      connectSrc: ["'self'", 'https://api.xtremepush.com'],
-      frameSrc: loyalty.endpoint ? [`https://${loyalty.endpoint}`] : ["'none'"],
+      connectSrc: ["'self'", 'https://api.xtremepush.com', 'https://*.clerk.accounts.dev', 'https://*.clerk.com', 'https://clerk-telemetry.com', 'https://*.clerk-telemetry.com'],
+      frameSrc: [...(loyalty.endpoint ? [`https://${loyalty.endpoint}`] : []), 'https://challenges.cloudflare.com'],
       workerSrc: ["'self'", 'blob:'],
       frameAncestors: ["'none'"]
     }
@@ -78,6 +89,11 @@ app.use(helmet({
 app.use(compression());
 app.use(express.json());
 app.get('/healthz', (_, res) => res.json({ ok: true, rooms: rooms.size, uptime: process.uptime() }));
+app.get('/api/identity', async (req, res) => {
+  const resolved = await identity.resolve({ authorization: req.headers.authorization, cookieHeader: req.headers.cookie });
+  setGuestCookie(res, resolved.guestCookie);
+  return res.json({ accountId: resolved.accountId, kind: resolved.kind });
+});
 app.get('/api/config', (req, res) => {
   res.setHeader('cache-control', 'no-store');
   const browserIntegrationEnabled = allowLocalXtremepush || req.hostname.toLowerCase() === publicHostname;
@@ -85,7 +101,8 @@ app.get('/api/config', (req, res) => {
   xtremepushBackend: xtremepush.enabled,
   xtremepushSdkKey: browserIntegrationEnabled ? xtremepushSdkKey || null : null,
   loyaltyEnabled: browserIntegrationEnabled && loyalty.enabled,
-  loyaltyEndpoint: browserIntegrationEnabled && loyalty.enabled ? loyalty.endpoint : null
+  loyaltyEndpoint: browserIntegrationEnabled && loyalty.enabled ? loyalty.endpoint : null,
+  clerkPublishableKey: clerkPublishableKey || null
   });
 });
 if (process.env.ENABLE_ANALYTICS_DEBUG === 'true') {
@@ -112,7 +129,7 @@ app.get('/api/xtremepush/sdk.js', async (_, res) => {
     return res.status(502).send('// Xtremepush SDK temporarily unavailable.');
   }
 });
-app.post('/api/loyalty/token', (req, res) => {
+app.post('/api/loyalty/token', async (req, res) => {
   res.setHeader('cache-control', 'no-store');
   if (!loyalty.enabled) return res.status(503).json({ error: 'Loyalty is not configured.' });
   const parsed = loyaltyTokenSchema.safeParse(req.body);
@@ -126,18 +143,9 @@ app.post('/api/loyalty/token', (req, res) => {
   if (!rate || rate.resetAt <= now) loyaltyRate.set(ip, { count: 1, resetAt: now + 60_000 });
   else if (++rate.count > 30) return res.status(429).json({ error: 'Too many loyalty sessions.' });
   try {
-    const guest = loyalty.guestSession(readCookie(req.headers.cookie, 'babble_loyalty_guest'));
-    if (!guest) return res.status(503).json({ error: 'Loyalty is not configured.' });
-    if (guest.created) {
-      res.cookie('babble_loyalty_guest', guest.cookie, {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: 'lax',
-        maxAge: 365 * 24 * 60 * 60 * 1000,
-        path: '/'
-      });
-    }
-    const issued = loyalty.issueToken(parsed.data.nickname, guest.id);
+    const resolved = await identity.resolve({ authorization: req.headers.authorization, cookieHeader: req.headers.cookie });
+    setGuestCookie(res, resolved.guestCookie);
+    const issued = loyalty.issueTokenForUser(resolved.accountId);
     if (!issued) return res.status(503).json({ error: 'Loyalty is not configured.' });
     return res.json(issued);
   } catch {
@@ -153,6 +161,14 @@ if (isProd) {
 
 const httpServer = createServer(app);
 const io: IOServer = new Server(httpServer, { cors: { origin: true, credentials: false } });
+
+io.use(async (socket, next) => {
+  const token = typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : undefined;
+  const resolved = await identity.resolve({ authorization: token ? `Bearer ${token}` : undefined, cookieHeader: socket.handshake.headers.cookie });
+  socket.data.accountId = resolved.accountId;
+  socket.data.identityKind = resolved.kind;
+  next();
+});
 
 const createSchema = z.object({
   name: z.string().max(24),
@@ -178,7 +194,6 @@ io.on('connection', socket => {
     const room: Room = { state, inputs: {}, lastActiveAt: Date.now() };
     rooms.set(roomCode, room);
     joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
-    emitGamePlayer(socket, room, 'room_created');
     cb({ ok: true, roomCode, playerId: socket.id });
   });
 
@@ -188,8 +203,7 @@ io.on('connection', socket => {
     const room = rooms.get(parsed.data.roomCode);
     if (!room) return cb({ ok: false, error: 'Room not found.' });
     if (Object.values(room.state.players).filter(p => p.connected).length >= 8) return cb({ ok: false, error: 'Room is full.' });
-    const join = joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
-    emitGamePlayer(socket, room, join.reclaimed ? 'player_reconnected' : 'room_joined');
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
     cb({ ok: true, roomCode: parsed.data.roomCode, playerId: socket.id });
   });
 
@@ -284,7 +298,6 @@ io.on('connection', socket => {
 
   socket.on('room:leave', () => {
     const room = currentRoom(socket); if (!room) return;
-    emitGamePlayer(socket, room, 'player_left');
     removePlayer(room.state, socket.id);
     socket.leave(room.state.roomCode);
     socket.data.roomCode = undefined;
@@ -294,9 +307,9 @@ io.on('connection', socket => {
 
   // freePhysics at match boundaries: the next resolving tick rebuilds a
   // pristine Rapier world, so no contact/solver state carries across matches.
-  socket.on('game:start', () => { const room = currentRoom(socket); if (room) { freePhysics(room.state); startGame(room.state); emitGamePlayerToConnected(room, 'match_started'); } });
-  socket.on('game:reset', mode => { const room = currentRoom(socket); if (room && GAME_MODES.includes(mode)) { freePhysics(room.state); resetGame(room.state, mode); emitGamePlayerToConnected(room, 'match_reset'); } });
-  socket.on('disconnect', () => { const room = currentRoom(socket); if (room) { emitGamePlayer(socket, room, 'player_disconnected'); removePlayer(room.state, socket.id); } });
+  socket.on('game:start', () => { const room = currentRoom(socket); if (room) { freePhysics(room.state); startGame(room.state); } });
+  socket.on('game:reset', mode => { const room = currentRoom(socket); if (room && GAME_MODES.includes(mode)) { freePhysics(room.state); resetGame(room.state, mode); } });
+  socket.on('disconnect', () => { const room = currentRoom(socket); if (room) removePlayer(room.state, socket.id); });
 });
 
 function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
@@ -304,10 +317,10 @@ function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
   socket.data.playerId = socket.id;
   socket.join(room.state.roomCode);
   // returning player (same name, disconnected seat): reclaim side/babbleheads/box
-  const seat = findDisconnectedSeat(room.state, name);
+  const seat = findDisconnectedSeat(room.state, name, socket.data.accountId);
   const reclaimed = seat ? reclaimPlayer(room.state, seat.id, socket.id) : null;
   if (!reclaimed) {
-    addPlayer(room.state, socket.id, name, team);
+    addPlayer(room.state, socket.id, name, team, undefined, socket.data.accountId);
     if (team) setSideTeam(room.state, socket.id, team);
   }
   room.inputs[socket.id] = { ...blankInput };
@@ -318,24 +331,13 @@ function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
 function currentRoom(socket: { data: SocketData }) { return socket.data.roomCode ? rooms.get(socket.data.roomCode) : undefined; }
 function uniqueRoomCode() { let code = ''; do code = nanoid(5).replace(/[-_]/g, 'Z').toUpperCase(); while (rooms.has(code)); return code; }
 
-function emitGamePlayer(socket: IOSocket, room: Room, lifecycle: GamePlayerLifecycle) {
-  sendAnalyticsEvent(buildGamePlayerEvent(room.state, lifecycle, socket.id));
-}
-
-function emitGamePlayerToConnected(room: Room, lifecycle: GamePlayerLifecycle) {
-  for (const player of Object.values(room.state.players)) {
-    if (!player.connected) continue;
-    sendAnalyticsEvent(buildGamePlayerEvent(room.state, lifecycle, player.id));
-  }
-}
-
 function flushAnalytics(room: Room) {
   for (const event of drainAnalyticsEvents(room.state)) {
     sendAnalyticsEvent(event);
   }
 }
 
-function sendAnalyticsEvent(event: ReturnType<typeof buildGamePlayerEvent>) {
+function sendAnalyticsEvent(event: AnalyticsEvent) {
   void xtremepush.send(event);
 }
 
@@ -355,13 +357,15 @@ function loadLocalEnv() {
   }
 }
 
-function readCookie(header: string | undefined, name: string) {
-  if (!header) return undefined;
-  for (const part of header.split(';')) {
-    const [key, ...value] = part.trim().split('=');
-    if (key === name) return decodeURIComponent(value.join('='));
-  }
-  return undefined;
+function setGuestCookie(res: express.Response, value?: string) {
+  if (!value) return;
+  res.cookie(GUEST_COOKIE_NAME, value, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'lax',
+    maxAge: 365 * 24 * 60 * 60 * 1000,
+    path: '/'
+  });
 }
 
 function readLocalKey(filename: string) {

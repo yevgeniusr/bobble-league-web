@@ -1,17 +1,19 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
+import { ClerkProvider, Show, SignInButton, SignUpButton, UserButton, useAuth, useUser } from '@clerk/react';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, BoxTypeInput, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec, normalizeBoxType } from '../../shared/types';
 import { initXtremepush, trackAnalyticsEvent, xtremepushCommand } from './analytics';
 import { AudioSettings, audioManager, loadAudioSettings, saveAudioSettings } from './audio';
 import { UNICUP_BRAND } from './brand';
 import { readableTextColor } from './color';
 import { buildMatchEndSummary } from './matchEnd';
+import { authHeaders, ClerkTokenGetter, fetchUnicupIdentity, UnicupIdentity } from './auth';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
-const socket: Sock = io();
+const socket: Sock = io({ autoConnect: false });
 let refreshLoyaltyToken: (() => void) | null = null;
 let loyaltyExpiryHandlerInstalled = false;
 const MAP_SELECT_HINTS: Record<MapId, string> = {
@@ -48,7 +50,9 @@ if (devtoolsEnabled) {
   };
 }
 
-function App() {
+type AppAuth = { isLoaded: boolean; userId: string | null; getToken: ClerkTokenGetter };
+
+function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountControls: React.ReactNode; suggestedName?: string }) {
   const [state, setState] = React.useState<GameState | null>(null);
   const [you, setYou] = React.useState('');
   // 'bobble:name' is the legacy pre-rename localStorage key, read only for migration; new writes use 'babble:name'.
@@ -58,6 +62,7 @@ function App() {
   const [roomCode, setRoomCode] = React.useState('');
   const [error, setError] = React.useState('');
   const [conn, setConn] = React.useState<'connected' | 'reconnecting'>('connected');
+  const [identity, setIdentity] = React.useState<UnicupIdentity | null>(null);
   const [audioSettings, setAudioSettings] = React.useState<AudioSettings>(() => loadAudioSettings());
   const stateRef = React.useRef<GameState | null>(null);
   const leavingRef = React.useRef(false);
@@ -69,8 +74,8 @@ function App() {
     socket.on('game:state', (s, playerId) => { if (leavingRef.current) return; setState(s); if (playerId) setYou(playerId); });
     socket.on('room:error', setError);
     socket.on('analytics:event', trackAnalyticsEvent);
-    // reconnect robustness: on transport loss show a banner, then automatically
-    // rejoin the same room; the server reclaims the old seat by display name.
+    // On transport loss, reconnect with the current verified account/guest
+    // identity so the server can reclaim the same seat safely.
     const onDisconnect = () => setConn('reconnecting');
     const onConnect = () => {
       setConn('connected');
@@ -85,6 +90,33 @@ function App() {
     socket.io.on('reconnect', onConnect);
     return () => { socket.off('game:state'); socket.off('room:error'); socket.off('analytics:event', trackAnalyticsEvent); socket.off('disconnect', onDisconnect); socket.io.off('reconnect', onConnect); };
   }, []);
+
+  React.useEffect(() => {
+    if (!auth.isLoaded) return;
+    let active = true;
+    void (async () => {
+      try {
+        const resolved = await fetchUnicupIdentity(fetch, auth.getToken);
+        if (!active) return;
+        const token = await auth.getToken();
+        if (!active) return;
+        setIdentity(resolved);
+        socket.auth = token ? { token } : {};
+        if (socket.connected) socket.disconnect();
+        socket.connect();
+      } catch {
+        if (active) setError('Could not establish your player identity.');
+      }
+    })();
+    return () => { active = false; };
+  }, [auth.isLoaded, auth.userId]);
+
+  React.useEffect(() => () => { socket.disconnect(); }, []);
+
+  React.useEffect(() => {
+    if (!suggestedName || localStorage.getItem('babble:name') || localStorage.getItem('bobble:name')) return;
+    setName(suggestedName.slice(0, 18));
+  }, [suggestedName]);
 
   React.useEffect(() => {
     audioManager.setSettings(audioSettings);
@@ -115,11 +147,13 @@ function App() {
   const patchAudio = (patch: Partial<AudioSettings>) => setAudioSettings(s => ({ ...s, ...patch }));
 
   function createRoom() {
+    if (!identity || !socket.connected) return setError('Player identity is still connecting.');
     leavingRef.current = false;
     localStorage.setItem('babble:name', name);
     socket.emit('room:create', { name, mode, mapId }, res => res.ok ? (setRoomCode(res.roomCode), setError('')) : setError(res.error));
   }
   function joinRoom() {
+    if (!identity || !socket.connected) return setError('Player identity is still connecting.');
     leavingRef.current = false;
     localStorage.setItem('babble:name', name);
     socket.emit('room:join', { roomCode: roomCode.toUpperCase(), name }, res => res.ok ? (setError(''), setRoomCode(res.roomCode)) : setError(res.error));
@@ -140,6 +174,9 @@ function App() {
       onCreateRoom={createRoom}
       onJoinRoom={joinRoom}
       error={error}
+      accountControls={accountControls}
+      identity={identity}
+      getToken={auth.getToken}
     />}
     {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ leavingRef.current = true; socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
@@ -160,9 +197,12 @@ type LandingPageProps = {
   onCreateRoom: () => void;
   onJoinRoom: () => void;
   error: string;
+  accountControls: React.ReactNode;
+  identity: UnicupIdentity | null;
+  getToken: ClerkTokenGetter;
 };
 
-function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error }: LandingPageProps) {
+function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error, accountControls, identity, getToken }: LandingPageProps) {
   const [deskView, setDeskView] = React.useState<'host' | 'join'>('host');
   const hostTabRef = React.useRef<HTMLButtonElement>(null);
   const joinTabRef = React.useRef<HTMLButtonElement>(null);
@@ -186,17 +226,18 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, 
           <img src={UNICUP_BRAND.art.heroDesktop} alt=""/>
         </picture>
         <header className="siteHeader">
-          <a className="brandMark" href="#top" aria-label={`${UNICUP_BRAND.name} home`}><span>UC</span><b>{UNICUP_BRAND.name}</b></a>
+          <a className="brandMark" href="#top" aria-label={`${UNICUP_BRAND.name} home`}><img src={UNICUP_BRAND.art.logo} alt=""/></a>
           <nav aria-label="Landing navigation">
             <a href="#origin">Origin</a>
             <a href="#ball-office">Ball Office</a>
             <a href="#fair-play">Fair play</a>
             <a className="navPlay" href="#play">Play</a>
           </nav>
+          {accountControls}
         </header>
         <div className="heroCopy">
           <p className="heroKicker">The Universe Cup / PlanetBall season 01</p>
-          <h1 aria-label={UNICUP_BRAND.name}><span aria-hidden="true">Unicup</span></h1>
+          <h1 aria-label={UNICUP_BRAND.name}><img src={UNICUP_BRAND.art.logo} alt=""/></h1>
           <p className="heroTagline">{UNICUP_BRAND.tagline}</p>
           <p className="heroMission">{UNICUP_BRAND.mission}</p>
           <a className="heroCta" href="#play">Enter tournament <span aria-hidden="true">&#8594;</span></a>
@@ -209,6 +250,11 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, 
         <div className="deskHead">
           <div><p>Unicap entry terminal / T-01</p><h2 id="deskTitle">Create or join</h2></div>
           <span className="deskLive"><i/> Live</span>
+        </div>
+
+        <div className={`identityStrip ${identity?.kind ?? 'loading'}`}>
+          <span><i/>{identity?.kind === 'account' ? 'Account progress protected' : identity?.kind === 'guest' ? 'Playing as guest' : 'Connecting player'}</span>
+          {identity?.kind === 'guest' && <small>Sign up anytime to keep this progress across devices.</small>}
         </div>
 
         <label className="deskField">Player name
@@ -243,7 +289,7 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, 
         </div>}
 
         <AudioControls settings={audioSettings} onChange={onAudioChange}/>
-        <LoyaltyWidget nickname={name}/>
+        <LoyaltyWidget nickname={name} getToken={getToken}/>
         {error && <p className="lobbyError" role="alert">{error}</p>}
       </aside>
     </section>
@@ -290,17 +336,14 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, 
       <a className="futureCta" href="#play">Take the first kick <span aria-hidden="true">&#8593;</span></a>
     </section>
 
-    <footer className="landingFooter"><b>{UNICUP_BRAND.name}</b><span>Universe Cup transmission / PlanetBall season 01</span><a href="#top">Back to orbit &#8593;</a></footer>
+    <footer className="landingFooter"><img src={UNICUP_BRAND.art.logo} alt="Unicup"/><span>Universe Cup transmission / PlanetBall season 01</span><a href="#top">Back to orbit &#8593;</a></footer>
   </div>;
 }
 
-function LoyaltyWidget({ nickname }: { nickname: string }) {
-  const hostRef = React.useRef<HTMLDivElement>(null);
+function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: ClerkTokenGetter }) {
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
   const generationRef = React.useRef(0);
   const [config, setConfig] = React.useState<{ loyaltyEnabled: boolean; loyaltyEndpoint: string | null } | null>(null);
-  const [status, setStatus] = React.useState<'loading' | 'mounting' | 'ready' | 'unavailable' | 'error'>('loading');
-  const [message, setMessage] = React.useState('Preparing rewards…');
 
   React.useEffect(() => {
     let active = true;
@@ -311,116 +354,75 @@ function LoyaltyWidget({ nickname }: { nickname: string }) {
       if (!active) return;
       const next = value as { loyaltyEnabled?: boolean; loyaltyEndpoint?: string | null };
       setConfig({ loyaltyEnabled: Boolean(next.loyaltyEnabled), loyaltyEndpoint: next.loyaltyEndpoint ?? null });
-      if (!next.loyaltyEnabled) { setStatus('unavailable'); setMessage('Rewards will appear when Loyalty is configured.'); }
-    }).catch(() => { if (active) { setStatus('error'); setMessage('Rewards are temporarily unavailable.'); } });
+    }).catch(() => { if (active) setConfig({ loyaltyEnabled: false, loyaltyEndpoint: null }); });
     return () => { active = false; };
   }, []);
 
   React.useEffect(() => {
     const endpoint = config?.loyaltyEndpoint;
     const cleanName = nickname.trim();
-    if (!config?.loyaltyEnabled || !endpoint || !cleanName || !hostRef.current) return;
+    if (!config?.loyaltyEnabled || !endpoint || !cleanName) return;
     const generation = ++generationRef.current;
     const controller = new AbortController();
     let installedRefresh: (() => void) | null = null;
-    let readyFallback: number | null = null;
     const timer = window.setTimeout(async () => {
       try {
-        setStatus('loading');
-        setMessage(`Signing in ${cleanName}…`);
         const sdkReady = await initXtremepush();
         if (!sdkReady || controller.signal.aborted || generation !== generationRef.current) throw new Error('SDK unavailable');
         const response = await fetch('/api/loyalty/token', {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', ...await authHeaders(getToken) },
           body: JSON.stringify({ nickname: cleanName }),
           signal: controller.signal
         });
         if (!response.ok) throw new Error('Token unavailable');
         const session = await response.json() as { token: string; userId: string };
-        if (controller.signal.aborted || generation !== generationRef.current || !hostRef.current) return;
-        hostRef.current.replaceChildren();
+        if (controller.signal.aborted || generation !== generationRef.current) return;
         xtremepushCommand('set', 'user_id', session.userId);
         xtremepushCommand('set', 'loyalty_endpoint', `https://${endpoint}`);
         xtremepushCommand('set', 'loyalty_token', session.token);
         refreshLoyaltyToken = () => {
-          void fetch('/api/loyalty/token', {
-            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname: cleanName }), signal: controller.signal
-          }).then(r => r.ok ? r.json() : Promise.reject()).then((fresh: { token: string }) => {
+          void authHeaders(getToken).then(headers => fetch('/api/loyalty/token', {
+            method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ nickname: cleanName }), signal: controller.signal
+          })).then(r => r.ok ? r.json() : Promise.reject()).then((fresh: { token: string }) => {
             if (generation === generationRef.current && !controller.signal.aborted) xtremepushCommand('set', 'loyalty_token', fresh.token);
-          }).catch(() => { if (!controller.signal.aborted) setMessage('Rewards session expired. Re-enter your nickname to reconnect.'); });
+          }).catch(() => undefined);
         };
         installedRefresh = refreshLoyaltyToken;
         if (!loyaltyExpiryHandlerInstalled) {
           xtremepushCommand('on', 'loyalty_token_expired', () => refreshLoyaltyToken?.());
           loyaltyExpiryHandlerInstalled = true;
         }
-        xtremepushCommand('mountLoyalty', 420, 520, hostRef.current);
-        iframeRef.current = hostRef.current.querySelector('iframe');
-        const revealMountedFrame = () => {
-          if (generation === generationRef.current && iframeRef.current) {
-            setStatus('ready');
-            setMessage('');
-          }
-        };
-        iframeRef.current?.addEventListener('load', revealMountedFrame, { once: true });
-        setStatus('mounting');
-        setMessage('Loading your rewards…');
-        // Current Loyalty builds do not consistently emit the documented
-        // postMessage `ready` event, even after the authenticated iframe and
-        // player endpoints load successfully. Reveal the mounted iframe after
-        // a grace period; a later authenticated `error` event still wins.
-        readyFallback = window.setTimeout(() => {
-          if (generation !== generationRef.current) return;
-          iframeRef.current = hostRef.current?.querySelector('iframe') ?? null;
-          if (iframeRef.current) {
-            setStatus(current => current === 'mounting' ? 'ready' : current);
-            setMessage(current => current === 'Loading your rewards…' ? '' : current);
-          }
-        }, 5000);
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setStatus('error');
-        setMessage(error instanceof Error && error.message === 'SDK unavailable' ? 'Rewards SDK is not configured.' : 'Could not open rewards right now.');
-      }
+        // Omitting the host element enables Xtremepush's native floating widget mode.
+        xtremepushCommand('mountLoyalty', 420, 640);
+        window.setTimeout(() => {
+          if (generation === generationRef.current) iframeRef.current = document.querySelector('#loyalty-frame-container iframe');
+        }, 0);
+      } catch { /* The game remains usable when Loyalty is unavailable. */ }
     }, 450);
     return () => {
       window.clearTimeout(timer);
-      if (readyFallback !== null) window.clearTimeout(readyFallback);
       controller.abort();
       iframeRef.current = null;
-      hostRef.current?.replaceChildren();
+      document.getElementById('loyalty-frame-container')?.remove();
       if (refreshLoyaltyToken === installedRefresh) refreshLoyaltyToken = null;
     };
-  }, [config, nickname]);
+  }, [config, nickname, getToken]);
 
   React.useEffect(() => {
     const endpoint = config?.loyaltyEndpoint;
     if (!endpoint) return;
     const onMessage = (event: MessageEvent) => {
-      const mountedFrame = iframeRef.current ?? hostRef.current?.querySelector('iframe') ?? null;
+      const mountedFrame = iframeRef.current ?? document.querySelector<HTMLIFrameElement>('#loyalty-frame-container iframe');
       if (mountedFrame) iframeRef.current = mountedFrame;
       if (event.origin !== `https://${endpoint}` || event.source !== mountedFrame?.contentWindow || !event.data || event.data.source !== 'Scrimmage') return;
-      if (event.data.type === 'ready') { setStatus('ready'); setMessage(''); }
-      if (event.data.type === 'error') {
-        if (event.data.payload?.type === 'wysiwyg:empty-config') {
-          setStatus('unavailable');
-          setMessage('Rewards are connected, but no active widget is published in Xtremepush yet.');
-        } else {
-          setStatus('error');
-          setMessage('Rewards authentication failed.');
-        }
-      }
+      if (event.data.type === 'error') console.warn('Xtremepush Loyalty widget error', event.data.payload?.type ?? 'unknown');
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [config?.loyaltyEndpoint]);
 
-  return <section className={`loyaltyCard ${status}`} aria-label="Unicup rewards">
-    <div className="loyaltyHeading"><span>★</span><div><b>Unicup Rewards</b><small>Signed in as {nickname.trim() || 'your nickname'}</small></div></div>
-    {message && <p className="loyaltyStatus" role="status">{message}</p>}
-    <div ref={hostRef} className="loyaltyHost" aria-hidden={status !== 'ready'}/>
-  </section>;
+  return null;
 }
 // One icon per Power Play, reused across HUD buttons and hints.
 const POWER_ICONS: Record<BoxType, string> = {
@@ -871,4 +873,35 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
   </>;
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+function ClerkAccountControls() {
+  return <div className="accountControls" aria-label="Player account">
+    <Show when="signed-out">
+      <SignInButton mode="modal"><button type="button" className="accountSignIn">Sign in</button></SignInButton>
+      <SignUpButton mode="modal"><button type="button" className="accountSignUp">Create account</button></SignUpButton>
+    </Show>
+    <Show when="signed-in"><UserButton showName/></Show>
+  </div>;
+}
+
+function ClerkConnectedApp() {
+  const { isLoaded, userId, getToken } = useAuth();
+  const { user } = useUser();
+  const suggestedName = user?.username ?? user?.firstName ?? undefined;
+  return <App auth={{ isLoaded, userId: userId ?? null, getToken }} accountControls={<ClerkAccountControls/>} suggestedName={suggestedName}/>;
+}
+
+function AuthRoot() {
+  const [publishableKey, setPublishableKey] = React.useState<string | null | undefined>();
+  React.useEffect(() => {
+    let active = true;
+    fetch('/api/config').then(response => response.ok ? response.json() : Promise.reject()).then((config: { clerkPublishableKey?: string | null }) => {
+      if (active) setPublishableKey(config.clerkPublishableKey ?? null);
+    }).catch(() => { if (active) setPublishableKey(null); });
+    return () => { active = false; };
+  }, []);
+  if (publishableKey === undefined) return <main className="authBoot" aria-busy="true"><img src={UNICUP_BRAND.art.logo} alt="Unicup"/><span>Connecting player identity</span></main>;
+  if (publishableKey) return <ClerkProvider publishableKey={publishableKey}><ClerkConnectedApp/></ClerkProvider>;
+  return <App auth={{ isLoaded: true, userId: null, getToken: async () => null }} accountControls={<div className="accountControls guestOnly">Guest mode</div>}/>;
+}
+
+createRoot(document.getElementById('root')!).render(<AuthRoot/>);

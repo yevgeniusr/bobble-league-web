@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createVerify, generateKeyPairSync } from 'node:crypto';
-import { drainAnalyticsEvents } from '../shared/analytics';
+import { buildGamePlayedEvents, drainAnalyticsEvents } from '../shared/analytics';
 import { addPlayer, collectPowerBox, createInitialState, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { FIELD } from '../shared/types';
 import { createXtremepushAnalytics } from '../client/src/analytics';
@@ -31,7 +31,7 @@ function fakeBrowser() {
 describe('Xtremepush gameplay analytics payloads', () => {
   it('records rich abilityUsed payloads only after successful power plays', () => {
     const state = createInitialState('ANL1', 3);
-    addPlayer(state, 'left-socket', 'Lefty', 'pigs', 'left');
+    addPlayer(state, 'left-socket', 'Lefty', 'pigs', 'left', 'unicup:0123456789abcdef0123456789abcdef');
     addPlayer(state, 'right-socket', 'Righty', 'tigers', 'right');
     startGame(state, seq([0.5]));
 
@@ -48,6 +48,7 @@ describe('Xtremepush gameplay analytics payloads', () => {
       playerId: 'left-socket',
       playerSide: 'left',
       playerTeam: 'pigs',
+      accountId: 'unicup:0123456789abcdef0123456789abcdef',
       abilityType: 'boost',
       targetPowerId: 'boost',
       holderId: 'left-socket',
@@ -59,7 +60,7 @@ describe('Xtremepush gameplay analytics payloads', () => {
       matchLength: 'qualifier',
       matchMode: 3,
       winner: null,
-      mapId: null
+      mapId: 'stadium'
     });
     expect(event.payload.timestamp).toBe('1970-01-01T00:00:02.000Z');
   });
@@ -110,9 +111,12 @@ describe('Xtremepush gameplay analytics payloads', () => {
 
     stepGame(state, {}, 4000, seq([0.5]));
 
-    const [event] = drainAnalyticsEvents(state);
+    const [event, ...completionEvents] = drainAnalyticsEvents(state);
     expect(event.name).toBe('goalScored');
     expect(event.payload).toMatchObject({
+      playerId: 'right-socket',
+      playerSide: 'right',
+      playerName: 'Righty',
       scoringSide: 'left',
       scoringTeam: 'pigs',
       concedingSide: 'right',
@@ -128,12 +132,36 @@ describe('Xtremepush gameplay analytics payloads', () => {
     const ballPosition = event.payload.ballPosition as { x: number; y: number };
     expect(ballPosition.x).toBeGreaterThan(FIELD.width);
     expect(ballPosition.y).toBeCloseTo(FIELD.goalY + FIELD.goalHeight / 2, 3);
+    expect(completionEvents.map(item => [item.name, item.payload.playerName, item.payload.outcome])).toEqual([
+      ['gamePlayed', 'Lefty', 'won'],
+      ['gamePlayed', 'Righty', 'loss']
+    ]);
+  });
+
+  it('builds one personalized gamePlayed result for every participant', () => {
+    const state = createInitialState('ANL6', 1);
+    addPlayer(state, 'left-socket', 'Lefty', 'pigs', 'left');
+    addPlayer(state, 'right-socket', 'Righty', 'tigers', 'right');
+    state.phase = 'finished';
+    state.winner = 'left';
+    state.score = { left: 3, right: 1 };
+
+    const events = buildGamePlayedEvents(state, 5_000);
+
+    expect(events).toHaveLength(2);
+    expect(events.map(event => event.name)).toEqual(['gamePlayed', 'gamePlayed']);
+    expect(events[0].payload).toMatchObject({
+      playerId: 'left-socket', playerName: 'Lefty', outcome: 'won', playerScore: 3, opponentScore: 1
+    });
+    expect(events[1].payload).toMatchObject({
+      playerId: 'right-socket', playerName: 'Righty', outcome: 'loss', playerScore: 1, opponentScore: 3
+    });
   });
 });
 
 describe('Xtremepush browser analytics client', () => {
   const event = {
-    name: 'gamePlayer' as const,
+    name: 'gamePlayed' as const,
     payload: {
       roomCode: 'ANL4',
       timestamp: '2026-07-07T00:00:00.000Z',
@@ -146,7 +174,7 @@ describe('Xtremepush browser analytics client', () => {
       maxTurns: 90,
       winner: null,
       mapId: null,
-      lifecycle: 'room_created'
+      outcome: 'won'
     }
   };
 
@@ -173,7 +201,7 @@ describe('Xtremepush browser analytics client', () => {
 
     const win = browser.win as unknown as { XtremePushObject: string; xtremepush: { q: unknown[] } };
     expect(win.XtremePushObject).toBe('xtremepush');
-    expect(win.xtremepush.q).toEqual([['event', 'gamePlayer', event.payload]]);
+    expect(win.xtremepush.q).toEqual([['event', 'gamePlayed', event.payload]]);
     const script = browser.scripts[0];
     expect(script?.src).toBe('https://cdn.example.test/sdk.js');
     expect(script?.dataset.xtremepushSdk).toBe('public-test-key');
@@ -187,7 +215,7 @@ describe('Xtremepush Loyalty authentication', () => {
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
   });
 
-  it('signs a short-lived RS256 JWT mapped to the nickname profile id', () => {
+  it('signs a short-lived RS256 JWT mapped to the canonical account id', () => {
     const service = createLoyaltyService({
       sdkKey: 'public-sdk-key', endpoint: 'p123.p.loyalty.eu.xtremepush.com',
       privateKey: keys.privateKey, publicKey: keys.publicKey, keyId: 'primary', tokenTtlSeconds: 120
@@ -198,8 +226,8 @@ describe('Xtremepush Loyalty authentication', () => {
     expect(restored.id).toBe(guest.id);
     expect(restored.created).toBe(false);
     expect(service.guestSession(`${guest.cookie}tampered`)!.id).not.toBe(guest.id);
-    const issued = service.issueToken(' Yev ', guest.id, 1_000)!;
-    const subject = `babble-player:yev:guest:${guest.id}`;
+    const subject = `unicup:${guest.id}`;
+    const issued = service.issueTokenForUser(subject, 1_000)!;
     expect(issued.userId).toBe(subject);
     expect(issued.expiresAt).toBe(1_120);
     const [header64, payload64, signature64] = issued.token.split('.');
@@ -219,7 +247,7 @@ describe('Xtremepush Loyalty authentication', () => {
     expect(normalizeLoyaltyEndpoint('https://example.com/path')).toBe('');
     const safeTtl = createLoyaltyService({ sdkKey: 'sdk', endpoint: 'p1.p.loyalty.eu.xtremepush.com', privateKey: keys.privateKey, publicKey: keys.publicKey, tokenTtlSeconds: Number.NaN });
     const guest = safeTtl.guestSession()!;
-    expect(safeTtl.issueToken('Yev', guest.id, 1_000)?.expiresAt).toBe(1_300);
+    expect(safeTtl.issueTokenForUser(`unicup:${guest.id}`, 1_000)?.expiresAt).toBe(1_300);
   });
 });
 
@@ -243,32 +271,25 @@ describe('Xtremepush backend hit-event sender', () => {
       playerSide: 'left' as const,
       playerTeam: 'pigs' as const,
       playerName: 'Lefty',
+      accountId: 'unicup:0123456789abcdef0123456789abcdef',
       abilityType: 'boost'
     }
   };
 
-  it('builds the documented /hit/event body with app token, user_id, event, value, attributes, and timestamp', () => {
+  it('builds the documented /hit/event body without mutating global user attributes', () => {
     expect(buildHitEventBody('token-for-test', event)).toMatchObject({
       apptoken: 'token-for-test',
-      user_id: 'babble-player:lefty',
+      user_id: 'unicup:0123456789abcdef0123456789abcdef',
       event: 'abilityUsed',
       value: {
         roomCode: 'ANL5',
         abilityType: 'boost',
-        babbleUserId: 'babble-player:lefty'
-      },
-      user_attributes: {
-        room_code: 'ANL5',
-        player_side: 'left',
-        player_team: 'pigs',
-        player_name: 'Lefty',
-        match_mode: 3,
-        map_id: 'volcano',
-        last_event: 'boost'
+        babbleUserId: 'unicup:0123456789abcdef0123456789abcdef'
       },
       timestamp: '2026-07-07 01:02:03 +00:00',
       async: false
     });
+    expect(buildHitEventBody('token-for-test', event)).not.toHaveProperty('user_attributes');
   });
 
   it('builds the profile import body used to make users visible before events are hit', () => {
@@ -295,9 +316,9 @@ describe('Xtremepush backend hit-event sender', () => {
     }));
     const calls = fetcher.mock.calls as unknown as [string, RequestInit][];
     const importBody = JSON.parse(calls[0][1].body as string);
-    expect(importBody).toMatchObject({ apptoken: 'token-for-test', columns: ['user_id', 'first_name'], rows: [['babble-player:lefty', 'Lefty']], async: false });
+    expect(importBody).toMatchObject({ apptoken: 'token-for-test', columns: ['user_id', 'first_name'], rows: [['unicup:0123456789abcdef0123456789abcdef', 'Lefty']], async: false });
     const body = JSON.parse(calls[1][1].body as string);
-    expect(body).toMatchObject({ apptoken: 'token-for-test', user_id: 'babble-player:lefty', event: 'abilityUsed', async: false });
+    expect(body).toMatchObject({ apptoken: 'token-for-test', user_id: 'unicup:0123456789abcdef0123456789abcdef', event: 'abilityUsed', async: false });
     expect(sender.debugSnapshot()).toMatchObject({ enabled: true, attempted: 1, succeeded: 1, failed: 0, profilesAttempted: 1, profilesSucceeded: 1, profilesFailed: 0 });
   });
 

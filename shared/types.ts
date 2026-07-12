@@ -498,6 +498,7 @@ export type ActiveEffect = { type: EffectName; untilTurn: number; until?: number
 
 export type PlayerState = {
   id: string;
+  accountId?: string;
   name: string;
   side: PlayerSide;
   team: TeamId;

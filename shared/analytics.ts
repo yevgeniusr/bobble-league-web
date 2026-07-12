@@ -12,15 +12,8 @@ import {
 } from './types';
 import { boxTargetPowerId, normalizeBoxType } from './types';
 
-export type AnalyticsEventName = 'abilityUsed' | 'boxPickup' | 'gamePlayer' | 'goalScored';
-export type GamePlayerLifecycle =
-  | 'room_created'
-  | 'room_joined'
-  | 'player_reconnected'
-  | 'player_left'
-  | 'player_disconnected'
-  | 'match_started'
-  | 'match_reset';
+export type AnalyticsEventName = 'abilityUsed' | 'boxPickup' | 'gamePlayed' | 'goalScored';
+export type GameOutcome = 'won' | 'loss' | 'draw';
 
 export type AnalyticsPayload = {
   roomCode: string;
@@ -38,6 +31,7 @@ export type AnalyticsPayload = {
   playerSide?: PlayerSide;
   playerTeam?: TeamId;
   playerName?: string;
+  accountId?: string;
   [key: string]: unknown;
 };
 
@@ -91,7 +85,7 @@ function commonPayload(state: GameState, now = Date.now()): AnalyticsPayload {
     goalTarget: state.config.goalTarget,
     maxTurns: state.config.maxTurns,
     winner: state.winner,
-    mapId: null
+    mapId: state.mapId
   };
 }
 
@@ -100,6 +94,7 @@ function playerFields(state: GameState, playerId?: string) {
   if (!player) return {};
   return {
     playerId: player.id,
+    accountId: player.accountId,
     playerSide: player.side,
     playerTeam: player.team,
     playerName: player.name,
@@ -163,6 +158,7 @@ export function buildGoalScoredEvent(state: GameState, details: GoalDetails): An
     name: 'goalScored',
     payload: {
       ...commonPayload(state, details.now),
+      ...playerFields(state, details.lastTouchedPlayerId ?? undefined),
       scoringSide: details.scoringSide,
       scoringTeam: sideTeam(state, details.scoringSide),
       concedingSide: details.scoringSide === 'left' ? 'right' : 'left',
@@ -176,15 +172,21 @@ export function buildGoalScoredEvent(state: GameState, details: GoalDetails): An
   };
 }
 
-export function buildGamePlayerEvent(state: GameState, lifecycle: GamePlayerLifecycle, playerId: string, now = Date.now()): AnalyticsEvent {
-  return {
-    name: 'gamePlayer',
-    payload: {
-      ...commonPayload(state, now),
-      ...playerFields(state, playerId),
-      lifecycle,
-      connectedPlayers: Object.values(state.players).filter(p => p.connected).length,
-      totalPlayers: Object.keys(state.players).length
-    }
-  };
+export function buildGamePlayedEvents(state: GameState, now = Date.now()): AnalyticsEvent[] {
+  return Object.values(state.players).map(player => {
+    const opponentSide = player.side === 'left' ? 'right' : 'left';
+    const outcome: GameOutcome = state.winner === null ? 'draw' : state.winner === player.side ? 'won' : 'loss';
+    return {
+      name: 'gamePlayed',
+      payload: {
+        ...commonPayload(state, now),
+        ...playerFields(state, player.id),
+        outcome,
+        playerScore: state.score[player.side],
+        opponentScore: state.score[opponentSide],
+        opponentSide,
+        opponentTeam: sideTeam(state, opponentSide)
+      }
+    };
+  });
 }

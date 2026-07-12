@@ -7,7 +7,6 @@ type XtremepushHitBody = {
   user_id: string;
   event: string;
   value: Record<string, unknown>;
-  user_attributes?: Record<string, unknown>;
   timestamp?: string;
   // Xtremepush docs do not list this field, but the dashboard/request path can
   // return `{ async: true }`. Keep sending it false for the user's requested
@@ -124,7 +123,6 @@ export function buildHitEventBody(appToken: string, event: AnalyticsEvent): Xtre
       // Make correlation easy in Xtremepush even for room-level events such as goals.
       babbleUserId: userId
     },
-    user_attributes: userAttributesFor(payload),
     timestamp: formatXtremepushTimestamp(payload.timestamp),
     async: false
   };
@@ -246,6 +244,8 @@ function formatXtremepushTimestamp(value: unknown) {
 }
 
 function userIdFor(payload: AnalyticsPayload) {
+  const accountId = stringOrNull(payload.accountId);
+  if (accountId) return accountId;
   const playerName = stringOrNull(payload.playerName);
   if (playerName) return userIdForNickname(playerName);
   const holderId = stringOrNull(payload.holderId);
@@ -257,19 +257,6 @@ function userIdFor(payload: AnalyticsPayload) {
 
 export function userIdForNickname(nickname: string) {
   return `babble-player:${slug(nickname)}`;
-}
-
-function userAttributesFor(payload: AnalyticsPayload) {
-  const attrs: Record<string, unknown> = {
-    room_code: payload.roomCode,
-    player_side: payload.playerSide ?? payload.holderSide ?? payload.scoringSide ?? null,
-    player_team: payload.playerTeam ?? payload.holderTeam ?? payload.scoringTeam ?? null,
-    player_name: payload.playerName ?? null,
-    match_mode: payload.matchMode,
-    map_id: payload.mapId,
-    last_event: payload.lifecycle ?? payload.abilityType ?? undefined
-  };
-  return Object.fromEntries(Object.entries(attrs).filter(([, value]) => value !== undefined && value !== null));
 }
 
 function displayNameFor(payload: AnalyticsPayload, userId: string) {

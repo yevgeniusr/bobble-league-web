@@ -3,6 +3,7 @@ export interface UnicupBrand {
   readonly tagline: string;
   readonly mission: string;
   readonly art: {
+    readonly logo: string;
     readonly heroDesktop: string;
     readonly heroMobile: string;
     readonly roadToBallOffice: string;
@@ -16,6 +17,7 @@ export const UNICUP_BRAND = {
   tagline: 'No hands. No weapons. All skill.',
   mission: "Enter Unicap's Universe Cup on PlanetBall, climb the leaderboard, and uncover what waits inside the Ball Office.",
   art: {
+    logo: '/assets/brand/unicup-logo.png',
     heroDesktop: '/assets/brand/planetball-hero-desktop.png',
     heroMobile: '/assets/brand/planetball-hero-mobile.png',
     roadToBallOffice: '/assets/brand/road-to-ball-office.png'
