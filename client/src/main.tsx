@@ -94,6 +94,8 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
   React.useEffect(() => {
     if (!auth.isLoaded) return;
     let active = true;
+    setIdentity(null);
+    setConn('connecting');
     void (async () => {
       try {
         const resolved = await fetchUnicupIdentity(fetch, auth.getToken);
