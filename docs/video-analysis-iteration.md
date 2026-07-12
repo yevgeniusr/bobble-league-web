@@ -1,4 +1,4 @@
-# Babble League Video/Visual Analysis Iteration
+# Unicup Video/Visual Analysis Iteration
 
 > Reference contact-sheet filenames below are kept verbatim because they name real third-party video files under `references/original/` (gitignored).
 

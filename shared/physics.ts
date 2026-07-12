@@ -1,4 +1,4 @@
-// Rapier 3D physics core for Babble League.
+// Rapier 3D physics core for Unicup.
 //
 // Coordinate mapping is intentionally explicit and stable:
 //   field x -> Rapier world x

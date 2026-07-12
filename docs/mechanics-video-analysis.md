@@ -1,4 +1,4 @@
-# Babble League Mechanics Analysis
+# Unicup Mechanics Analysis
 
 ## Sources
 

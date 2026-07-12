@@ -1,4 +1,4 @@
-# Babble League Web Architecture
+# Unicup Web Architecture
 
 ## Recommended stack
 

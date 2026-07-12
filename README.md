@@ -1,6 +1,6 @@
-# Babble League Web
+# Unicup Web
 
-A production-oriented, web-based multiplayer babble soccer game inspired by Discord party sports games. It uses an authoritative Node/Socket.IO server, a React/Vite canvas client, deterministic shared game rules, multiple teams, first-to-1/3/5 game modes, and mystery box power-ups.
+A production-oriented, web-based multiplayer Universe Cup played by handless bobbleheads on PlanetBall. It uses an authoritative Node/Socket.IO server, a React/Vite canvas client, deterministic shared game rules, multiple teams, first-to-1/3/5 game modes, and mystery box power-ups.
 
 > This implementation recreates the requested mechanics with original code, UI, and vector/emoji-rendered teams. It does not copy proprietary assets.
 
@@ -8,12 +8,15 @@ A production-oriented, web-based multiplayer babble soccer game inspired by Disc
 
 - Real-time multiplayer rooms with shareable room codes.
 - Authoritative server simulation at 30 ticks/sec.
-- Pre-start map selection: Stadium, Moon Base, or Volcano Bowl. The selected
+- Pre-start map selection: Unicap Qualifier, Moon Base, Coral Foundry, Saturn,
+  or one of three Ball Office calibration arenas. The selected
   map is included in snapshots and locks after kickoff until reset/new room.
-- Teams: Pigs, Parrots, Penguins, Tigers, Frogs, Foxes.
+- Teams: Signal Stingers, Coral Flyers, Cobalt Bruisers, Aqua Circuit, Pink
+  Pilots, Whitehorn United, Meteor Eleven, Polar Caps, Broadcast Birds, and
+  Stripe Squad.
 - Match modes: first to 1, 3, or 5 goals.
 - Goals are deep, roofless physical pockets: goalies can enter from the open mouth, and scoring occurs as soon as the ball centre crosses the front gate line.
-- Babble soccer mechanics: drag-launch, bounce, score goals.
+- Unicup soccer mechanics: drag-launch, bounce, score goals.
 - Box spawning: every second kickoff turn creates one random top/bottom lane box.
 - Power Play boxes: Beach Ball, Move Ball, Swap Goals, Big Bumpers, Boost,
   Sticky Goo, Ramp, Block, Big Head, Ghosted, and Move Player.
@@ -39,12 +42,11 @@ Rapier WASM ships in the client bundle.
 Map config lives in `shared/types.ts` (`MAPS`, `MAP_IDS`, `MapId`) so client,
 server, tests, and scripts share one registry.
 
-- `stadium`: default/current layout and physics, with the classic four corner
-  bumpers.
-- `moon`: lunar colors, crater-style round bumper layout, lower-grip/floatier
-  damping, and sci-fi gates.
-- `volcano`: lava colors, offset volcanic bumpers, faster hazard-like bounces,
-  and volcanic gates.
+- `stadium`: PlanetBall's Unicap Qualifier with the classic four corner bumpers.
+- `moon`: a low-orbit relay with crater bumpers and floatier physics.
+- `volcano`: the Coral Foundry, with offset bumpers and faster hazard bounces.
+- `saturn`: a heavy orbital final with ring markings and dense collisions.
+- `original*`: three Ball Office calibration profiles retained for physics comparison.
 
 Players can choose the map while creating a room or from the in-room settings
 menu while the room is still in `lobby`. The server rejects `room:map` after

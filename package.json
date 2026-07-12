@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "Babble League: web-based multiplayer babble soccer game inspired by Discord party sports games.",
+  "description": "Unicup: a web-based multiplayer Universe Cup played by handless bobbleheads on PlanetBall.",
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "build": "tsc -p tsconfig.json --noEmit && vite build",

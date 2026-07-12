@@ -1,7 +1,39 @@
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { BUMPERS, FIELD, MAPS, MAP_IDS } from '../shared/types';
-import { authoritativeBallQuaternion, ballRenderElevation, ballVisualProfile, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { arenaSkylineLayout, arenaSkylinePositions, authoritativeBallQuaternion, ballRenderElevation, ballVisualProfile, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperVisualFootprint, bumperVisualRadii, cameraLayoutForViewport, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, resourcePylonLayout, resourcePylonPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 import { BALL_REST_HEIGHT } from '../shared/airborne';
+
+function playableEnvelope(): THREE.Vector3[] {
+  const halfFieldX = FIELD.width / 100;
+  const halfFieldZ = FIELD.height / 100;
+  const goalBackX = halfFieldX + fieldRadiusToWorld(FIELD.goalDepth);
+  const goalTopZ = fieldToWorld({ x: 0, y: FIELD.goalY }).z;
+  const goalBottomZ = fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight }).z;
+  const envelope: THREE.Vector3[] = [];
+
+  for (const x of [-halfFieldX, halfFieldX]) {
+    for (const z of [-halfFieldZ, halfFieldZ]) {
+      envelope.push(new THREE.Vector3(x, 1.02, z), new THREE.Vector3(x, 3, z));
+    }
+  }
+  for (const x of [-goalBackX, goalBackX]) {
+    for (const z of [goalTopZ, goalBottomZ]) {
+      envelope.push(new THREE.Vector3(x, 1.02, z), new THREE.Vector3(x, 3, z));
+    }
+  }
+
+  return envelope;
+}
+
+function projectedEnvelope(width: number, height: number): THREE.Vector3[] {
+  const layout = cameraLayoutForViewport(width, height);
+  const camera = new THREE.PerspectiveCamera(layout.fov, width / height, 0.1, 200);
+  camera.position.set(layout.position.x, layout.position.y, layout.position.z);
+  camera.lookAt(layout.target.x, layout.target.y, layout.target.z);
+  camera.updateMatrixWorld();
+  return playableEnvelope().map(point => point.project(camera));
+}
 
 describe('3D renderer coordinate mapping', () => {
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
@@ -13,6 +45,38 @@ describe('3D renderer coordinate mapping', () => {
 
   it('scales gameplay radii consistently into model units', () => {
     expect(fieldRadiusToWorld(50)).toBe(1);
+  });
+
+  it('preserves the established camera at the 16:9 desktop reference', () => {
+    expect(cameraLayoutForViewport(1600, 900)).toEqual({
+      fov: 42,
+      position: { x: 0, y: 16.2, z: 14.4 },
+      target: { x: 0, y: 0.4, z: 0 }
+    });
+  });
+
+  it.each([
+    ['16:10 desktop', 1440, 900, 0.98],
+    ['4:3 tablet', 1024, 768, 0.98],
+    ['square', 844, 844, 0.98],
+    ['portrait', 390, 844, 0.98]
+  ])('frames the complete field and goals at %s', (_label, width, height, maxHorizontalNdc) => {
+    for (const projected of projectedEnvelope(width, height)) {
+      expect(Math.abs(projected.x)).toBeLessThanOrEqual(maxHorizontalNdc);
+      expect(Math.abs(projected.y)).toBeLessThanOrEqual(0.9);
+    }
+  });
+
+  it.each([
+    ['the 16:10 fit threshold', 1599, 1601, 1000],
+    ['the square aspect ratio', 990, 1010, 1000]
+  ])('changes continuously across %s', (_label, narrowerWidth, widerWidth, height) => {
+    const narrower = cameraLayoutForViewport(narrowerWidth, height);
+    const wider = cameraLayoutForViewport(widerWidth, height);
+
+    expect(Math.abs(narrower.fov - wider.fov)).toBeLessThan(1);
+    expect(Math.abs(narrower.position.y - wider.position.y)).toBeLessThan(0.5);
+    expect(Math.abs(narrower.position.z - wider.position.z)).toBeLessThan(0.5);
   });
 
   it('renders all four corner bumpers at the physics collider positions', () => {
@@ -32,6 +96,50 @@ describe('3D renderer coordinate mapping', () => {
     }
     expect(mapBumperWorldPositions('moon')).not.toEqual(BUMPER_WORLD_POSITIONS);
     expect(mapBumperWorldPositions('volcano')).not.toEqual(BUMPER_WORLD_POSITIONS);
+  });
+
+  it('keeps PlanetBall skyline props outside the playable field', () => {
+    const halfFieldX = FIELD.width / 100;
+    const halfFieldZ = FIELD.height / 100;
+    const props = arenaSkylineLayout();
+
+    expect(arenaSkylinePositions()).toHaveLength(props.length);
+    for (const prop of props) {
+      const clearsField = prop.x + prop.width / 2 < -halfFieldX
+        || prop.x - prop.width / 2 > halfFieldX
+        || prop.z + prop.depth / 2 < -halfFieldZ
+        || prop.z - prop.depth / 2 > halfFieldZ;
+      expect(clearsField).toBe(true);
+    }
+  });
+
+  it('places resource pylons behind the far arena rim', () => {
+    const farRimZ = -FIELD.height / 100;
+    const pylons = resourcePylonLayout();
+
+    expect(resourcePylonPositions()).toHaveLength(pylons.length);
+    expect(pylons.length).toBeGreaterThanOrEqual(3);
+    for (const pylon of pylons) expect(pylon.z + pylon.radius).toBeLessThan(farRimZ);
+  });
+
+  it('frames the complete skyline inside the preserved broadcast camera', () => {
+    const camera = new THREE.PerspectiveCamera(42, 16 / 9, 0.1, 200);
+    camera.position.set(0, 16.2, 14.4);
+    camera.lookAt(0, 0.4, 0);
+    camera.updateMatrixWorld();
+
+    for (const prop of arenaSkylineLayout()) {
+      const top = new THREE.Vector3(prop.x, prop.visualTop, prop.z).project(camera);
+      expect(top.y).toBeLessThanOrEqual(0.96);
+      for (const edgeX of [prop.x - prop.width / 2, prop.x + prop.width / 2]) {
+        expect(Math.abs(new THREE.Vector3(edgeX, prop.height, prop.z).project(camera).x)).toBeLessThanOrEqual(0.98);
+      }
+    }
+
+    const office = arenaSkylineLayout().find(prop => prop.office)!;
+    const officeLeft = new THREE.Vector3(office.x - office.width / 2, office.height, office.z).project(camera).x;
+    const officeRight = new THREE.Vector3(office.x + office.width / 2, office.height, office.z).project(camera).x;
+    expect(officeRight <= -0.34 || officeLeft >= 0.34).toBe(true);
   });
 
   it('keeps babble contact shadows and control rings close to the real babble radius', () => {

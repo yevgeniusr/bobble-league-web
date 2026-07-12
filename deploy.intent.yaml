@@ -1,0 +1,31 @@
+apiVersion: deploy-intent/v1
+kind: DockerfileApp
+metadata:
+  name: bobble-league-web
+spec:
+  source:
+    repository: git@github.com:yevgeniusr/bobble-league-web.git
+    branch: main
+    path: .
+  targets:
+    - platform: coolify
+      domain: bobble.rachkovan.com
+  build:
+    dockerfile: Dockerfile
+  runtimeConfig:
+    port: 3000
+    healthcheckPath: /healthz
+    visibility: public
+    env:
+      NODE_ENV: production
+      PORT: "3000"
+      PUBLIC_HOSTNAME: bobble.rachkovan.com
+      XTREMEPUSH_ALLOW_LOCAL: "false"
+      XTREMEPUSH_LOYALTY_TOKEN_TTL: "300"
+    secrets:
+      XTREMEPUSH_APP_TOKEN: ${XTREMEPUSH_APP_TOKEN}
+      XTREMEPUSH_SDK_KEY: ${XTREMEPUSH_SDK_KEY}
+      XTREMEPUSH_LOYALTY_ENDPOINT: ${XTREMEPUSH_LOYALTY_ENDPOINT}
+      XTREMEPUSH_LOYALTY_PRIVATE_KEY: ${XTREMEPUSH_LOYALTY_PRIVATE_KEY}
+      XTREMEPUSH_LOYALTY_PUBLIC_KEY: ${XTREMEPUSH_LOYALTY_PUBLIC_KEY}
+      XTREMEPUSH_LOYALTY_KEY_ID: ${XTREMEPUSH_LOYALTY_KEY_ID}

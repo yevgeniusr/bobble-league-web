@@ -1,6 +1,6 @@
-# Babble League Visual Comparison
+# Unicup Visual Comparison
 
-> "Original reference game" below refers to the third-party Discord game used as the visual reference; our app is branded "Babble League". Reference asset URLs are kept verbatim because they point at third-party hosting.
+> "Original reference game" below refers to the third-party Discord game used as the visual reference; our app is branded "Unicup". Reference asset URLs are kept verbatim because they point at third-party hosting.
 
 Reference sources used:
 

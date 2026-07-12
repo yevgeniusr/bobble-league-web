@@ -387,4 +387,4 @@ setInterval(() => {
   }
 }, 1000 / 30);
 
-httpServer.listen(port, () => console.log(`Babble League listening on :${port}`));
+httpServer.listen(port, () => console.log(`Unicup listening on :${port}`));

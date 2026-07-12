@@ -820,7 +820,7 @@ function endTurn(state: GameState, now: number, rng: Rng, unlockFormation = fals
 }
 
 function resetForPlanning(state: GameState, _rng: Rng) {
-  // Babble League turns are tabletop turns: pieces stay where physics resolved,
+  // Unicup turns are tabletop turns: pieces stay where physics resolved,
   // but no momentum carries into the next planning turn.
   state.ball.vel = { x: 0, y: 0 };
   state.ball.height = ballRestHeight(state.ball.radius);

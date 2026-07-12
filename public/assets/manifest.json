@@ -19,6 +19,11 @@
     "goalGates": "/assets/sprites/goal-gates.png",
     "fieldProps": "/assets/sprites/field-props.png"
   },
+  "brand": {
+    "heroDesktop": "/assets/brand/planetball-hero-desktop.png",
+    "heroMobile": "/assets/brand/planetball-hero-mobile.png",
+    "roadToBallOffice": "/assets/brand/road-to-ball-office.png"
+  },
   "models": {
     "note": "Meshy API key not found under /Users/mac/projects/personal during automated search; generated procedural 2D assets and placeholder folder for future GLB models."
   }

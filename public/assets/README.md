@@ -1,4 +1,4 @@
-# Babble League generated asset pack
+# Unicup generated asset pack
 
 Procedurally generated original placeholder/polish assets prepared for integration.
 

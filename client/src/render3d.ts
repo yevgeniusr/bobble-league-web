@@ -21,6 +21,128 @@ export function fieldRadiusToWorld(r: number): number { return r / 50; }
 export const BUMPER_WORLD_POSITIONS: WorldXZ[] = BUMPERS.map(fieldToWorld);
 export const mapBumperWorldPositions = (mapId: MapId): WorldXZ[] => MAPS[normalizeMapId(mapId)].layout.bumpers.map(fieldToWorld);
 
+export type ArenaSkylineProp = WorldXZ & {
+  width: number;
+  height: number;
+  depth: number;
+  visualTop: number;
+  office: boolean;
+};
+
+export function arenaSkylineLayout(): ArenaSkylineProp[] {
+  const halfFieldX = FIELD.width / 100;
+  const farRimZ = -FIELD.height / 100;
+  return [
+    { x: -halfFieldX - 3.8, z: farRimZ - 2.6, width: 1.55, height: 2.7, depth: 1.15, visualTop: 3.51, office: false },
+    { x: -8.7, z: farRimZ - 2.85, width: 5.2, height: 3, depth: 1.5, visualTop: 3.81, office: true },
+    { x: 0, z: farRimZ - 3, width: 2.2, height: 2.4, depth: 1.15, visualTop: 3.21, office: false },
+    { x: 6.4, z: farRimZ - 2.85, width: 2.2, height: 2.4, depth: 1.15, visualTop: 3.21, office: false },
+    { x: halfFieldX + 3.8, z: farRimZ - 2.6, width: 1.55, height: 2.7, depth: 1.15, visualTop: 3.51, office: false }
+  ];
+}
+
+export function arenaSkylinePositions(): WorldXZ[] {
+  return arenaSkylineLayout().map(({ x, z }) => ({ x, z }));
+}
+
+export type ResourcePylonProp = WorldXZ & { radius: number };
+
+export function resourcePylonLayout(): ResourcePylonProp[] {
+  const farRimZ = -FIELD.height / 100;
+  return [-8.6, -4.3, 0, 4.3, 8.6].map(x => ({ x, z: farRimZ - 1.45, radius: 0.34 }));
+}
+
+export function resourcePylonPositions(): WorldXZ[] {
+  return resourcePylonLayout().map(({ x, z }) => ({ x, z }));
+}
+
+export type RendererCameraLayout = {
+  fov: number;
+  position: { x: number; y: number; z: number };
+  target: { x: number; y: number; z: number };
+};
+
+const DESKTOP_CAMERA: RendererCameraLayout = {
+  fov: 42,
+  position: { x: 0, y: 16.2, z: 14.4 },
+  target: { x: 0, y: 0.4, z: 0 }
+};
+
+const WIDE_CAMERA_ASPECT = 16 / 9;
+const FIT_CAMERA_ASPECT = 16 / 10;
+const PORTRAIT_CAMERA_ASPECT = 390 / 844;
+const PORTRAIT_CAMERA_FOV = 70;
+
+function smoothstep(value: number): number {
+  const clamped = THREE.MathUtils.clamp(value, 0, 1);
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
+function cameraFitEnvelope(): THREE.Vector3[] {
+  const halfFieldX = FIELD.width / 100;
+  const halfFieldZ = FIELD.height / 100;
+  const goalBackX = halfFieldX + fieldRadiusToWorld(FIELD.goalDepth);
+  const goalTopZ = fieldToWorld({ x: 0, y: FIELD.goalY }).z;
+  const goalBottomZ = fieldToWorld({ x: 0, y: FIELD.goalY + FIELD.goalHeight }).z;
+  const points: THREE.Vector3[] = [];
+
+  for (const x of [-halfFieldX, halfFieldX]) {
+    for (const z of [-halfFieldZ, halfFieldZ]) {
+      points.push(new THREE.Vector3(x, 1.02, z), new THREE.Vector3(x, 3, z));
+    }
+  }
+  for (const x of [-goalBackX, goalBackX]) {
+    for (const z of [goalTopZ, goalBottomZ]) {
+      points.push(new THREE.Vector3(x, 1.02, z), new THREE.Vector3(x, 3, z));
+    }
+  }
+
+  return points;
+}
+
+function cameraDistanceScaleForFit(aspect: number, fov: number): number {
+  const position = new THREE.Vector3(DESKTOP_CAMERA.position.x, DESKTOP_CAMERA.position.y, DESKTOP_CAMERA.position.z);
+  const target = new THREE.Vector3(DESKTOP_CAMERA.target.x, DESKTOP_CAMERA.target.y, DESKTOP_CAMERA.target.z);
+  const distance = position.distanceTo(target);
+  const forward = target.clone().sub(position).normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+  const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+  const tanHalfFov = Math.tan(fov * Math.PI / 360);
+  let extraDistance = 0;
+
+  // Moving the camera backward along its view ray only increases view-space
+  // depth, so the exact extra distance needed for each envelope point is direct.
+  for (const point of cameraFitEnvelope()) {
+    const relative = point.clone().sub(position);
+    const depth = relative.dot(forward);
+    const requiredDepth = Math.max(
+      Math.abs(relative.dot(right)) / (0.96 * tanHalfFov * aspect),
+      Math.abs(relative.dot(up)) / (0.88 * tanHalfFov)
+    );
+    extraDistance = Math.max(extraDistance, requiredDepth - depth);
+  }
+
+  return Math.max(1, (distance + extraDistance) / distance);
+}
+
+export function cameraLayoutForViewport(width: number, height: number): RendererCameraLayout {
+  const aspect = Math.max(0.1, width / Math.max(1, height));
+  const narrowProgress = smoothstep((FIT_CAMERA_ASPECT - aspect) / (FIT_CAMERA_ASPECT - PORTRAIT_CAMERA_ASPECT));
+  const fov = THREE.MathUtils.lerp(DESKTOP_CAMERA.fov, PORTRAIT_CAMERA_FOV, narrowProgress);
+  const fullFitScale = cameraDistanceScaleForFit(aspect, fov);
+  const fitProgress = smoothstep((WIDE_CAMERA_ASPECT - aspect) / (WIDE_CAMERA_ASPECT - FIT_CAMERA_ASPECT));
+  const distanceScale = THREE.MathUtils.lerp(1, fullFitScale, fitProgress);
+  return {
+    fov,
+    position: {
+      x: DESKTOP_CAMERA.target.x + (DESKTOP_CAMERA.position.x - DESKTOP_CAMERA.target.x) * distanceScale,
+      y: DESKTOP_CAMERA.target.y + (DESKTOP_CAMERA.position.y - DESKTOP_CAMERA.target.y) * distanceScale,
+      z: DESKTOP_CAMERA.target.z + (DESKTOP_CAMERA.position.z - DESKTOP_CAMERA.target.z) * distanceScale
+    },
+    target: { ...DESKTOP_CAMERA.target }
+  };
+}
+
 export function babbleContactShadowRadius(radiusField: number): number {
   return fieldRadiusToWorld(radiusField) * 1.16;
 }
@@ -140,7 +262,7 @@ export function babbleGhosted(effects: readonly ActiveEffect[] | undefined, turn
 }
 
 
-export const GOAL_COLORS = { left: 0x4a5ad6, right: 0xf05d48 } as const;
+export const GOAL_COLORS = { left: 0x3152c9, right: 0xf16655 } as const;
 export function goalDisplayColors(swapped: boolean): { left: number; right: number } {
   return swapped ? { left: GOAL_COLORS.right, right: GOAL_COLORS.left } : { left: GOAL_COLORS.left, right: GOAL_COLORS.right };
 }
@@ -168,6 +290,14 @@ export function detectSoftwareWebGL(): boolean {
 const FIELD_X = FIELD.width / 50;
 const FIELD_Z = FIELD.height / 50;
 const TURF_Y = 1.02;
+const PLANETBALL = {
+  signal: 0xffda36,
+  cobalt: 0x3152c9,
+  coral: 0xf16655,
+  aqua: 0x2cc7c1,
+  white: 0xfffdf5,
+  charcoal: 0x22252e
+} as const;
 const toV3 = (p: Vec, y = 0) => { const w = fieldToWorld(p); return new THREE.Vector3(w.x, y, w.z); };
 const hashId = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return (h >>> 0) / 4294967295; };
 
@@ -205,15 +335,15 @@ export class BabbleLeague3DRenderer {
     this.camera.position.set(0, 16.2, 14.4);
     this.camera.lookAt(0, 0.4, 0);
     this.scene.add(this.camera);
-    this.scene.add(new THREE.HemisphereLight(0xfff4e0, 0x7a4a40, 1.9));
-    const sun = new THREE.DirectionalLight(0xfff2df, 3.1);
+    this.scene.add(new THREE.HemisphereLight(PLANETBALL.white, PLANETBALL.cobalt, 1.9));
+    const sun = new THREE.DirectionalLight(PLANETBALL.white, 3.1);
     sun.position.set(-6, 15, 9); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.left = -16; sun.shadow.camera.right = 16; sun.shadow.camera.top = 13; sun.shadow.camera.bottom = -13;
     sun.shadow.bias = -0.0001;
     sun.shadow.normalBias = 0.025;
     sun.shadow.intensity = 0.42;
     this.scene.add(sun);
-    const fill = new THREE.DirectionalLight(0x9fb8ff, 0.7);
+    const fill = new THREE.DirectionalLight(PLANETBALL.aqua, 0.7);
     fill.position.set(7, 9, -11);
     this.scene.add(fill);
     this.scene.add(this.board);
@@ -231,7 +361,19 @@ export class BabbleLeague3DRenderer {
     this.renderer.dispose();
   }
 
-  private resize = () => { const rect = this.canvas.getBoundingClientRect(); const w = Math.max(320, rect.width || window.innerWidth); const h = Math.max(180, rect.height || window.innerHeight); this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); };
+  private resize = () => {
+    const rect = this.canvas.getBoundingClientRect();
+    const w = Math.max(320, rect.width || window.innerWidth);
+    const h = Math.max(180, rect.height || window.innerHeight);
+    const layout = cameraLayoutForViewport(w, h);
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.camera.fov = layout.fov;
+    this.camera.position.set(layout.position.x, layout.position.y, layout.position.z);
+    this.camera.lookAt(layout.target.x, layout.target.y, layout.target.z);
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
+  };
 
   pointFromClient(clientX: number, clientY: number): Vec | null {
     const rect = this.canvas.getBoundingClientRect();
@@ -348,10 +490,10 @@ export class BabbleLeague3DRenderer {
     const g = this.board;
     const map = MAPS[mapId];
     const theme = map.theme;
-    // warm two-tone table backdrop with soft vignette panels
+    // Flat two-tone broadcast deck outside the authoritative field surface.
     this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(theme.tableLeft, 0.85), -(FIELD_X / 4 + 2), -0.45, 0);
     this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(theme.tableRight, 0.85), FIELD_X / 4 + 2, -0.45, 0);
-    // cream plinth + chamfered golden frame
+    // White plinth and hard-color tournament frame.
     this.mesh(g, new THREE.BoxGeometry(FIELD_X + 3, 0.76, FIELD_Z + 2.9), this.mat(theme.plinth, 0.7), 0, 0, 0, true);
     this.mesh(g, new THREE.BoxGeometry(FIELD_X + 1.4, 0.9, FIELD_Z + 1.2), this.mat(theme.frame, 0.55, { emissive: mapId === 'volcano' ? 0x3b1208 : 0 }), 0, 0.42, 0, true);
     this.mesh(g, new THREE.BoxGeometry(FIELD_X + 0.5, 0.34, FIELD_Z + 0.3), this.mat(theme.frameDark, 0.5), 0, 0.9, 0, true);
@@ -361,25 +503,96 @@ export class BabbleLeague3DRenderer {
       this.mesh(g, new THREE.BoxGeometry(FIELD_X + 0.5, 0.6, 0.42), rimMat, 0, 1.22, s * (FIELD_Z / 2 + 0.03), true);
       for (const e of [-1, 1] as const) this.mesh(g, new THREE.BoxGeometry(0.42, 0.6, 2.2), rimMat, e * (FIELD_X / 2 + 0.03), 1.22, s * (FIELD_Z / 2 - 1.05), true);
     }
-    // rounded studs along the frame corners
-    const stud = new THREE.SphereGeometry(0.22, 20, 12);
+    // Rounded signal studs along the frame corners.
+    const stud = new THREE.SphereGeometry(0.22, this.lowPower ? 10 : 20, this.lowPower ? 6 : 12);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) this.mesh(g, stud, this.mat(theme.bumperCap, 0.35), sx * (FIELD_X / 2 + 0.55), 1.02, sz * (FIELD_Z / 2 + 0.55), true);
-    // signature teal turf slab; the striped/marked surface is a canvas texture on top
+    // Map-specific PlanetBall court slab; markings stay texture-only.
     this.mesh(g, new THREE.BoxGeometry(FIELD_X, 0.24, FIELD_Z), this.mat(theme.fieldBase, 0.85), 0, 0.82, 0);
     const turfMat = new THREE.MeshStandardMaterial({ map: this.turfTexture(mapId), roughness: 0.88, metalness: 0.02, emissive: new THREE.Color(mapId === 'volcano' ? 0x180604 : 0x000000), emissiveIntensity: mapId === 'volcano' ? 0.25 : 0 });
     this.matCache.set(`turfSurface:${mapId}`, turfMat);
     const turf = new THREE.Mesh(this.geo('turfPlane', () => new THREE.PlaneGeometry(FIELD_X, FIELD_Z)), turfMat);
     turf.rotation.x = -Math.PI / 2; turf.position.y = TURF_Y; turf.receiveShadow = true; g.add(turf);
     this.addGoal(-1, mapId); this.addGoal(1, mapId);
-    // all four corner bumpers, aligned with the authoritative physics colliders
+    // Every bumper remains aligned with the authoritative physics colliders.
     for (const w of mapBumperWorldPositions(mapId)) this.addBumper(w.x, w.z, mapId);
-    // decorative pennant posts behind the far rim
-    for (let i = -2; i <= 2; i++) {
-      const post = this.mesh(g, new THREE.CylinderGeometry(0.07, 0.09, 1.7, 10), this.mat(0xfff3be, 0.5), i * 4.4, 1.6, -FIELD_Z / 2 - 1.7, true);
-      post.castShadow = true;
-      const flag = this.mesh(g, new THREE.ConeGeometry(0.3, 0.55, 4), this.mat(i % 2 ? theme.leftGoal : theme.rightGoal, 0.5, { flat: true, emissive: mapId === 'moon' ? 0x101c33 : 0 }), i * 4.4, 2.45, -FIELD_Z / 2 - 1.7, true);
-      flag.rotation.x = Math.PI;
+    this.addTournamentExterior(mapId);
+  }
+
+  private addTournamentExterior(mapId: MapId) {
+    const g = this.board;
+    const theme = MAPS[mapId].theme;
+    const skyline = arenaSkylineLayout();
+    const pylons = resourcePylonLayout();
+    const block = this.geo('planetBallSkylineBlock', () => new THREE.BoxGeometry(1, 1, 1));
+    const trim = this.geo('planetBallSkylineTrim', () => new THREE.BoxGeometry(1, 0.16, 1.06));
+    const windowGeo = this.geo('planetBallOfficeWindow', () => new THREE.BoxGeometry(0.42, 0.34, 0.06));
+
+    if (this.lowPower) {
+      const office = skyline.find(prop => prop.office)!;
+      const building = this.mesh(g, block, this.mat(PLANETBALL.cobalt, 0.78, { flat: true }), office.x, office.height / 2 - 0.15, office.z);
+      building.scale.set(office.width, office.height, office.depth);
+      const officeSign = this.text('BALL OFFICE', 28, '#fffdf5');
+      officeSign.position.set(office.x, office.height - 0.8, office.z + office.depth / 2 + 0.1);
+      officeSign.scale.multiplyScalar(1.45);
+      g.add(officeSign);
+      const simplePylon = this.geo('resourcePylonLow', () => new THREE.CylinderGeometry(0.18, pylons[0].radius, 1.35, 6));
+      pylons.forEach((position, index) => {
+        if (index % 2 === 0) this.mesh(g, simplePylon, this.mat(PLANETBALL.coral, 0.5, { flat: true }), position.x, 1.52, position.z);
+      });
+      const broadcast = this.text(`UNICAP // ${MAPS[mapId].shortLabel.toUpperCase()}`, 24, '#fffdf5');
+      broadcast.position.set(0, 2.08, -FIELD_Z / 2 - 0.56);
+      broadcast.scale.multiplyScalar(1.35);
+      g.add(broadcast);
+      return;
     }
+
+    skyline.forEach((position, index) => {
+      const { office, height, width, depth } = position;
+      const color = office ? PLANETBALL.cobalt : index % 2 ? PLANETBALL.coral : PLANETBALL.charcoal;
+      const building = this.mesh(g, block, this.mat(color, 0.78, { flat: true }), position.x, height / 2 - 0.15, position.z, !this.lowPower);
+      building.scale.set(width, height, depth);
+      const roofBand = this.mesh(g, trim, this.mat(office ? PLANETBALL.signal : PLANETBALL.white, 0.62, { flat: true }), position.x, height - 0.18, position.z, !this.lowPower);
+      roofBand.scale.set(width + 0.22, 1, depth + 0.08);
+
+      if (office) {
+        for (const x of [-1.65, -0.82, 0, 0.82, 1.65]) {
+          this.mesh(g, windowGeo, this.mat(PLANETBALL.aqua, 0.28, { emissive: 0x0c4d54 }), position.x + x, height * 0.55, position.z + depth / 2 + 0.04);
+        }
+        const door = this.mesh(g, block, this.mat(PLANETBALL.coral, 0.58, { flat: true }), position.x, 0.55, position.z + depth / 2 + 0.05);
+        door.scale.set(0.72, 1.4, 0.08);
+        const sign = this.text('BALL OFFICE', 28, '#fffdf5');
+        sign.position.set(position.x, height - 0.8, position.z + depth / 2 + 0.1);
+        sign.scale.multiplyScalar(1.45);
+        g.add(sign);
+      } else {
+        for (const y of [0.65, 1.15, 1.65].filter(y => y < height - 0.35)) {
+          this.mesh(g, windowGeo, this.mat(index % 2 ? PLANETBALL.white : PLANETBALL.aqua, 0.34), position.x, y, position.z + depth / 2 + 0.04);
+        }
+      }
+
+      const beaconY = position.visualTop - 0.16;
+      const mastHeight = beaconY - height + 0.12;
+      const mast = this.mesh(g, this.geo('planetBallBroadcastMast', () => new THREE.CylinderGeometry(0.055, 0.075, 0.77, 8)), this.mat(PLANETBALL.charcoal, 0.5), position.x, height + (beaconY - height) / 2, position.z, false);
+      mast.scale.y = mastHeight / 0.77;
+      mast.castShadow = false;
+      const beacon = this.mesh(g, this.geo('planetBallBroadcastBeacon', () => new THREE.SphereGeometry(0.16, 10, 6)), this.mat(index % 2 ? PLANETBALL.aqua : PLANETBALL.signal, 0.32, { emissive: index % 2 ? 0x0c4d54 : 0x6b5100 }), position.x, beaconY, position.z);
+      beacon.castShadow = false;
+    });
+
+    const pylonBody = this.geo('resourcePylonBody', () => new THREE.CylinderGeometry(0.18, pylons[0].radius, 1.35, 10));
+    const pylonCore = this.geo('resourcePylonCore', () => new THREE.CylinderGeometry(0.09, 0.09, 0.92, 10));
+    const pylonCap = this.geo('resourcePylonCap', () => new THREE.OctahedronGeometry(0.26, 0));
+    pylons.forEach((position, index) => {
+      const bodyColor = index % 2 ? theme.leftGoal : theme.rightGoal;
+      this.mesh(g, pylonBody, this.mat(bodyColor, 0.46, { flat: true }), position.x, 1.52, position.z, !this.lowPower);
+      this.mesh(g, pylonCore, this.mat(PLANETBALL.aqua, 0.26, { emissive: 0x0c4d54 }), position.x, 1.62, position.z);
+      this.mesh(g, pylonCap, this.mat(PLANETBALL.signal, 0.3, { flat: true, emissive: 0x5a4300 }), position.x, 2.38, position.z, !this.lowPower);
+    });
+
+    const broadcast = this.text(`UNICAP // ${MAPS[mapId].shortLabel.toUpperCase()}`, 24, '#fffdf5');
+    broadcast.position.set(0, 2.08, -FIELD_Z / 2 - 0.56);
+    broadcast.scale.multiplyScalar(1.35);
+    g.add(broadcast);
   }
 
   private addGoal(side: -1 | 1, mapId: MapId) {
@@ -401,7 +614,7 @@ export class BabbleLeague3DRenderer {
     this.matCache.set(`goalFrame:${key}`, frameTint);
     this.matCache.set(`goalMouth:${key}`, mouthTint);
     this.matCache.set(`goalPanel:${key}`, panelTint);
-    const cream = this.mat(0xfff3be, 0.35);
+    const cream = this.mat(PLANETBALL.white, 0.35);
     // Rectangular goal mouth and pocket, aligned to the Rapier mouth strip and
     // back-wall depth. Circular hoops looked like bogus colliders here.
     const mouth = this.mesh(g, new THREE.BoxGeometry(0.12, 0.05, halfGoal * 2), mouthTint, x, TURF_Y + 0.03, 0);
@@ -514,7 +727,7 @@ export class BabbleLeague3DRenderer {
         this.mesh(this.dynamic, this.geo('goalSwapSideStrip', () => new THREE.BoxGeometry(1, 0.06, 0.08)), mat, lineX + side * metrics.depth / 2, TURF_Y + 0.11, z).scale.x = metrics.depth;
       }
     }
-    const banner = this.text('GOALS SWAPPED!', 40, '#f9a8f9');
+    const banner = this.text('GOALS SWAPPED!', 40, '#ffda36');
     banner.position.set(0, 3.4, 0);
     banner.scale.multiplyScalar(1.2);
     this.dynamic.add(banner);
@@ -566,9 +779,9 @@ export class BabbleLeague3DRenderer {
     const c = document.createElement('canvas'); c.width = 128; c.height = 128;
     const g = c.getContext('2d')!;
     const grad = g.createRadialGradient(64, 64, 4, 64, 64, 62);
-    grad.addColorStop(0, 'rgba(5,18,16,.72)');
-    grad.addColorStop(0.56, 'rgba(5,18,16,.22)');
-    grad.addColorStop(1, 'rgba(5,18,16,0)');
+    grad.addColorStop(0, 'rgba(34,37,46,.72)');
+    grad.addColorStop(0.56, 'rgba(34,37,46,.22)');
+    grad.addColorStop(1, 'rgba(34,37,46,0)');
     g.fillStyle = grad;
     g.fillRect(0, 0, 128, 128);
     tex = new THREE.CanvasTexture(c);
@@ -577,7 +790,7 @@ export class BabbleLeague3DRenderer {
   }
 
   private soccerBallTexture() {
-    const key = 'soccerBallTextureV2';
+    const key = 'planetBallTournamentTextureV1';
     let tex = this.textCache.get(key);
     if (tex) return tex;
     const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
@@ -587,10 +800,10 @@ export class BabbleLeague3DRenderer {
       [405, 250], [620, 238], [188, 286], [836, 286],
       [298, 398], [530, 412], [742, 392]
     ] as const;
-    g.fillStyle = '#f4f0df';
+    g.fillStyle = '#fffdf5';
     g.fillRect(0, 0, c.width, c.height);
-    g.strokeStyle = '#b8b2a2';
-    g.lineWidth = 5;
+    g.strokeStyle = '#2cc7c1';
+    g.lineWidth = 6;
     g.lineCap = 'round';
     const links = [[0,1],[0,2],[0,3],[0,4],[1,3],[1,5],[2,4],[2,6],[3,4],[3,7],[3,8],[4,8],[4,9],[4,6],[5,7],[6,9],[7,8],[8,9]] as const;
     for (const [a, b] of links) {
@@ -605,14 +818,14 @@ export class BabbleLeague3DRenderer {
         if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
       }
       g.closePath();
-      g.fillStyle = '#242526'; g.fill();
-      g.strokeStyle = '#111214'; g.lineWidth = 3; g.stroke();
+      g.fillStyle = '#3152c9'; g.fill();
+      g.strokeStyle = '#22252e'; g.lineWidth = 4; g.stroke();
     };
     spots.forEach(([x, y], i) => pentagon(x, y, i === 0 || i > 6 ? 38 : 34, -Math.PI / 2 + i * 0.17));
     tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = THREE.RepeatWrapping;
-    tex.anisotropy = 8;
+    tex.anisotropy = this.lowPower ? 1 : 8;
     this.textCache.set(key, tex);
     return tex;
   }
@@ -621,7 +834,7 @@ export class BabbleLeague3DRenderer {
     const key = `contactShadow:${opacity.toFixed(2)}`;
     return this.texturedMat(key, () => new THREE.MeshBasicMaterial({
       map: this.contactShadowTexture(),
-      color: 0x10251d,
+      color: PLANETBALL.charcoal,
       transparent: true,
       opacity,
       depthWrite: false
@@ -657,28 +870,59 @@ export class BabbleLeague3DRenderer {
     // drive rings/sparks and never add a second render-only hop.
     const hop = physicsHop;
     const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
-    const sideCol = b.side === 'left' ? 0xe25a4c : 0x5147a8;
+    const sideCol = b.side === 'left' ? PLANETBALL.coral : PLANETBALL.cobalt;
     const base = babbleContactBaseMetrics(b.radius);
+    const radialSegments = this.lowPower ? 16 : 30;
+    const sphereWidth = this.lowPower ? 18 : 32;
+    const sphereHeight = this.lowPower ? 12 : 20;
     // Small solid contact skirt: its footprint matches the authoritative
     // physics radius, while selection rings remain separate affordances.
-    this.mesh(grp, new THREE.CylinderGeometry(base.topRadius, base.radius, base.height, 36), bmat(sideCol, 0.45), 0, TURF_Y + base.height / 2, 0, solid);
-    this.mesh(grp, new THREE.CylinderGeometry(r * 0.72, r * 0.78, 0.18, 36), bmat(0xfff3be, 0.4), 0, TURF_Y + 0.25, 0, solid);
-    // torso in team colors
-    const torso = this.mesh(grp, new THREE.SphereGeometry(r * 0.62, 28, 18), bmat(team.primary, 0.4), 0, TURF_Y + 0.6, 0, solid);
+    this.mesh(grp, new THREE.CylinderGeometry(base.topRadius, base.radius, base.height, radialSegments), bmat(sideCol, 0.45), 0, TURF_Y + base.height / 2, 0, solid);
+    this.mesh(grp, new THREE.CylinderGeometry(r * 0.72, r * 0.78, 0.18, radialSegments), bmat(PLANETBALL.white, 0.4), 0, TURF_Y + 0.25, 0, solid);
+    // Compact broadcast kit. Babbles are intentionally armless: no limb mesh
+    // is added outside the torso/contact skirt silhouette.
+    const torso = this.mesh(grp, new THREE.SphereGeometry(r * 0.62, sphereWidth, sphereHeight), bmat(team.primary, 0.4), 0, TURF_Y + 0.6, 0, solid);
     torso.scale.set(1, 1.15, 0.9);
-    this.mesh(grp, new THREE.SphereGeometry(r * 0.4, 22, 14), bmat(team.secondary, 0.45), 0, TURF_Y + 0.56, r * 0.32, solid);
-    // oversized wobbling babble head
+    const bib = this.mesh(grp, new THREE.SphereGeometry(r * 0.4, this.lowPower ? 14 : 22, this.lowPower ? 9 : 14), bmat(team.secondary, 0.45), 0, TURF_Y + 0.56, r * 0.32, solid);
+    bib.scale.set(0.86, 0.92, 0.55);
+    if (!this.lowPower) {
+      const kitStripe = this.mesh(grp, this.geo('planetBallKitStripe', () => new THREE.BoxGeometry(1, 1, 1)), bmat(PLANETBALL.white, 0.38), 0, TURF_Y + 0.58, r * 0.62);
+      kitStripe.scale.set(r * 0.76, 0.055, 0.055);
+    }
+
+    // Oversized anime head. Its center is the existing picking contract.
     const head = new THREE.Group(); head.position.set(0, TURF_Y + 1.18 + bobY, 0); head.rotation.z = wobble; head.rotation.x = wobble * 0.5; grp.add(head);
-    const skull = this.mesh(head, new THREE.SphereGeometry(r * 0.98, 40, 26), bmat(team.primary, 0.32), 0, 0, 0, solid);
+    const skinTones = [0xffd9c2, 0xf2b58d, 0xc98262, 0x8c5545] as const;
+    const skin = skinTones[Math.min(skinTones.length - 1, Math.floor(hashId(b.id) * skinTones.length))];
+    const skull = this.mesh(head, new THREE.SphereGeometry(r * 0.98, this.lowPower ? 22 : 40, this.lowPower ? 14 : 26), bmat(skin, 0.42), 0, 0, 0, solid);
     skull.scale.set(1, 1.08, 0.96);
-    // muzzle, ears, eyes
-    this.mesh(head, new THREE.SphereGeometry(r * 0.42, 22, 14), bmat(team.secondary, 0.4), 0, -r * 0.18, r * 0.72, solid);
+    const hair = this.mesh(head, new THREE.SphereGeometry(r, this.lowPower ? 18 : 30, this.lowPower ? 10 : 18), bmat(team.primary, 0.38), 0, r * 0.38, -r * 0.04, solid);
+    hair.scale.set(1.02, 0.64, 0.98);
+    if (!this.lowPower) {
+      for (const s of [-1, 0, 1]) {
+        const spike = this.mesh(head, this.geo('planetBallHairSpike', () => new THREE.ConeGeometry(1, 1, 8)), bmat(team.primary, 0.38), s * r * 0.28, r * 0.37 - Math.abs(s) * r * 0.05, r * 0.79, solid);
+        spike.scale.set(r * 0.13, r * (s === 0 ? 0.42 : 0.31), r * 0.12);
+        spike.rotation.z = s * 0.3;
+      }
+    }
+    // Ears, wide anime eyes, brows, nose, and a small determined smile.
     for (const s of [-1, 1]) {
-      this.mesh(head, new THREE.SphereGeometry(r * 0.3, 18, 12), bmat(team.primary, 0.35), s * r * 0.66, r * 0.82, 0, solid);
-      this.mesh(head, new THREE.SphereGeometry(r * 0.16, 14, 10), bmat(team.secondary, 0.4), s * r * 0.66, r * 0.82, r * 0.12);
-      const eye = this.mesh(head, new THREE.SphereGeometry(r * 0.19, 16, 10), bmat(0xffffff, 0.25), s * r * 0.34, r * 0.22, r * 0.78);
+      if (!this.lowPower) this.mesh(head, new THREE.SphereGeometry(r * 0.18, 16, 10), bmat(skin, 0.44), s * r * 0.9, 0, 0, solid);
+      const eye = this.mesh(head, new THREE.SphereGeometry(r * 0.2, this.lowPower ? 12 : 18, this.lowPower ? 8 : 12), bmat(PLANETBALL.white, 0.25), s * r * 0.34, r * 0.13, r * 0.79);
       eye.castShadow = false;
-      this.mesh(head, new THREE.SphereGeometry(r * 0.09, 10, 8), bmat(0x1c1310, 0.3), s * r * 0.34, r * 0.22, r * 0.94);
+      this.mesh(head, new THREE.SphereGeometry(r * 0.11, this.lowPower ? 8 : 12, this.lowPower ? 6 : 8), bmat(this.lowPower ? PLANETBALL.charcoal : team.secondary, 0.28), s * r * 0.34, r * 0.12, r * 0.94);
+      if (!this.lowPower) {
+        this.mesh(head, new THREE.SphereGeometry(r * 0.055, 8, 6), bmat(PLANETBALL.charcoal, 0.3), s * r * 0.34, r * 0.12, r * 1.025);
+        const brow = this.mesh(head, this.geo('planetBallBrow', () => new THREE.BoxGeometry(1, 1, 1)), bmat(PLANETBALL.charcoal, 0.5), s * r * 0.34, r * 0.41, r * 0.88);
+        brow.scale.set(r * 0.32, r * 0.055, r * 0.055);
+        brow.rotation.z = -s * 0.1;
+      }
+    }
+    if (!this.lowPower) {
+      this.mesh(head, new THREE.SphereGeometry(r * 0.075, 10, 7), bmat(0xe59a79, 0.46), 0, -r * 0.03, r * 0.98);
+      const smile = this.mesh(head, this.geo('planetBallSmile', () => new THREE.TorusGeometry(1, 0.12, 6, 18, Math.PI)), bmat(PLANETBALL.charcoal, 0.46), 0, -r * 0.3, r * 0.91);
+      smile.scale.setScalar(r * 0.15);
+      smile.rotation.z = Math.PI;
     }
     // ghost aura: pulsing translucent shell + floating GHOSTED tag
     if (ghosted) {
@@ -706,26 +950,26 @@ export class BabbleLeague3DRenderer {
     if (state.players[you]?.controlledBabbleIds.includes(b.id)) {
       // X-ray ring remains visible when a mystery box overlaps the babble.
       const ring = new THREE.Mesh(this.geo('ctrlRing', () => new THREE.TorusGeometry(1, 0.06, 8, 48)),
-        this.texturedMat('ctrlRingXrayMat', () => new THREE.MeshBasicMaterial({ color: 0xffe86a, depthTest: false, depthWrite: false })));
+        this.texturedMat('ctrlRingXrayMat', () => new THREE.MeshBasicMaterial({ color: PLANETBALL.signal, depthTest: false, depthWrite: false })));
       ring.renderOrder = 20;
       ring.position.set(w.x, TURF_Y + 0.04, w.z); ring.rotation.x = Math.PI / 2; ring.scale.setScalar(babbleIndicatorRingRadius(b.radius, 'control')); this.dynamic.add(ring);
     }
     if (targetable) {
       const targetableRing = new THREE.Mesh(this.geo('targetableRing', () => new THREE.TorusGeometry(1, 0.075, 8, 48)),
-        this.texturedMat('targetableRingXrayMat', () => new THREE.MeshBasicMaterial({ color: 0x38f0e6, transparent: true, opacity: 0.88, depthTest: false, depthWrite: false })));
+        this.texturedMat('targetableRingXrayMat', () => new THREE.MeshBasicMaterial({ color: PLANETBALL.aqua, transparent: true, opacity: 0.88, depthTest: false, depthWrite: false })));
       targetableRing.renderOrder = 21;
       targetableRing.position.set(w.x, TURF_Y + 0.08, w.z);
       targetableRing.rotation.x = Math.PI / 2;
       targetableRing.scale.setScalar(babbleIndicatorRingRadius(b.radius, 'target'));
       this.dynamic.add(targetableRing);
     }
-    // click-to-select box target: pulsing cyan ring plus TARGET label
+    // Click-to-select box target: pulsing aqua ring plus TARGET label.
     if (selectedBabbleId === b.id) {
       const pulse = 1.8 + Math.sin(performance.now() / 180) * 0.12;
       const sel = new THREE.Mesh(this.geo('targetRing', () => new THREE.TorusGeometry(1, 0.09, 8, 48)),
-        new THREE.MeshBasicMaterial({ color: 0x38f0e6, transparent: true, opacity: 0.9 }));
+        new THREE.MeshBasicMaterial({ color: PLANETBALL.aqua, transparent: true, opacity: 0.9 }));
       sel.position.set(w.x, TURF_Y + 0.07, w.z); sel.rotation.x = Math.PI / 2; sel.scale.setScalar(babbleIndicatorRingRadius(b.radius, 'target') + (pulse - 1.8) * 0.12); this.dynamic.add(sel);
-      const label = this.text('TARGET', 26, '#7ff7ee');
+      const label = this.text('TARGET', 26, '#2cc7c1');
       label.position.set(w.x, TURF_Y + 2.6 + bobY, w.z);
       this.dynamic.add(label);
     }
@@ -757,13 +1001,13 @@ export class BabbleLeague3DRenderer {
     const grp = new THREE.Group(); grp.position.set(w.x, TURF_Y + elevation.centerYAboveTurf, w.z);
     grp.quaternion.copy(this.ballQuat);
     this.dynamic.add(grp);
-    const material = this.texturedMat('soccerBallSurfaceV2', () => new THREE.MeshStandardMaterial({
+    const material = this.texturedMat('planetBallTournamentSurfaceV1', () => new THREE.MeshStandardMaterial({
       map: this.soccerBallTexture(),
       roughness: 0.62,
       metalness: 0,
       color: 0xffffff
     }));
-    const ball = this.mesh(grp, this.geo('soccerBallSphereV2', () => new THREE.SphereGeometry(1, 48, 32)), material, 0, 0, 0, true);
+    const ball = this.mesh(grp, this.geo(`planetBallTournamentSphere:${this.lowPower ? 'low' : 'high'}`, () => new THREE.SphereGeometry(1, this.lowPower ? 24 : 48, this.lowPower ? 16 : 32)), material, 0, 0, 0, true);
     ball.scale.setScalar(r);
     ball.castShadow = true;
     ball.receiveShadow = false;
@@ -778,58 +1022,60 @@ export class BabbleLeague3DRenderer {
     grp.position.set(w.x, TURF_Y + 0.66 + bobY, w.z);
     grp.rotation.y = t * 0.9 + w.x;
     this.dynamic.add(grp);
-    // wooden crate body with a big stencilled ? on every side face
-    const cube = this.mesh(grp, this.geo('crateBody', () => new THREE.BoxGeometry(0.8, 0.8, 0.8)), this.texturedMat('crateSurface', () => new THREE.MeshStandardMaterial({ map: this.crateTexture(), roughness: 0.6, metalness: 0.02 })), 0, 0, 0, true);
-    cube.castShadow = true;
-    // coloured straps hint at the power category without revealing the type
-    const strap = this.mat(color, 0.35, { emissive: 0x221304 });
-    this.mesh(grp, this.geo('crateStrapX', () => new THREE.BoxGeometry(0.86, 0.18, 0.86)), strap, 0, 0, 0, true);
-    this.mesh(grp, this.geo('crateStrapY', () => new THREE.BoxGeometry(0.18, 0.86, 0.86)), strap, 0, 0, 0, true);
-    // golden corner caps
-    const cap = this.geo('crateCap', () => new THREE.SphereGeometry(0.09, 12, 8));
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) this.mesh(grp, cap, this.mat(0xffd166, 0.3), sx * 0.4, sy * 0.4, sz * 0.4);
-    // pulsing glow ring on the turf under the crate
-    const glow = new THREE.Mesh(this.geo('crateGlow', () => new THREE.TorusGeometry(1, 0.05, 8, 40)),
-      new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.5 + Math.sin(t * 3) * 0.2 }));
+    // Notched tournament ticket: a floating Unicap power capsule whose band
+    // hints at category without exposing the hidden ability.
+    const ticketGeo = this.geo(`powerTicket:${this.lowPower ? 'low' : 'high'}`, () => this.ticketCapsuleGeometry());
+    if (!this.lowPower) {
+      const backing = this.mesh(grp, ticketGeo, this.mat(PLANETBALL.cobalt, 0.42, { flat: true }), 0, 0, -0.055, true);
+      backing.scale.set(1.1, 1.08, 1.08);
+    }
+    this.mesh(grp, ticketGeo, this.mat(PLANETBALL.white, 0.5, { flat: true }), 0, 0, 0.015, true);
+    const categoryBand = this.mesh(grp, this.geo('powerTicketBand', () => new THREE.BoxGeometry(0.78, 0.18, 0.34)), this.mat(color, 0.36, { flat: true }), 0, 0, 0.02, true);
+    categoryBand.castShadow = !this.lowPower;
+    const spine = this.mesh(grp, this.geo('powerTicketSpine', () => new THREE.BoxGeometry(0.1, 0.76, 0.32)), this.mat(PLANETBALL.cobalt, 0.4, { flat: true }), 0, 0, 0.03);
+    spine.castShadow = false;
+    if (!this.lowPower) {
+      const seal = this.mesh(grp, this.geo('powerTicketSeal', () => new THREE.CylinderGeometry(0.14, 0.14, 0.045, 16)), this.mat(PLANETBALL.signal, 0.3, { emissive: 0x5a4300 }), 0, 0.29, 0.2);
+      seal.rotation.x = Math.PI / 2;
+    }
+    // Pulsing signal ring stays a visual affordance, never a collider.
+    const glow = new THREE.Mesh(this.geo(`powerTicketGlow:${this.lowPower ? 'low' : 'high'}`, () => new THREE.TorusGeometry(1, 0.05, this.lowPower ? 5 : 8, this.lowPower ? 20 : 40)),
+      new THREE.MeshBasicMaterial({ color: PLANETBALL.signal, transparent: true, opacity: 0.5 + Math.sin(t * 3) * 0.2 }));
     glow.position.set(w.x, TURF_Y + 0.05, w.z);
     glow.rotation.x = Math.PI / 2;
     glow.scale.setScalar(0.75 + Math.sin(t * 3) * 0.06);
     this.dynamic.add(glow);
-    const q = this.text('?', 46); q.position.set(w.x, TURF_Y + 1.55 + bobY, w.z); this.dynamic.add(q);
+    const q = this.text('?', 34, '#fffdf5');
+    q.position.set(w.x, TURF_Y + 0.66 + bobY, w.z + 0.26);
+    q.scale.multiplyScalar(0.72);
+    this.dynamic.add(q);
   }
 
-  // hand-painted crate texture: warm planks, nails and a stencilled ?
-  private crateTexture() {
-    const key = 'crateTexture';
-    let tex = this.textCache.get(key);
-    if (tex) return tex;
-    const c = document.createElement('canvas'); c.width = 256; c.height = 256;
-    const g = c.getContext('2d')!;
-    g.fillStyle = '#c98a3e'; g.fillRect(0, 0, 256, 256);
-    for (let i = 0; i < 4; i++) {
-      g.fillStyle = i % 2 ? '#b97a33' : '#d29a49';
-      g.fillRect(0, i * 64, 256, 60);
-      g.fillStyle = 'rgba(90,50,15,.55)';
-      g.fillRect(0, i * 64 + 60, 256, 4);
-    }
-    // wood grain streaks
-    g.strokeStyle = 'rgba(120,70,25,.35)'; g.lineWidth = 3;
-    for (let i = 0; i < 9; i++) { g.beginPath(); g.moveTo(10 + i * 28, 8); g.bezierCurveTo(20 + i * 28, 80, 2 + i * 28, 170, 14 + i * 28, 248); g.stroke(); }
-    // frame + nails
-    g.strokeStyle = '#8a5a22'; g.lineWidth = 14; g.strokeRect(7, 7, 242, 242);
-    g.fillStyle = '#ffd166';
-    for (const [x, y] of [[24, 24], [232, 24], [24, 232], [232, 232]]) { g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.fill(); }
-    // stencilled question mark
-    g.font = '900 150px Fredoka, Arial'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.strokeStyle = 'rgba(70,35,5,.9)'; g.lineWidth = 12; g.strokeText('?', 128, 136);
-    g.fillStyle = '#fff3be'; g.fillText('?', 128, 136);
-    tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
-    this.textCache.set(key, tex);
-    return tex;
+  private ticketCapsuleGeometry() {
+    const shape = new THREE.Shape();
+    shape.moveTo(-0.42, -0.5);
+    shape.lineTo(0.42, -0.5);
+    shape.lineTo(0.42, -0.12);
+    shape.lineTo(0.31, 0);
+    shape.lineTo(0.42, 0.12);
+    shape.lineTo(0.42, 0.5);
+    shape.lineTo(-0.42, 0.5);
+    shape.lineTo(-0.42, 0.12);
+    shape.lineTo(-0.31, 0);
+    shape.lineTo(-0.42, -0.12);
+    shape.closePath();
+    return new THREE.ExtrudeGeometry(shape, {
+      depth: 0.24,
+      bevelEnabled: !this.lowPower,
+      bevelSegments: this.lowPower ? 1 : 2,
+      bevelSize: 0.035,
+      bevelThickness: 0.035,
+      curveSegments: this.lowPower ? 2 : 4
+    }).center();
   }
 
   private addFieldObject(type: string, p: Vec, angle: number, ghost = false) {
-    const colors: Record<string, number> = { stickyGoo: 0x84cc16, block: 0xdbeafe, ramp: 0xa78bfa, boost: 0x38bdf8 };
+    const colors: Record<string, number> = { stickyGoo: 0x239f9e, block: PLANETBALL.white, ramp: PLANETBALL.coral, boost: PLANETBALL.cobalt };
     const w = fieldToWorld(p);
     const col = colors[type] ?? 0xffffff;
     const fx = (color: number, rough = 0.34) => ghost
@@ -843,11 +1089,11 @@ export class BabbleLeague3DRenderer {
       // sticky slow puddle (physics radius 80 -> 1.6 world units)
       const puddle = this.mesh(grp, new THREE.CylinderGeometry(1.6, 1.72, 0.1, 36), fx(col, 0.6), 0, TURF_Y + 0.06, 0);
       puddle.castShadow = false;
-      for (let i = 0; i < 5; i++) this.mesh(grp, new THREE.SphereGeometry(0.14 + (i % 3) * 0.05, 12, 8), fx(0xa3e635, 0.5), Math.cos(i * 2.4) * 1.05, TURF_Y + 0.14, Math.sin(i * 2.4) * 1.05, !ghost);
+      for (let i = 0; i < 5; i++) this.mesh(grp, new THREE.SphereGeometry(0.14 + (i % 3) * 0.05, 12, 8), fx(PLANETBALL.aqua, 0.5), Math.cos(i * 2.4) * 1.05, TURF_Y + 0.14, Math.sin(i * 2.4) * 1.05, !ghost);
     } else if (type === 'block') {
       // wall segment (halfLen 60 -> 2.4 long)
       this.mesh(grp, new THREE.BoxGeometry(2.5, 0.62, 0.5), fx(col, 0.4), 0, TURF_Y + 0.32, 0, !ghost);
-      this.mesh(grp, new THREE.BoxGeometry(2.62, 0.14, 0.62), fx(0x64748b, 0.5), 0, TURF_Y + 0.08, 0);
+      this.mesh(grp, new THREE.BoxGeometry(2.62, 0.14, 0.62), fx(PLANETBALL.charcoal, 0.5), 0, TURF_Y + 0.08, 0);
     } else if (type === 'ramp') {
       // true wedge shape matching physics zone: low lip at -x rising to the
       // launch lip at +x (local +x == ramp facing/launch direction)
@@ -855,16 +1101,16 @@ export class BabbleLeague3DRenderer {
       const wedge = new THREE.Mesh(this.geo('rampWedge', () => this.wedgeGeometry()), fx(col, 0.35));
       wedge.position.y = TURF_Y + 0.01; wedge.castShadow = !ghost; wedge.receiveShadow = true; grp.add(wedge);
       // base plate, raised side rails and a hazard-striped launch lip
-      this.mesh(grp, new THREE.BoxGeometry(hx * 2 + 0.24, 0.08, hz * 2 + 0.24), fx(0x7c6ae8, 0.45), 0, TURF_Y + 0.04, 0);
+      this.mesh(grp, new THREE.BoxGeometry(hx * 2 + 0.24, 0.08, hz * 2 + 0.24), fx(PLANETBALL.cobalt, 0.45), 0, TURF_Y + 0.04, 0);
       for (const s of [-1, 1] as const) {
-        const rail = this.mesh(grp, new THREE.BoxGeometry(Math.hypot(hx * 2, 0.82) + 0.1, 0.14, 0.12), fx(0x5b4bc4, 0.4), 0, TURF_Y + 0.45, s * (hz + 0.05), !ghost);
+        const rail = this.mesh(grp, new THREE.BoxGeometry(Math.hypot(hx * 2, 0.82) + 0.1, 0.14, 0.12), fx(PLANETBALL.charcoal, 0.4), 0, TURF_Y + 0.45, s * (hz + 0.05), !ghost);
         rail.rotation.z = Math.atan2(0.82, hx * 2); // follow the slope up to the lip
       }
       const lip = this.mesh(grp, new THREE.BoxGeometry(0.18, 0.94, hz * 2 + 0.2), ghost ? fx(0xfde047, 0.35) : this.texturedMat('hazardLip', () => new THREE.MeshStandardMaterial({ map: this.hazardTexture(), roughness: 0.4 })), hx - 0.04, TURF_Y + 0.42, 0, !ghost);
       lip.castShadow = !ghost;
       // launch direction chevrons up the slope
       for (const [off, h] of [[-0.7, 0.28], [0, 0.52], [0.7, 0.76]] as const) {
-        const arrow = new THREE.Mesh(this.geo('rampArrow', () => new THREE.ConeGeometry(0.18, 0.44, 4)), ghost ? fx(0xf5f3ff, 0.3) : this.mat(0xf5f3ff, 0.3, { emissive: 0x4c3d99 }));
+        const arrow = new THREE.Mesh(this.geo('rampArrow', () => new THREE.ConeGeometry(0.18, 0.44, 4)), ghost ? fx(PLANETBALL.white, 0.3) : this.mat(PLANETBALL.white, 0.3, { emissive: 0x4d201c }));
         arrow.position.set(off, TURF_Y + h, 0);
         arrow.rotation.set(0, Math.PI / 4, -Math.PI / 2);
         grp.add(arrow);
@@ -874,18 +1120,18 @@ export class BabbleLeague3DRenderer {
       const t = performance.now() / 1000;
       const pad = this.mesh(grp, new THREE.CylinderGeometry(1.4, 1.5, 0.1, 36), fx(col, 0.45), 0, TURF_Y + 0.06, 0);
       pad.castShadow = false;
-      const rim = this.mesh(grp, new THREE.CylinderGeometry(1.46, 1.52, 0.06, 36), ghost ? fx(0x0ea5e9, 0.3) : this.mat(0x0ea5e9, 0.3, { emissive: 0x0b4a66 }), 0, TURF_Y + 0.12, 0);
+      const rim = this.mesh(grp, new THREE.CylinderGeometry(1.46, 1.52, 0.06, 36), ghost ? fx(PLANETBALL.aqua, 0.3) : this.mat(PLANETBALL.aqua, 0.3, { emissive: 0x0b4a66 }), 0, TURF_Y + 0.12, 0);
       rim.castShadow = false;
       // speed streak decals sweeping with time so the pad reads as powered-on
       if (!ghost) {
         const swirl = new THREE.Mesh(this.geo('boostSwirl', () => new THREE.TorusGeometry(1.05, 0.05, 6, 40, Math.PI * 0.9)),
-          new THREE.MeshBasicMaterial({ color: 0xe0f2fe, transparent: true, opacity: 0.75 }));
+          new THREE.MeshBasicMaterial({ color: PLANETBALL.white, transparent: true, opacity: 0.75 }));
         swirl.position.set(0, TURF_Y + 0.13, 0); swirl.rotation.x = Math.PI / 2; swirl.rotation.z = -t * 3.2;
         grp.add(swirl);
       }
       for (const [i, off] of [-0.55, 0.1, 0.75].entries()) {
         const pulse = ghost ? 0 : Math.max(0, Math.sin(t * 5 - i * 1.1)) * 0.12;
-        const arrow = new THREE.Mesh(this.geo('boostArrow', () => new THREE.ConeGeometry(0.24, 0.62, 4)), ghost ? fx(0xf0f9ff, 0.3) : this.mat(0xf0f9ff, 0.3, { emissive: 0x2a6f8f }));
+        const arrow = new THREE.Mesh(this.geo('boostArrow', () => new THREE.ConeGeometry(0.24, 0.62, 4)), ghost ? fx(PLANETBALL.white, 0.3) : this.mat(PLANETBALL.white, 0.3, { emissive: 0x0c4d54 }));
         arrow.position.set(off + pulse, TURF_Y + 0.18, 0);
         arrow.rotation.set(0, Math.PI / 4, -Math.PI / 2);
         arrow.scale.setScalar(1 + pulse);
@@ -901,10 +1147,10 @@ export class BabbleLeague3DRenderer {
     if (tex) return tex;
     const c = document.createElement('canvas'); c.width = 128; c.height = 128;
     const g = c.getContext('2d')!;
-    g.fillStyle = '#fbbf24'; g.fillRect(0, 0, 128, 128);
-    g.fillStyle = '#1f2937';
+    g.fillStyle = '#ffda36'; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = '#22252e';
     for (let i = -2; i < 6; i++) { g.save(); g.translate(i * 32, 0); g.rotate(Math.PI / 4); g.fillRect(0, -64, 16, 256); g.restore(); }
-    tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
+    tex = new THREE.CanvasTexture(c); tex.anisotropy = this.lowPower ? 1 : 4;
     this.textCache.set(key, tex);
     return tex;
   }
@@ -982,15 +1228,15 @@ export class BabbleLeague3DRenderer {
       if (age < 0 || age > 1) continue;
       const w = fieldToWorld(ev.pos);
       const fade = 1 - age;
-      // rising violet burst ring at the lip
+      // Rising coral-and-signal broadcast burst at the lip.
       const ring = new THREE.Mesh(this.geo('rampPulse', () => new THREE.TorusGeometry(1, 0.06, 8, 48)),
-        new THREE.MeshBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.8 * fade }));
+        new THREE.MeshBasicMaterial({ color: PLANETBALL.coral, transparent: true, opacity: 0.8 * fade }));
       ring.position.set(w.x, TURF_Y + 0.15 + age * 1.4, w.z);
       ring.rotation.x = Math.PI / 2;
       ring.scale.setScalar(0.5 + age * 1.6);
       this.dynamic.add(ring);
       const spark = new THREE.Mesh(this.geo('rampSpark', () => new THREE.SphereGeometry(1, 16, 10)),
-        new THREE.MeshBasicMaterial({ color: 0xede9fe, transparent: true, opacity: 0.55 * fade, depthWrite: false }));
+        new THREE.MeshBasicMaterial({ color: PLANETBALL.signal, transparent: true, opacity: 0.55 * fade, depthWrite: false }));
       spark.position.set(w.x, TURF_Y + 0.6 + age * 1.6, w.z);
       spark.scale.setScalar(0.3 + age * 0.5);
       this.dynamic.add(spark);
@@ -1003,14 +1249,14 @@ export class BabbleLeague3DRenderer {
     const w = fieldToWorld(pos);
     const t = performance.now() / 1000;
     const ring = new THREE.Mesh(this.geo('rotateRing', () => new THREE.TorusGeometry(1, 0.045, 8, 48)),
-      new THREE.MeshBasicMaterial({ color: active ? 0x38f0e6 : 0xfff3be, transparent: true, opacity: active ? 0.95 : 0.4 + Math.sin(t * 2.4) * 0.12 }));
+      new THREE.MeshBasicMaterial({ color: active ? PLANETBALL.aqua : PLANETBALL.white, transparent: true, opacity: active ? 0.95 : 0.4 + Math.sin(t * 2.4) * 0.12 }));
     ring.position.set(w.x, TURF_Y + 0.06, w.z);
     ring.rotation.x = Math.PI / 2;
     ring.rotation.z = active ? t * 2 : 0;
     ring.scale.setScalar(1.75);
     this.dynamic.add(ring);
     if (!active) {
-      const handle = this.text('⟳', 30, '#fff3be');
+      const handle = this.text('⟳', 30, '#fffdf5');
       handle.position.set(w.x + 1.35, TURF_Y + 0.9, w.z - 1.1);
       handle.scale.multiplyScalar(0.7);
       this.dynamic.add(handle);
@@ -1030,7 +1276,7 @@ export class BabbleLeague3DRenderer {
     // dashed pull-back tether to the pointer
     const tether = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([o.clone(), toV3(drag.current, TURF_Y + 0.14)]),
-      new THREE.LineDashedMaterial({ color: 0xfff3be, dashSize: 0.28, gapSize: 0.2, transparent: true, opacity: 0.85 })
+      new THREE.LineDashedMaterial({ color: PLANETBALL.white, dashSize: 0.28, gapSize: 0.2, transparent: true, opacity: 0.85 })
     );
     tether.computeLineDistances(); this.dynamic.add(tether);
 
@@ -1054,7 +1300,7 @@ export class BabbleLeague3DRenderer {
     const dir = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
     const o = toV3(origin, TURF_Y + 0.14);
     const len = 1.1 + power * 3.4;
-    const color = new THREE.Color().lerpColors(new THREE.Color(0xffe86a), new THREE.Color(0xff5340), power);
+    const color = new THREE.Color().lerpColors(new THREE.Color(PLANETBALL.signal), new THREE.Color(PLANETBALL.coral), power);
     const basic = (op: number) => new THREE.MeshBasicMaterial({ color, transparent: op < 1, opacity: op });
 
     const shaftLen = len * 0.72;
@@ -1098,27 +1344,23 @@ export class BabbleLeague3DRenderer {
     if (theme.pattern === 'craters') {
       const craters = [[160, 120, 46], [360, 380, 34], [540, 135, 58], [720, 330, 44], [875, 170, 28]];
       for (const [x, y, r] of craters) {
-        const grad = g.createRadialGradient(x - r * 0.25, y - r * 0.25, r * 0.1, x, y, r);
-        grad.addColorStop(0, 'rgba(225,238,255,.28)');
-        grad.addColorStop(0.58, 'rgba(36,48,70,.18)');
-        grad.addColorStop(1, 'rgba(8,14,26,.34)');
-        g.fillStyle = grad;
+        g.fillStyle = 'rgba(34,37,46,.18)';
         g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-        g.strokeStyle = 'rgba(232,244,255,.24)';
-        g.lineWidth = 5;
+        g.strokeStyle = 'rgba(255,253,245,.42)';
+        g.lineWidth = 7;
         g.stroke();
       }
     } else if (theme.pattern === 'lava') {
       g.lineCap = 'round';
       for (let i = 0; i < 5; i++) {
         const y = 72 + i * 92;
-        g.strokeStyle = i % 2 ? 'rgba(251,113,34,.8)' : 'rgba(239,68,68,.75)';
+        g.strokeStyle = i % 2 ? 'rgba(241,102,85,.88)' : 'rgba(255,218,54,.82)';
         g.lineWidth = 12 + (i % 3) * 4;
         g.beginPath();
         g.moveTo(40, y);
         for (let x = 120; x < c.width; x += 110) g.lineTo(x, y + Math.sin((x + i * 77) / 90) * 34);
         g.stroke();
-        g.strokeStyle = 'rgba(254,215,170,.45)';
+        g.strokeStyle = 'rgba(255,253,245,.55)';
         g.lineWidth = 3;
         g.stroke();
       }
@@ -1127,27 +1369,26 @@ export class BabbleLeague3DRenderer {
       g.translate(c.width / 2, c.height / 2);
       g.rotate(-0.18);
       for (const [rx, ry, alpha] of [[330, 88, 0.5], [250, 62, 0.42], [145, 38, 0.36]] as const) {
-        g.strokeStyle = `rgba(246,211,101,${alpha})`;
+        g.strokeStyle = `rgba(255,218,54,${alpha + 0.18})`;
         g.lineWidth = 10;
         g.beginPath();
         g.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
         g.stroke();
-        g.strokeStyle = `rgba(125,211,252,${alpha * 0.58})`;
+        g.strokeStyle = `rgba(44,199,193,${alpha * 0.82})`;
         g.lineWidth = 3;
         g.beginPath();
         g.ellipse(0, 0, rx + 22, ry + 7, 0, 0, Math.PI * 2);
         g.stroke();
       }
       g.restore();
-      for (const [x, y, r] of [[214, 135, 18], [812, 370, 16], [520, 257, 32]] as const) {
-        const grad = g.createRadialGradient(x - r * 0.25, y - r * 0.35, r * 0.1, x, y, r);
-        grad.addColorStop(0, 'rgba(255,238,186,.82)');
-        grad.addColorStop(0.65, 'rgba(216,168,72,.44)');
-        grad.addColorStop(1, 'rgba(42,23,64,.24)');
-        g.fillStyle = grad;
+      for (const [index, [x, y, r]] of [[214, 135, 18], [812, 370, 16], [520, 257, 32]].entries()) {
+        g.fillStyle = index % 2 ? 'rgba(241,102,85,.7)' : 'rgba(255,253,245,.72)';
         g.beginPath();
         g.arc(x, y, r, 0, Math.PI * 2);
         g.fill();
+        g.strokeStyle = 'rgba(34,37,46,.48)';
+        g.lineWidth = 4;
+        g.stroke();
       }
     }
     g.strokeStyle = theme.line;
@@ -1168,12 +1409,12 @@ export class BabbleLeague3DRenderer {
     }
     tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.anisotropy = 4;
+    tex.anisotropy = this.lowPower ? 1 : 4;
     this.textCache.set(key, tex);
     return tex;
   }
 
-  private text(text: string, size = 32, fill = '#fff8cf') {
+  private text(text: string, size = 32, fill = '#fffdf5') {
     const key = `${text}|${size}|${fill}`;
     let tex = this.textCache.get(key);
     if (!tex) {
@@ -1181,8 +1422,8 @@ export class BabbleLeague3DRenderer {
       const g = c.getContext('2d')!;
       g.font = `900 ${size * 2}px Fredoka, Arial`;
       g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.shadowColor = 'rgba(40,14,10,.55)'; g.shadowBlur = 0; g.shadowOffsetY = 7;
-      g.strokeStyle = 'rgba(62,26,20,.9)'; g.lineWidth = 14; g.lineJoin = 'round';
+      g.shadowColor = 'rgba(34,37,46,.52)'; g.shadowBlur = 0; g.shadowOffsetY = 7;
+      g.strokeStyle = 'rgba(34,37,46,.92)'; g.lineWidth = 14; g.lineJoin = 'round';
       g.fillStyle = fill;
       const lines = text.split('\n');
       lines.forEach((line, i) => {
@@ -1190,10 +1431,11 @@ export class BabbleLeague3DRenderer {
         g.strokeText(line, 256, y);
         g.fillText(line, 256, y);
       });
-      tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
+      tex = new THREE.CanvasTexture(c); tex.anisotropy = this.lowPower ? 1 : 4;
       this.textCache.set(key, tex);
     }
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+    const spriteMaterial = this.texturedMat(`textSprite:${key}`, () => new THREE.SpriteMaterial({ map: tex, transparent: true })) as THREE.SpriteMaterial;
+    const sp = new THREE.Sprite(spriteMaterial);
     sp.scale.set(size / 12, size / 24, 1);
     return sp;
   }

@@ -32,7 +32,7 @@ import { PHYSICS_CONFIG } from '../shared/physicsConfig';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
-describe('classic Babble League shared rules', () => {
+describe('classic Unicup shared rules', () => {
   it('defaults to stadium and snapshots the selected map config', () => {
     const s = createInitialState('MAPS', 3);
     expect(s.mapId).toBe('stadium');

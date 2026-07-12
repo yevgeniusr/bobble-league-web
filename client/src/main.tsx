@@ -4,6 +4,8 @@ import { io, Socket } from 'socket.io-client';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, BoxTypeInput, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec, normalizeBoxType } from '../../shared/types';
 import { initXtremepush, trackAnalyticsEvent, xtremepushCommand } from './analytics';
 import { AudioSettings, audioManager, loadAudioSettings, saveAudioSettings } from './audio';
+import { UNICUP_BRAND } from './brand';
+import { readableTextColor } from './color';
 import { buildMatchEndSummary } from './matchEnd';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import './styles.css';
@@ -124,50 +126,172 @@ function App() {
   }
 
   return <main>
-    {!state && <section className="panel hero">
-      <div className="heroGlow one" aria-hidden="true"/>
-      <div className="heroGlow two" aria-hidden="true"/>
-      <div className="starSprinkle" aria-hidden="true"><span/><span/><span/><span/><span/></div>
-      <div className="heroLeft">
-        <p className="eyebrow">arcade tabletop soccer</p>
-        <h1>Babble<br/>League</h1>
-        <p className="sub">Drag-launch cute babbleheads through a candy-bright arena, bank off corner bumpers, and steal the match with mystery Power Plays.</p>
-        <div className="showcase">
-          <AnimeCatMascot/>
-          <ArenaPreview/>
-        </div>
-        <div className="powerTiles">{POWER_PREVIEW.map(t=><div key={t} className="powerTile" style={{background: BOX_TYPES[t].color}} title={BOX_TYPES[t].description}><span className="powerIcon">{POWER_ICONS[t] ?? '★'}</span>{BOX_TYPES[t].label}</div>)}</div>
-      </div>
-      <div className="heroRight">
-        <section className="lobbyCard">
-          <div className="cardRibbon">meow match desk</div>
-          <h2>Create or join</h2>
-          <label>Your name <input value={name} onChange={e=>setName(e.target.value)} maxLength={18}/></label>
-          <p className="fieldLabel">Pick mascots after joining the room with your team</p>
-          <div className="lobbyMascotPreview">{(['left','right'] as const).map(side=>{ const id = side === 'left' ? 'pigs' : 'tigers'; const t = TEAMS[id]; return <div key={side} className="teamPreviewCard" style={{ background: t.primary, color: t.secondary }}><span>{side === 'left' ? 'Left' : 'Right'}</span><b>{t.emoji} {t.label}</b></div>; })}</div>
-          <div className="lobbySplit">
-            <div className="lobbyCol">
-              <p className="fieldLabel">Host a match</p>
-              <label>Game length <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage: 1 goal / 30 turns</option><option value={3}>Qualifier: 3 goals / 90 turns</option><option value={5}>Champion: 5 goals / 150 turns</option></select></label>
-              <label>Map <select className="mapSelect" value={mapId} onChange={e=>setMapId(e.target.value as MapId)}>{MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label}: {MAP_SELECT_HINTS[id]}</option>)}</select></label>
-              <AudioControls settings={audioSettings} onChange={patchAudio}/>
-              <button className="primary" onClick={createRoom}>Create room</button>
-            </div>
-            <div className="lobbyDivider"><span>or</span></div>
-            <div className="lobbyCol">
-              <p className="fieldLabel">Join friends</p>
-              <label>Room code <input className="codeInput" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())} maxLength={8} placeholder="ABC12"/></label>
-              <button onClick={joinRoom}>Join room</button>
-            </div>
-          </div>
-          <LoyaltyWidget nickname={name}/>
-          {error && <p className="lobbyError">{error}</p>}
-        </section>
-      </div>
-    </section>}
+    {!state && <LandingPage
+      name={name}
+      setName={setName}
+      mode={mode}
+      setMode={setMode}
+      mapId={mapId}
+      setMapId={setMapId}
+      roomCode={roomCode}
+      setRoomCode={setRoomCode}
+      audioSettings={audioSettings}
+      onAudioChange={patchAudio}
+      onCreateRoom={createRoom}
+      onJoinRoom={joinRoom}
+      error={error}
+    />}
     {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ leavingRef.current = true; socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
   </main>;
+}
+
+type LandingPageProps = {
+  name: string;
+  setName: React.Dispatch<React.SetStateAction<string>>;
+  mode: GameMode;
+  setMode: (mode: GameMode) => void;
+  mapId: MapId;
+  setMapId: (mapId: MapId) => void;
+  roomCode: string;
+  setRoomCode: React.Dispatch<React.SetStateAction<string>>;
+  audioSettings: AudioSettings;
+  onAudioChange: (patch: Partial<AudioSettings>) => void;
+  onCreateRoom: () => void;
+  onJoinRoom: () => void;
+  error: string;
+};
+
+function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error }: LandingPageProps) {
+  const [deskView, setDeskView] = React.useState<'host' | 'join'>('host');
+  const hostTabRef = React.useRef<HTMLButtonElement>(null);
+  const joinTabRef = React.useRef<HTMLButtonElement>(null);
+  const onDeskTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const next = event.key === 'ArrowRight' || event.key === 'End'
+      ? 'join'
+      : event.key === 'ArrowLeft' || event.key === 'Home'
+        ? 'host'
+        : null;
+    if (!next) return;
+    event.preventDefault();
+    setDeskView(next);
+    (next === 'host' ? hostTabRef : joinTabRef).current?.focus();
+  };
+
+  return <div className="landing" id="top">
+    <section className="landingHero" aria-label="PlanetBall tournament entry">
+      <div className="heroScene">
+        <picture className="heroArt" aria-hidden="true">
+          <source media="(max-width: 720px)" srcSet={UNICUP_BRAND.art.heroMobile}/>
+          <img src={UNICUP_BRAND.art.heroDesktop} alt=""/>
+        </picture>
+        <header className="siteHeader">
+          <a className="brandMark" href="#top" aria-label={`${UNICUP_BRAND.name} home`}><span>UC</span><b>{UNICUP_BRAND.name}</b></a>
+          <nav aria-label="Landing navigation">
+            <a href="#origin">Origin</a>
+            <a href="#ball-office">Ball Office</a>
+            <a href="#fair-play">Fair play</a>
+            <a className="navPlay" href="#play">Play</a>
+          </nav>
+        </header>
+        <div className="heroCopy">
+          <p className="heroKicker">The Universe Cup / PlanetBall season 01</p>
+          <h1 aria-label={UNICUP_BRAND.name}><span aria-hidden="true">Unicup</span></h1>
+          <p className="heroTagline">{UNICUP_BRAND.tagline}</p>
+          <p className="heroMission">{UNICUP_BRAND.mission}</p>
+          <a className="heroCta" href="#play">Enter tournament <span aria-hidden="true">&#8594;</span></a>
+          <p className="heroRule"><span aria-hidden="true">&#10022;</span> {UNICUP_BRAND.principles[0]}</p>
+        </div>
+        <div className="seasonSeal" aria-hidden="true"><span>01</span><b>UNI<br/>CUP</b></div>
+      </div>
+
+      <aside className="tournamentDesk" id="play" aria-labelledby="deskTitle">
+        <div className="deskHead">
+          <div><p>Unicap entry terminal / T-01</p><h2 id="deskTitle">Create or join</h2></div>
+          <span className="deskLive"><i/> Live</span>
+        </div>
+
+        <label className="deskField">Player name
+          <input value={name} onChange={e=>setName(e.target.value)} maxLength={18} autoComplete="nickname"/>
+        </label>
+
+        <div className="deskTabs" role="tablist" aria-label="Tournament entry mode">
+          <button ref={hostTabRef} id="desk-tab-host" type="button" role="tab" aria-controls="desk-panel-host" aria-selected={deskView === 'host'} tabIndex={deskView === 'host' ? 0 : -1} className={deskView === 'host' ? 'selected' : ''} onClick={()=>setDeskView('host')} onKeyDown={onDeskTabKeyDown}>Host match</button>
+          <button ref={joinTabRef} id="desk-tab-join" type="button" role="tab" aria-controls="desk-panel-join" aria-selected={deskView === 'join'} tabIndex={deskView === 'join' ? 0 : -1} className={deskView === 'join' ? 'selected' : ''} onClick={()=>setDeskView('join')} onKeyDown={onDeskTabKeyDown}>Join room</button>
+        </div>
+
+        {deskView === 'host' ? <div id="desk-panel-host" className="deskPanel" role="tabpanel" aria-labelledby="desk-tab-host">
+          <label className="deskField">Tournament format
+            <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}>
+              <option value={1}>Scrimmage / 1 goal / 30 turns</option>
+              <option value={3}>Qualifier / 3 goals / 90 turns</option>
+              <option value={5}>Champion / 5 goals / 150 turns</option>
+            </select>
+          </label>
+          <label className="deskField">Planet arena
+            <select className="mapSelect" value={mapId} onChange={e=>setMapId(e.target.value as MapId)}>
+              {MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label} / {MAP_SELECT_HINTS[id]}</option>)}
+            </select>
+          </label>
+          <button type="button" className="primary deskSubmit" onClick={onCreateRoom}>Create room <span aria-hidden="true">&#8594;</span></button>
+        </div> : <div id="desk-panel-join" className="deskPanel" role="tabpanel" aria-labelledby="desk-tab-join">
+          <label className="deskField">Room code
+            <input className="codeInput" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())} maxLength={8} placeholder="ABC12" autoComplete="off"/>
+          </label>
+          <button type="button" className="primary deskSubmit" onClick={onJoinRoom}>Join room <span aria-hidden="true">&#8594;</span></button>
+          <p className="deskNote">Your team and tournament kit are selected inside the room.</p>
+        </div>}
+
+        <AudioControls settings={audioSettings} onChange={onAudioChange}/>
+        <LoyaltyWidget nickname={name}/>
+        {error && <p className="lobbyError" role="alert">{error}</p>}
+      </aside>
+    </section>
+
+    <section className="originScene" id="origin">
+      <div className="sectionLabel">The origin / year very very far away</div>
+      <div className="originLead">
+        <p>Peace finally won.</p>
+        <h2>So humanity<br/>got goofy.</h2>
+      </div>
+      <div className="originBeats">
+        <article><span>01</span><h3>One button too many</h3><p>Everyone became powerful enough to erase everyone else. The next generations destroyed the weapons for good.</p></article>
+        <article><span>02</span><h3>Hands were history</h3><p>To make sure nobody could build them again, people engineered themselves without hands. Awkward. Effective.</p></article>
+        <article><span>03</span><h3>Unicap took the keys</h3><p>The nonprofit received every resource in the universe, with one rule: distribute everything and use nothing itself.</p></article>
+        <article><span>04</span><h3>The fairest game</h3><p>Income, debate, and history all caused conflict. Tournaments did not. Soccer became Unicup, the first great resource league.</p></article>
+      </div>
+    </section>
+
+    <section className="climbScene" id="ball-office">
+      <img src={UNICUP_BRAND.art.roadToBallOffice} alt="Handless Unicup athletes climbing the PlanetBall tournament road toward the Unicap Ball Office" loading="lazy" decoding="async"/>
+      <div className="climbCopy">
+        <p className="sectionLabel">Your season objective</p>
+        <h2>Climb the board.<br/>Reach the office.</h2>
+        <p>Unicap stopped obeying its only rule. Resources now grow its control. Win through the league, reach the Ball Office, and find out who changed the game.</p>
+      </div>
+    </section>
+
+    <section className="fairPlayScene" id="fair-play">
+      <div className="fairPlayStatement">
+        <p className="sectionLabel">The competitive oath</p>
+        <h2>Power is earned.<br/><span>Style is yours.</span></h2>
+      </div>
+      <div className="fairPlayCopy">
+        <p>Unicup is built for cybersport. Competition stays readable, learnable, and fair across every season.</p>
+        <strong>{UNICUP_BRAND.principles[0]}</strong>
+        <p>Personalization lives in tournament kits, colors, celebrations, ball finishes, banners, and PlanetBall style. Money never buys match power.</p>
+      </div>
+    </section>
+
+    <section className="futureScene" aria-labelledby="futureTitle">
+      <p className="sectionLabel">The universe keeps rolling</p>
+      <h2 id="futureTitle">A league bigger than one planet.</h2>
+      <div className="futureTrack">{UNICUP_BRAND.future.map((item, index)=><span key={item}><b>{String(index + 1).padStart(2, '0')}</b>{item}</span>)}</div>
+      <a className="futureCta" href="#play">Take the first kick <span aria-hidden="true">&#8593;</span></a>
+    </section>
+
+    <footer className="landingFooter"><b>{UNICUP_BRAND.name}</b><span>Universe Cup transmission / PlanetBall season 01</span><a href="#top">Back to orbit &#8593;</a></footer>
+  </div>;
 }
 
 function LoyaltyWidget({ nickname }: { nickname: string }) {
@@ -292,71 +416,18 @@ function LoyaltyWidget({ nickname }: { nickname: string }) {
     return () => window.removeEventListener('message', onMessage);
   }, [config?.loyaltyEndpoint]);
 
-  return <section className={`loyaltyCard ${status}`} aria-label="Babble League rewards">
-    <div className="loyaltyHeading"><span>★</span><div><b>Babble Rewards</b><small>Signed in as {nickname.trim() || 'your nickname'}</small></div></div>
+  return <section className={`loyaltyCard ${status}`} aria-label="Unicup rewards">
+    <div className="loyaltyHeading"><span>★</span><div><b>Unicup Rewards</b><small>Signed in as {nickname.trim() || 'your nickname'}</small></div></div>
     {message && <p className="loyaltyStatus" role="status">{message}</p>}
     <div ref={hostRef} className="loyaltyHost" aria-hidden={status !== 'ready'}/>
   </section>;
 }
-
-function AnimeCatMascot() {
-  return <div className="catMascot" aria-hidden="true">
-    <div className="catTail"/>
-    <div className="catBody">
-      <div className="catScarf"/>
-      <div className="catFace">
-        <div className="catEar left"/><div className="catEar right"/>
-        <div className="catEye left"/><div className="catEye right"/>
-        <div className="catBlush left"/><div className="catBlush right"/>
-        <div className="catMouth"/>
-      </div>
-      <div className="catPaw left"/><div className="catPaw right"/>
-    </div>
-    <div className="catBall"/>
-  </div>;
-}
-
-const POWER_PREVIEW: readonly BoxType[] = ['beachBall', 'ramp', 'yellowCard', 'redCard', 'bigBumpers', 'swapGoals'];
-// One icon per Power Play, reused across the lobby preview, HUD buttons and hints.
+// One icon per Power Play, reused across HUD buttons and hints.
 const POWER_ICONS: Record<BoxType, string> = {
   beachBall: '🏖', moveBall: '🎯', swapGoals: '🔄', bigBumpers: '💥', boost: '⚡',
   stickyGoo: '🟢', ramp: '⛰️', block: '🧱', bigHead: '🗣️', ghosted: '👻', movePlayer: '🚚',
   yellowCard: '🟨', redCard: '🟥'
 };
-
-function ArenaPreview() {
-  const babbles: { x: number; y: number; c: string; s: string }[] = [
-    { x: 96, y: 78, c: '#f8b196', s: '#5b2135' }, { x: 132, y: 130, c: '#f8b196', s: '#5b2135' },
-    { x: 96, y: 182, c: '#f8b196', s: '#5b2135' }, { x: 168, y: 104, c: '#f8b196', s: '#5b2135' },
-    { x: 344, y: 78, c: '#f77f00', s: '#111827' }, { x: 308, y: 130, c: '#f77f00', s: '#111827' },
-    { x: 344, y: 182, c: '#f77f00', s: '#111827' }, { x: 272, y: 156, c: '#f77f00', s: '#111827' }
-  ];
-  return <div className="arenaWrap" aria-hidden="true">
-    <svg className="arenaPreview" viewBox="0 0 440 260">
-      <defs>
-        <linearGradient id="turf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#39b96e"/><stop offset="1" stopColor="#1f8f4e"/></linearGradient>
-        <radialGradient id="ballShine" cx="0.35" cy="0.3" r="1"><stop offset="0" stopColor="#ffffff"/><stop offset="1" stopColor="#cbd5e1"/></radialGradient>
-      </defs>
-      <rect x="8" y="8" width="424" height="244" rx="26" fill="url(#turf)" stroke="#f8bd45" strokeWidth="8"/>
-      {[0,1,2,3,4].map(i=><rect key={i} x={20+i*84} y="14" width="42" height="232" fill="#ffffff" opacity="0.06"/>)}
-      <line x1="220" y1="14" x2="220" y2="246" stroke="#fff8cf" strokeWidth="3" opacity="0.7"/>
-      <circle cx="220" cy="130" r="42" fill="none" stroke="#fff8cf" strokeWidth="3" opacity="0.7"/>
-      <rect x="8" y="90" width="26" height="80" fill="#fff8cf" opacity="0.85" rx="4"/>
-      <rect x="406" y="90" width="26" height="80" fill="#fff8cf" opacity="0.85" rx="4"/>
-      {[[42,42],[398,42],[42,218],[398,218]].map(([x,y],i)=><g key={i}><circle cx={x} cy={y} r="16" fill="#f97316" stroke="#fff8cf" strokeWidth="4"/><circle cx={x} cy={y} r="6" fill="#fff8cf"/></g>)}
-      <rect x="204" y="52" width="30" height="30" rx="6" fill="#facc15" stroke="#92400e" strokeWidth="3" transform="rotate(12 219 67)"/>
-      <text x="219" y="74" textAnchor="middle" fontSize="18" fontWeight="900" fill="#92400e">?</text>
-      {babbles.map((b,i)=><g key={i}>
-        <ellipse cx={b.x} cy={b.y+16} rx="14" ry="5" fill="#000" opacity="0.25"/>
-        <circle cx={b.x} cy={b.y} r="15" fill={b.c} stroke={b.s} strokeWidth="3"/>
-        <circle cx={b.x-5} cy={b.y-3} r="2.6" fill={b.s}/><circle cx={b.x+5} cy={b.y-3} r="2.6" fill={b.s}/>
-        <path d={`M ${b.x-4} ${b.y+5} Q ${b.x} ${b.y+9} ${b.x+4} ${b.y+5}`} stroke={b.s} strokeWidth="2" fill="none"/>
-      </g>)}
-      <ellipse cx="228" cy="146" rx="10" ry="4" fill="#000" opacity="0.25"/>
-      <circle cx="228" cy="134" r="11" fill="url(#ballShine)" stroke="#334155" strokeWidth="2.5"/>
-    </svg>
-  </div>;
-}
 
 // Ability icon: generated art from public/assets/abilities with an emoji
 // fallback if the asset is missing or fails to load.
@@ -443,7 +514,7 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings,
 function TeamScorePill({ state, side }: { state: GameState; side: PlayerSide }) {
   const team = TEAMS[state.sideTeams[side]];
   return <div className={`scorePill ${side}`} style={{ borderColor: team.primary }}>
-    <span className="pillTeam" style={{ background: team.primary, color: team.secondary }}>{team.emoji}</span>
+    <span className="pillTeam" style={{ background: team.primary, color: readableTextColor(team.primary) }}>{team.emoji}</span>
     <b>{side === 'left' ? 'Left' : 'Right'}</b>
     <span className="pillScore">{state.score[side]}</span>
   </div>;
@@ -459,9 +530,9 @@ function MatchEndOverlay({ state, onPlayAgain, onBackToLobby, onLeave }: { state
       <h2 id="matchEndTitle">{summary.title}</h2>
       <p className="matchEndSub">{summary.winnerSideLabel} takes the match</p>
       <div className="matchEndScore" aria-label={`Final score ${summary.scoreline}`}>
-        <span style={{ background: leftTeam.primary, color: leftTeam.secondary }}><b>Left</b><strong>{state.score.left}</strong></span>
+        <span style={{ background: leftTeam.primary, color: readableTextColor(leftTeam.primary) }}><b>Left</b><strong>{state.score.left}</strong></span>
         <em>vs</em>
-        <span style={{ background: rightTeam.primary, color: rightTeam.secondary }}><b>Right</b><strong>{state.score.right}</strong></span>
+        <span style={{ background: rightTeam.primary, color: readableTextColor(rightTeam.primary) }}><b>Right</b><strong>{state.score.right}</strong></span>
       </div>
       <dl className="matchEndStats">{summary.stats.map(item => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>
       <div className="matchEndActions">
@@ -478,7 +549,7 @@ function CelebrationOverlay({ kind, side, state }: { kind: 'goal'; side: PlayerS
   const label = 'GOOOAL!';
   return <div className={`celebrationOverlay ${kind}`} aria-live="polite">
     <div className="confetti" aria-hidden="true">{Array.from({ length: 22 }, (_, i) => <span key={i} style={{ '--i': i } as React.CSSProperties}/>)}</div>
-    <div className="celebrationCard" style={team ? { borderColor: team.primary, color: team.secondary } : undefined}>
+    <div className="celebrationCard" style={team ? { borderColor: team.primary } : undefined}>
       <span className="celebrationEmoji">⚽✨</span>
       <strong>{label}</strong>
       <small>{side === 'left' ? 'Left' : 'Right'} side scored!</small>
@@ -501,7 +572,7 @@ function TopHud({ state, menuOpen, onToggleMenu }: { state: GameState; menuOpen:
     <div className="topRight">
       <TeamScorePill state={state} side="right"/>
       <div className="roomChip"><span className="roomCodeLabel">Room</span><b className="roomCodeValue">{state.roomCode}</b></div>
-      <button type="button" className={menuOpen ? 'menuToggle selected' : 'menuToggle'} title="Room, teams & match settings" onClick={onToggleMenu}>⚙</button>
+      <button type="button" className={menuOpen ? 'menuToggle selected' : 'menuToggle'} aria-label="Match settings" title="Room, teams & match settings" onClick={onToggleMenu}>⚙</button>
     </div>
   </header>;
 }
@@ -516,13 +587,13 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, audioSetting
   const me = state.players[you];
   const connected = Object.values(state.players).filter(p => p.connected);
   return <aside className="settingsMenu">
-    <div className="menuHead"><b>Match settings</b><button type="button" onClick={onClose}>✕</button></div>
+    <div className="menuHead"><b>Match settings</b><button type="button" aria-label="Close settings" title="Close settings" onClick={onClose}>✕</button></div>
     <section className="menuSection">
       <b>Room</b>
       <div className="menuRoomRow">
         <span className="menuRoomCode">{state.roomCode}</span>
         <button type="button" onClick={()=>copy(state.roomCode, 'code')}>{copied === 'code' ? 'Copied!' : 'Copy code'}</button>
-        <button type="button" onClick={()=>copy(`Join my Babble League match! Room code: ${state.roomCode} → ${location.origin}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
+        <button type="button" onClick={()=>copy(`Join my Unicup match! Room code: ${state.roomCode} -> ${location.origin}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
       </div>
     </section>
     <section className="menuSection">
@@ -535,7 +606,7 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, audioSetting
         const boxCount = state.powerPlayCounts?.[side] ?? inv.length;
         return <div key={side} className="sidePreview" style={{ borderColor: team.primary }}>
           <div className="sideHeader"><span>{side.toUpperCase()}</span>{boxCount > 0 && <span className="boxBadge" title={mine ? 'Boxes held by your team' : 'Opponents hold hidden boxes'}>📦×{boxCount}</span>}<strong>{team.emoji} {team.label}</strong></div>
-          {mine && <div className="miniMascots">{TEAM_IDS.map(id => <button key={id} type="button" className={state.sideTeams[side]===id?'selected':''} title={TEAMS[id].label} style={{ background: TEAMS[id].primary, color: TEAMS[id].secondary }} onClick={()=>socket.emit('player:team', id)}>{TEAMS[id].emoji}</button>)}</div>}
+          {mine && <div className="miniMascots">{TEAM_IDS.map(id => <button key={id} type="button" className={state.sideTeams[side]===id?'selected':''} aria-label={TEAMS[id].label} title={TEAMS[id].label} style={{ background: TEAMS[id].primary, color: readableTextColor(TEAMS[id].primary) }} onClick={()=>socket.emit('player:team', id)}>{TEAMS[id].emoji}</button>)}</div>}
           <div className="playerPreview">{players.length ? players.map(p => {
             // teammates see exactly who holds which box; opponents get nothing (server redacts)
             const held = mine ? inv.find(i => i.holderId === p.id) : undefined;
@@ -544,7 +615,6 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, audioSetting
         </div>; })}
     </section>
     <section className="menuSection">
-      <b>Audio</b>
       <AudioControls settings={audioSettings} onChange={onAudioChange}/>
     </section>
     <section className="menuSection">
@@ -590,7 +660,7 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
     <div className="actionBarRow">
       <div className="barLeft">
         {me && myTeam
-          ? <span className="youChip" style={{ background: myTeam.primary, color: myTeam.secondary }}>{myTeam.emoji} {me.name}</span>
+          ? <span className="youChip" style={{ background: myTeam.primary, color: readableTextColor(myTeam.primary) }}>{myTeam.emoji} {me.name}</span>
           : <span className="youChip spectator">Spectating</span>}
         {oppCount > 0 && <span className="oppChip" title={`Opponents hold ${oppCount} hidden box${oppCount === 1 ? '' : 'es'}`}>📦×{oppCount}</span>}
       </div>
@@ -796,7 +866,7 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
   };
 
   return <>
-    <canvas className="field threeField" ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setMode(null)} aria-label="3D Babble League field"/>
+    <canvas className="field threeField" ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setMode(null)} aria-label="3D Unicup field"/>
     {renderError && <div className="renderFallback"><b>3D preview unavailable</b><span>{renderError}</span></div>}
   </>;
 }
