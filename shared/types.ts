@@ -14,18 +14,60 @@ export const FIELD = {
   boxSize: 34
 } as const;
 
+export type RobotShape = 'orb' | 'block' | 'wedge' | 'walker';
+export type RobotProfile = {
+  shape: RobotShape;
+  texture: string;
+  trait: string;
+  density: number;
+  restitution: number;
+  width: number;
+  depth: number;
+  height: number;
+};
+
 export const TEAMS = {
-  bees: { label: 'Signal Stingers', emoji: '🐝', primary: '#ffda36', secondary: '#22252e' },
-  fowl: { label: 'Coral Flyers', emoji: '🐔', primary: '#f16655', secondary: '#fffdf5' },
-  bears: { label: 'Cobalt Bruisers', emoji: '🐻', primary: '#3152c9', secondary: '#ffda36' },
-  cats: { label: 'Aqua Circuit', emoji: '🐱', primary: '#2cc7c1', secondary: '#22252e' },
-  pigs: { label: 'Pink Pilots', emoji: '🐷', primary: '#ff9bb0', secondary: '#3152c9' },
-  bulls: { label: 'Whitehorn United', emoji: '🐂', primary: '#fffdf5', secondary: '#3152c9' },
-  dinos: { label: 'Meteor Eleven', emoji: '🦖', primary: '#3152c9', secondary: '#f16655' },
-  snow: { label: 'Polar Caps', emoji: '❄️', primary: '#f5fbff', secondary: '#2cc7c1' },
-  parrots: { label: 'Broadcast Birds', emoji: '🦜', primary: '#2cc7c1', secondary: '#ffda36' },
-  tigers: { label: 'Stripe Squad', emoji: '🐯', primary: '#ffda36', secondary: '#f16655' }
-} as const;
+  pigs: {
+    label: 'Flux Orbs', shortLabel: 'Orbs', primary: '#f15f4f', secondary: '#fff4d8',
+    crest: '/assets/teams/flux-orbs-robot.webp',
+    lore: 'Self-balancing spherical robots built for clean redirects and reliable control across every PlanetBall arena.',
+    robot: {
+      shape: 'orb', texture: '/assets/robots/flux-orbs-surface.jpg',
+      trait: 'Balanced sphere: predictable rebounds and neutral weight.',
+      density: 1, restitution: 1, width: 0.88, depth: 0.88, height: 1.62
+    }
+  },
+  tigers: {
+    label: 'Forge Blocks', shortLabel: 'Blocks', primary: '#ffc933', secondary: '#232533',
+    crest: '/assets/teams/forge-blocks-robot.webp',
+    lore: 'Dense foundry robots with squared armor, designed to absorb hard contact and hold a defensive line.',
+    robot: {
+      shape: 'block', texture: '/assets/robots/forge-blocks-surface.jpg',
+      trait: 'Heavy block: steadier on impact with softer rebounds.',
+      density: 1.18, restitution: 0.9, width: 1.02, depth: 0.92, height: 1.48
+    }
+  },
+  bees: {
+    label: 'Vector Wedges', shortLabel: 'Wedges', primary: '#dbe8ff', secondary: '#3454c5',
+    crest: '/assets/teams/vector-wedges-robot.webp',
+    lore: 'Light triangular robots from the lunar relay yards, tuned for sharp angles and lively attacking deflections.',
+    robot: {
+      shape: 'wedge', texture: '/assets/robots/vector-wedges-surface.jpg',
+      trait: 'Light wedge: sharper contact angles and livelier rebounds.',
+      density: 0.86, restitution: 1.1, width: 1.06, depth: 0.86, height: 1.5
+    }
+  },
+  parrots: {
+    label: 'Halo Walkers', shortLabel: 'Walkers', primary: '#31c9b8', secondary: '#9f2638',
+    crest: '/assets/teams/halo-walkers-robot.webp',
+    lore: 'Wide three-footed ring machines from Saturn, built to catch glancing passes across an elongated footprint.',
+    robot: {
+      shape: 'walker', texture: '/assets/robots/halo-walkers-surface.jpg',
+      trait: 'Wide walker: broader side contact with controlled rebound.',
+      density: 1.08, restitution: 0.96, width: 1.12, depth: 0.76, height: 1.7
+    }
+  }
+} as const satisfies Record<string, { label: string; shortLabel: string; primary: string; secondary: string; crest: string; lore: string; robot: RobotProfile }>;
 export type TeamId = keyof typeof TEAMS;
 export const TEAM_IDS = Object.keys(TEAMS) as TeamId[];
 
@@ -49,6 +91,15 @@ export const FORMATIONS: Record<FormationId, { label: string; description: strin
   rush: { label: 'Rush', description: 'Two attackers and two defenders.' }
 };
 export const FORMATION_IDS = Object.keys(FORMATIONS) as FormationId[];
+export const FORMATION_LAYOUTS: Record<FormationId, readonly { x: number; y: number }[]> = {
+  forward: [{ x: 0, y: -120 }, { x: 80, y: -40 }, { x: 80, y: 40 }, { x: 0, y: 120 }],
+  option: [{ x: 80, y: -120 }, { x: 80, y: 0 }, { x: 80, y: 120 }, { x: -35, y: 0 }],
+  slant: [{ x: 95, y: -135 }, { x: 45, y: -45 }, { x: -5, y: 45 }, { x: -55, y: 135 }],
+  zone: [{ x: 40, y: -135 }, { x: 80, y: -45 }, { x: 80, y: 45 }, { x: 40, y: 135 }],
+  wall: [{ x: 0, y: -135 }, { x: 0, y: -45 }, { x: 0, y: 45 }, { x: 0, y: 135 }],
+  box: [{ x: 35, y: -95 }, { x: 105, y: -95 }, { x: 35, y: 95 }, { x: 105, y: 95 }],
+  rush: [{ x: 110, y: -80 }, { x: 110, y: 80 }, { x: -5, y: -80 }, { x: -5, y: 80 }]
+};
 
 export const BOX_TYPES = {
   beachBall: { label: 'Beach Ball', targetId: 'giantball', color: '#facc15', category: 'instant', durationTurns: 1, description: 'Enlarge and lighten the ball for this turn.' },
@@ -63,7 +114,8 @@ export const BOX_TYPES = {
   ghosted: { label: 'Ghosted', targetId: 'ghost', color: '#d8b4fe', category: 'babble', durationTurns: 1, description: 'Target babblehead passes through babbleheads and boxes.' },
   movePlayer: { label: 'Move Player', targetId: 'moveplayer', color: '#fde047', category: 'babble', durationTurns: 0, description: 'Move a target babblehead back toward center field.' },
   yellowCard: { label: 'Yellow Card', targetId: 'yellowcard', color: '#facc15', category: 'instant', durationTurns: 0, description: 'Teleport the ball to the center of the field.' },
-  redCard: { label: 'Red Card', targetId: 'redcard', color: '#ef4444', category: 'babble', durationTurns: 0, description: 'Choose a babblehead to teleport to the center of the field.' }
+  redCard: { label: 'Red Card', targetId: 'redcard', color: '#ef4444', category: 'babble', durationTurns: 0, description: 'Choose a babblehead to teleport to the center of the field.' },
+  readPlay: { label: 'Read the Play', targetId: 'readplay', color: '#6ee7f5', category: 'instant', durationTurns: 1, description: 'Reveal the opposing team\'s committed launch paths for this turn.' }
 } as const;
 export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
@@ -94,7 +146,8 @@ export const BOX_SELECTION_WEIGHTS: Record<BoxType, number> = {
   ghosted: 129,
   movePlayer: 80,
   yellowCard: 140,
-  redCard: 123
+  redCard: 123,
+  readPlay: 88
 };
 
 export function normalizeBoxType(type: unknown): BoxType | null {
@@ -129,10 +182,11 @@ export const BUMPERS: readonly Vec[] = [
   { x: FIELD.width - STADIUM_BUMPER_OFFSET, y: FIELD.height - STADIUM_BUMPER_OFFSET }
 ] as const;
 
-export type MapId = 'stadium' | 'moon' | 'volcano' | 'saturn' | 'original' | 'originalGlide' | 'originalBounce';
-export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano', 'saturn', 'original', 'originalGlide', 'originalBounce'] as const;
+export type MapId = 'stadium' | 'moon' | 'volcano' | 'saturn';
+export const MAP_IDS: readonly MapId[] = ['stadium', 'moon', 'volcano', 'saturn'] as const;
 
 export type MapPhysicsMultipliers = {
+  gravity: number;
   babbleImpulseScale: number;
   settleSpeed: number;
   bumperPower: number;
@@ -153,6 +207,10 @@ export type MapConfig = {
   label: string;
   shortLabel: string;
   description: string;
+  art: {
+    fieldTexture: string;
+    surroundings: string;
+  };
   layout: {
     bumpers: readonly Vec[];
     bumperRadius: number;
@@ -183,48 +241,32 @@ export type MapConfig = {
   physics: MapPhysicsMultipliers;
 };
 
-const PHYSICS_1X: MapPhysicsMultipliers = {
-  babbleImpulseScale: 1,
-  settleSpeed: 1,
+// Original B was the most representative calibration profile. Public lore maps
+// inherit it, then apply only the modifiers that make their arena distinct.
+const ORIGINAL_PHYSICS_BASE: MapPhysicsMultipliers = {
+  gravity: 1,
+  babbleImpulseScale: 0.99,
+  settleSpeed: 1.7,
   bumperPower: 1,
   boostPadAccel: 1,
-  babbleDragPerTick: 1,
-  ballDragPerTick: 1,
-  beachBallDragPerTick: 1,
-  babbleRestitution: 1,
-  ballRestitution: 1,
-  wallRestitution: 1,
-  blockRestitution: 1,
+  babbleDragPerTick: 1.057,
+  ballDragPerTick: 1.053,
+  beachBallDragPerTick: 1.025,
+  babbleRestitution: 1.05,
+  ballRestitution: 1.05,
+  wallRestitution: 1.03,
+  blockRestitution: 1.05,
   babbleDensity: 1,
   ballDensityBase: 1
-};
-
-// Playtest candidates share the closest observed original arena layout so the
-// user can compare physics alone. Their values bracket the remaining uncertainty
-// in drag and restitution from the sparse original telemetry sample.
-const ORIGINAL_LAYOUT: MapConfig['layout'] = {
-  bumpers: BUMPERS,
-  bumperRadius: BUMPER_RADIUS,
-  bigBumperRadius: BIG_BUMPER_RADIUS,
-  boxSpawnAnchors: ['topMid', 'bottomMid']
-};
-const ORIGINAL_THEME: MapConfig['theme'] = {
-  sky: 0xffda36, fog: 0xf3c82d,
-  tableLeft: 0x3152c9, tableRight: 0xf16655,
-  plinth: 0xfffdf5, frame: 0x2cc7c1, frameDark: 0x22252e,
-  fieldBase: 0x2aa9a8, stripeA: '#35cbc5', stripeB: '#239f9e',
-  line: 'rgba(255,253,245,.94)', bumperBase: 0x22252e,
-  bumperDrum: 0xf16655, bumperCap: 0xffda36,
-  leftGoal: 0x3152c9, rightGoal: 0xf16655, accent: '#ffda36',
-  pattern: 'stadium', gateStyle: 'classic'
 };
 
 export const MAPS: Record<MapId, MapConfig> = {
   stadium: {
     id: 'stadium',
-    label: 'Unicap Qualifier',
+    label: 'PlanetBall',
     shortLabel: 'PlanetBall',
     description: 'PlanetBall\'s televised entry arena, framed by the Ball Office resource circuit.',
+    art: { fieldTexture: '/assets/maps/planetball-field.jpg', surroundings: '/assets/maps/planetball-surroundings.jpg' },
     layout: { bumpers: BUMPERS, bumperRadius: BUMPER_RADIUS, bigBumperRadius: BIG_BUMPER_RADIUS, boxSpawnAnchors: ['topMid', 'bottomMid'] },
     theme: {
       sky: 0xffda36,
@@ -248,9 +290,7 @@ export const MAPS: Record<MapId, MapConfig> = {
       gateStyle: 'classic'
     },
     physics: {
-      ...PHYSICS_1X,
-      // Move the default map closer to the loved Moon feel: softer launch,
-      // lower top speed, later settling, and more glide/carry.
+      ...ORIGINAL_PHYSICS_BASE,
       babbleImpulseScale: 0.94,
       settleSpeed: 0.88,
       babbleDragPerTick: 1.025,
@@ -265,9 +305,10 @@ export const MAPS: Record<MapId, MapConfig> = {
   },
   moon: {
     id: 'moon',
-    label: 'Moon Base',
-    shortLabel: 'Low Orbit',
+    label: 'Moon',
+    shortLabel: 'Moon',
     description: 'A floaty Unicap relay above PlanetBall, with crater bumpers and broadcast gates.',
+    art: { fieldTexture: '/assets/maps/moon-field.jpg', surroundings: '/assets/maps/moon-surroundings.jpg' },
     layout: {
       bumpers: [
         { x: 155, y: 118 },
@@ -303,7 +344,8 @@ export const MAPS: Record<MapId, MapConfig> = {
       gateStyle: 'sciFi'
     },
     physics: {
-      ...PHYSICS_1X,
+      ...ORIGINAL_PHYSICS_BASE,
+      gravity: 0.38,
       babbleImpulseScale: 0.88,
       settleSpeed: 0.75,
       bumperPower: 1.04,
@@ -324,6 +366,7 @@ export const MAPS: Record<MapId, MapConfig> = {
     label: 'Coral Foundry',
     shortLabel: 'Foundry',
     description: 'A hot resource works where coral rails and offset bumpers reward fearless angles.',
+    art: { fieldTexture: '/assets/maps/coral-foundry-field.jpg', surroundings: '/assets/maps/coral-foundry-surroundings.jpg' },
     layout: {
       bumpers: [
         { x: 210, y: 108 },
@@ -359,7 +402,8 @@ export const MAPS: Record<MapId, MapConfig> = {
       gateStyle: 'volcanic'
     },
     physics: {
-      ...PHYSICS_1X,
+      ...ORIGINAL_PHYSICS_BASE,
+      gravity: 1.12,
       babbleImpulseScale: 0.98,
       settleSpeed: 0.9,
       bumperPower: 1.08,
@@ -380,6 +424,7 @@ export const MAPS: Record<MapId, MapConfig> = {
     label: 'Saturn',
     shortLabel: 'Saturn',
     description: 'Unicap\'s heavy orbital final, with ring markings and dense slow-carry collisions.',
+    art: { fieldTexture: '/assets/maps/saturn-field.jpg', surroundings: '/assets/maps/saturn-surroundings.jpg' },
     layout: {
       bumpers: [
         { x: FIELD.width / 2 - 300, y: FIELD.height / 2 - 132 },
@@ -415,7 +460,8 @@ export const MAPS: Record<MapId, MapConfig> = {
       gateStyle: 'orbital'
     },
     physics: {
-      ...PHYSICS_1X,
+      ...ORIGINAL_PHYSICS_BASE,
+      gravity: 1.36,
       babbleImpulseScale: 0.86,
       settleSpeed: 0.82,
       bumperPower: 0.98,
@@ -429,60 +475,6 @@ export const MAPS: Record<MapId, MapConfig> = {
       blockRestitution: 0.95,
       babbleDensity: 3.25,
       ballDensityBase: 3.1
-    }
-  },
-  original: {
-    id: 'original',
-    label: 'Original A · Tight',
-    shortLabel: 'Original A',
-    description: 'Original-game candidate A: Ball Office calibration with tighter tournament stopping.',
-    layout: ORIGINAL_LAYOUT,
-    theme: { ...ORIGINAL_THEME, accent: '#ffda36' },
-    physics: {
-      ...PHYSICS_1X,
-      babbleImpulseScale: 0.98,
-      settleSpeed: 2.2, bumperPower: 0.96,
-      boostPadAccel: 0.95,
-      babbleDragPerTick: 1.045, ballDragPerTick: 1.045, beachBallDragPerTick: 1.02,
-      babbleRestitution: 0.95, ballRestitution: 0.95,
-      wallRestitution: 0.95, blockRestitution: 0.95,
-      babbleDensity: 1.05, ballDensityBase: 1.15
-    }
-  },
-  originalGlide: {
-    id: 'originalGlide',
-    label: 'Original B · Empirical',
-    shortLabel: 'Original B',
-    description: 'Original-game candidate B: Ball Office calibration for measured tournament glide.',
-    layout: ORIGINAL_LAYOUT,
-    theme: { ...ORIGINAL_THEME, accent: '#2cc7c1', frame: 0x2cc7c1 },
-    physics: {
-      ...PHYSICS_1X,
-      babbleImpulseScale: 0.99,
-      settleSpeed: 1.7, bumperPower: 1,
-      boostPadAccel: 1,
-      babbleDragPerTick: 1.057, ballDragPerTick: 1.053, beachBallDragPerTick: 1.025,
-      babbleRestitution: 1.05, ballRestitution: 1.05,
-      wallRestitution: 1.03, blockRestitution: 1.05,
-      babbleDensity: 1, ballDensityBase: 1
-    }
-  },
-  originalBounce: {
-    id: 'originalBounce',
-    label: 'Original C · Glide',
-    shortLabel: 'Original C',
-    description: 'Original-game candidate C: the Ball Office\'s liveliest approved rebound profile.',
-    layout: ORIGINAL_LAYOUT,
-    theme: { ...ORIGINAL_THEME, accent: '#f16655', frame: 0xf16655 },
-    physics: {
-      ...PHYSICS_1X,
-      babbleImpulseScale: 1,
-      settleSpeed: 1.25, bumperPower: 1.08,
-      boostPadAccel: 1.05,
-      babbleDragPerTick: 1.063, ballDragPerTick: 1.058, beachBallDragPerTick: 1.026,
-      babbleRestitution: 1.12, ballRestitution: 1.08,
-      wallRestitution: 1.08, blockRestitution: 1.12,
-      babbleDensity: 0.95, ballDensityBase: 0.85
     }
   }
 } as const;
@@ -500,6 +492,7 @@ export type PlayerState = {
   id: string;
   accountId?: string;
   name: string;
+  avatarUrl?: string;
   side: PlayerSide;
   team: TeamId;
   score: number;
@@ -558,6 +551,7 @@ export type MatchConfig = {
   length: GameLength;
   maxTurns: 30 | 90 | 150;
   turnDurationMs: number;
+  roundTimeSeconds: number;
   allAimedResolveGraceMs: number;
   boxSpawnEveryTurns: 2;
   boxSpawnAnchors: BoxAnchor[];
@@ -573,6 +567,7 @@ export type GameState = {
   turn: number;
   kickoffAt: number;
   turnDeadlineAt: number;
+  serverNowAt?: number;
   resolvingStartedAt: number | null;
   allIntentsReadyAt: number | null;
   readyPlayerIds: string[];
@@ -596,12 +591,13 @@ export type GameState = {
   powerPlayCounts?: Record<PlayerSide, number>;
   score: Record<PlayerSide, number>;
   swappedGoalsUntilTurn: number | null;
+  moveVisionUntilTurn: Record<PlayerSide, number | null>;
   events: ChatEvent[];
 };
 
 export type ClientToServerEvents = {
-  'room:create': (payload: { name: string; team?: TeamId; mode: GameMode; mapId?: MapId }, cb: (r: JoinResult) => void) => void;
-  'room:join': (payload: { roomCode: string; name: string; team?: TeamId }, cb: (r: JoinResult) => void) => void;
+  'room:create': (payload: { name: string; avatarUrl?: string; team?: TeamId; mode: GameMode; mapId?: MapId; roundTimeSeconds?: number }, cb: (r: JoinResult) => void) => void;
+  'room:join': (payload: { roomCode: string; name: string; avatarUrl?: string; team?: TeamId }, cb: (r: JoinResult) => void) => void;
   'player:input': (input: PlayerInput) => void;
   'player:launch': (intent: TurnIntent) => void;
   'player:power': (use: PowerPlayUse) => void;
@@ -609,6 +605,8 @@ export type ClientToServerEvents = {
   'player:fieldRotate': (payload: { id: string; angle?: number }) => void;
   'player:formation': (formation: FormationId) => void;
   'player:team': (team: TeamId) => void;
+  'player:side': (side: PlayerSide) => void;
+  'room:roundTime': (seconds: number) => void;
   'room:map': (mapId: MapId) => void;
   // Dev/test-only hooks (window.__babbleDev). Rejected by production servers
   // unless ENABLE_CHEATS=true.

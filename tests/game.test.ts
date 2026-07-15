@@ -21,13 +21,15 @@ import {
   setFieldObjectAngle,
   setMap,
   setPlayerReady,
+  setPlayerSide,
+  setRoundTime,
   setSideTeam,
   spawnBox,
   startGame,
   stepGame,
   usePowerPlay
 } from '../shared/game';
-import { BOX_SELECTION_WEIGHTS, BOX_TYPE_IDS, BOX_TYPES, BUMPERS, FIELD, FORMATION_IDS, FORMATIONS, MAPS, MAP_IDS, MapId, normalizeBoxType } from '../shared/types';
+import { BOX_SELECTION_WEIGHTS, BOX_TYPE_IDS, BOX_TYPES, BUMPERS, FIELD, FORMATION_IDS, FORMATION_LAYOUTS, FORMATIONS, MAPS, MAP_IDS, MapId, normalizeBoxType } from '../shared/types';
 import { bumperPlanarDeltaVelocity } from '../shared/physics';
 import { PHYSICS_CONFIG } from '../shared/physicsConfig';
 
@@ -40,7 +42,62 @@ describe('classic Unicup shared rules', () => {
     expect(s.config.mapId).toBe('stadium');
     expect(s.config.boxSpawnAnchors).toEqual(['topMid', 'bottomMid']);
     expect(s.config.turnDurationMs).toBe(20000);
-    expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano', 'saturn', 'original', 'originalGlide', 'originalBounce']);
+    expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano', 'saturn']);
+  });
+
+  it('configures an authoritative round time from 1 to 60 seconds', () => {
+    const s = createInitialState('ROUND', 3, 'stadium', 7);
+    expect(s.config.roundTimeSeconds).toBe(7);
+    expect(s.config.turnDurationMs).toBe(7000);
+
+    expect(setRoundTime(s, 1)).toBe(true);
+    expect(s.config.roundTimeSeconds).toBe(1);
+    expect(setRoundTime(s, 60)).toBe(true);
+    expect(s.config.turnDurationMs).toBe(60000);
+    expect(setRoundTime(s, 0)).toBe(false);
+    expect(setRoundTime(s, 61)).toBe(false);
+    expect(setRoundTime(s, 10.5)).toBe(false);
+
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    startGame(s, seq([0.5]));
+    expect(setRoundTime(s, 20)).toBe(false);
+    expect(s.config.roundTimeSeconds).toBe(60);
+  });
+
+  it('creates lobby babbles immediately and reassigns them as players join or change side', () => {
+    const s = createInitialState('SEATS', 3);
+    addPlayer(s, 'host', 'Host', 'pigs', 'left');
+    expect(s.babbles).toHaveLength(8);
+    expect(s.players.host.controlledBabbleIds).toEqual(['left-1', 'left-2', 'left-3', 'left-4']);
+
+    addPlayer(s, 'mate', 'Mate', 'pigs', 'left');
+    expect(s.players.host.controlledBabbleIds).toEqual(['left-1', 'left-3']);
+    expect(s.players.mate.controlledBabbleIds).toEqual(['left-2', 'left-4']);
+
+    expect(setPlayerSide(s, 'mate', 'right')).toBe(true);
+    expect(s.players.mate.side).toBe('right');
+    expect(s.players.mate.controlledBabbleIds).toEqual(['right-1', 'right-2', 'right-3', 'right-4']);
+    startGame(s, seq([0.5]));
+    expect(setPlayerSide(s, 'mate', 'left')).toBe(false);
+  });
+
+  it('stamps private snapshots with server time and hides opponent moves until Read the Play is active', () => {
+    const s = createInitialState('VISION', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    launchBabble(s, 'l', { babbleId: 'left-1', aimAngle: 0, impulse: 200 }, 1000);
+    launchBabble(s, 'r', { babbleId: 'right-1', aimAngle: Math.PI, impulse: 300 }, 1000);
+
+    const hidden = redactStateFor(s, 'l', 4321);
+    expect(hidden.serverNowAt).toBe(4321);
+    expect(Object.keys(hidden.pendingIntents)).toEqual(['left-1']);
+
+    s.powerPlayInventories.left.push({ type: 'readPlay', availableTurn: s.turn, holderId: 'l' });
+    expect(usePowerPlay(s, 'l', { type: 'readPlay' }, 1100)).toBe(true);
+    const revealed = redactStateFor(s, 'l', 4400);
+    expect(Object.keys(revealed.pendingIntents).sort()).toEqual(['left-1', 'right-1']);
+    expect(revealed.moveVisionUntilTurn.left).toBe(s.turn);
   });
 
   it('uses a larger normal ball and smaller physics babbles', () => {
@@ -58,7 +115,7 @@ describe('classic Unicup shared rules', () => {
   });
 
   it('defines Saturn as a selectable ring-themed heavy map', () => {
-    const ordinaryMapIds = MAP_IDS.filter(id => !['saturn', 'original', 'originalGlide', 'originalBounce'].includes(id));
+    const ordinaryMapIds = MAP_IDS.filter(id => id !== 'saturn');
     const maxOtherBabbleDensity = Math.max(...ordinaryMapIds.map(id => MAPS[id].physics.babbleDensity));
     const maxOtherBallDensity = Math.max(...ordinaryMapIds.map(id => MAPS[id].physics.ballDensityBase));
 
@@ -71,16 +128,20 @@ describe('classic Unicup shared rules', () => {
     expect(MAPS.saturn.physics.ballDensityBase).toBeGreaterThanOrEqual(maxOtherBallDensity * 3);
   });
 
-  it('provides three clearly labelled original-physics candidates for playtesting', () => {
-    expect(MAPS.original.label).toBe('Original A · Tight');
-    expect(MAPS.originalGlide.label).toBe('Original B · Empirical');
-    expect(MAPS.originalBounce.label).toBe('Original C · Glide');
-    for (const id of ['original', 'originalGlide', 'originalBounce'] as const) {
-      expect(MAPS[id].description).toMatch(/original.*candidate/i);
-      expect(MAPS[id].layout).toEqual(MAPS.stadium.layout);
+  it('publishes only four lore maps with Original-derived gravity modifiers', () => {
+    expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano', 'saturn']);
+    expect(MAPS.stadium.label).toBe('PlanetBall');
+    expect(MAPS.moon.label).toBe('Moon');
+    expect(MAPS.volcano.label).toBe('Coral Foundry');
+    expect(MAPS.saturn.label).toBe('Saturn');
+    expect(MAPS.stadium.physics.gravity).toBe(1);
+    expect(MAPS.moon.physics.gravity).toBeLessThan(1);
+    expect(MAPS.volcano.physics.gravity).toBeGreaterThan(1);
+    expect(MAPS.saturn.physics.gravity).toBeGreaterThan(MAPS.volcano.physics.gravity);
+    for (const id of MAP_IDS) {
+      expect(MAPS[id].art.fieldTexture).toMatch(/^\/assets\/maps\/.+-field\.jpg$/);
+      expect(MAPS[id].art.surroundings).toMatch(/^\/assets\/maps\/.+-surroundings\.jpg$/);
     }
-    expect(MAPS.originalGlide.physics.ballDragPerTick).toBeGreaterThan(MAPS.original.physics.ballDragPerTick);
-    expect(MAPS.originalBounce.physics.ballRestitution).toBeGreaterThan(MAPS.original.physics.ballRestitution);
   });
 
   it('allows map changes only in the lobby and preserves the selected map through kickoff', () => {
@@ -147,6 +208,15 @@ describe('classic Unicup shared rules', () => {
     expect(s.formations.left).toBe('wall');
     expect(new Set(left.map(b => Math.round(b.pos.x / 5) * 5)).size).toBe(1);
     expect(left.map(b => b.pos.y)).toEqual([...left.map(b => b.pos.y)].sort((a, b) => a - b));
+  });
+
+  it('publishes four authoritative tactical points for every formation diagram', () => {
+    expect(Object.keys(FORMATION_LAYOUTS).sort()).toEqual([...FORMATION_IDS].sort());
+    for (const id of FORMATION_IDS) {
+      expect(FORMATION_LAYOUTS[id]).toHaveLength(4);
+      expect(FORMATION_LAYOUTS[id].every(point => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true);
+    }
+    expect(new Set(FORMATION_IDS.map(id => JSON.stringify(FORMATION_LAYOUTS[id]))).size).toBe(FORMATION_IDS.length);
   });
 
   it('uses drag/launch intents and resolves turn-based physics back to planning', () => {
@@ -441,7 +511,7 @@ describe('classic Unicup shared rules', () => {
       'beachBall', 'moveBall', 'swapGoals', 'bigBumpers',
       'boost', 'stickyGoo', 'ramp', 'block',
       'bigHead', 'ghosted', 'movePlayer',
-      'yellowCard', 'redCard'
+      'yellowCard', 'redCard', 'readPlay'
     ]));
     expect(BOX_TYPES.beachBall.targetId).toBe('giantball');
     expect(BOX_TYPES.bigBumpers.targetId).toBe('bumppadboost');
@@ -461,7 +531,8 @@ describe('classic Unicup shared rules', () => {
     expect(normalizeBoxType('bighead')).toBe('bigHead');
     expect(normalizeBoxType('yellowcard')).toBe('yellowCard');
     expect(normalizeBoxType('redcard')).toBe('redCard');
-    expect(BOX_TYPE_IDS).toHaveLength(13);
+    expect(BOX_TYPES.readPlay.category).toBe('instant');
+    expect(BOX_TYPE_IDS).toHaveLength(14);
   });
 
   it('uses original-log-inspired box selection weights', () => {

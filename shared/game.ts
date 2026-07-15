@@ -10,6 +10,7 @@ import {
   RAMP_HALF_WIDTH,
   ROTATABLE_FIELD_OBJECTS,
   FORMATION_IDS,
+  FORMATION_LAYOUTS,
   FormationId,
   GAME_LENGTHS,
   GameMode,
@@ -56,6 +57,7 @@ export const MAX_RESOLVE_MS = 8000;
 // where headless WebGL is too slow to finish a scripted turn in 20s). Browsers have
 // no `process`, so players get the original-game 20s planning window.
 const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 20000;
+export const DEFAULT_ROUND_TIME_SECONDS = Math.max(1, Math.min(60, Math.round(TURN_DURATION_MS / 1000)));
 const ALL_AIMED_RESOLVE_GRACE_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_ALL_AIMED_GRACE_MS)) || 3000;
 export const BUMPER_PLANAR_DELTA_SPEED = PHYSICS_CONFIG.bumperPlanarDeltaSpeed;
 export const SUPER_BUMPER_POWER_MULTIPLIER = PHYSICS_CONFIG.superBumperPowerMultiplier;
@@ -83,14 +85,15 @@ const ballAtKickoff = (vel: Vec = { x: 0, y: 0 }) => ({
   spin: { x: 0, y: 0 }
 });
 
-export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: MapId = 'stadium'): GameState {
+export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: MapId = 'stadium', roundTimeSeconds = DEFAULT_ROUND_TIME_SECONDS): GameState {
   const selectedMap = normalizeMapId(mapId);
-  return {
+  const safeRoundTime = validRoundTime(roundTimeSeconds) ? roundTimeSeconds : DEFAULT_ROUND_TIME_SECONDS;
+  const state: GameState = {
     roomCode,
     phase: 'lobby',
     mode,
     mapId: selectedMap,
-    config: matchConfig(mode, selectedMap),
+    config: matchConfig(mode, selectedMap, safeRoundTime),
     winner: null,
     turn: 1,
     kickoffAt: Date.now(),
@@ -115,18 +118,22 @@ export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: 
     powerPlayInventories: { left: [], right: [] },
     score: { left: 0, right: 0 },
     swappedGoalsUntilTurn: null,
+    moveVisionUntilTurn: { left: null, right: null },
     events: [{ at: Date.now(), message: `Room ${roomCode} created on ${MAPS[selectedMap].label}.` }]
   };
+  buildBabbles(state);
+  return state;
 }
 
-function matchConfig(mode: GameMode, mapId: MapId) {
+function matchConfig(mode: GameMode, mapId: MapId, roundTimeSeconds = DEFAULT_ROUND_TIME_SECONDS) {
   const length = GAME_LENGTHS[mode];
   return {
     mapId,
     goalTarget: mode,
     length: length.length,
     maxTurns: length.maxTurns,
-    turnDurationMs: TURN_DURATION_MS,
+    turnDurationMs: roundTimeSeconds * 1000,
+    roundTimeSeconds,
     allAimedResolveGraceMs: ALL_AIMED_RESOLVE_GRACE_MS,
     boxSpawnEveryTurns: 2 as const,
     boxSpawnAnchors: [...MAPS[mapId].layout.boxSpawnAnchors]
@@ -153,7 +160,7 @@ export function setMap(state: GameState, mapId: MapId) {
   if (state.phase !== 'lobby') return false;
   if (state.mapId === selectedMap) return true;
   state.mapId = selectedMap;
-  state.config = matchConfig(state.mode, selectedMap);
+  state.config = matchConfig(state.mode, selectedMap, state.config.roundTimeSeconds);
   state.ball = ballAtKickoff();
   state.boxes = [];
   state.bumperEvents = [];
@@ -162,13 +169,24 @@ export function setMap(state: GameState, mapId: MapId) {
   return true;
 }
 
-export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide, accountId?: string): PlayerState {
+const validRoundTime = (seconds: number) => Number.isInteger(seconds) && seconds >= 1 && seconds <= 60;
+
+export function setRoundTime(state: GameState, seconds: number) {
+  if (state.phase !== 'lobby' || !validRoundTime(seconds)) return false;
+  state.config = matchConfig(state.mode, state.mapId, seconds);
+  state.turnDeadlineAt = Date.now() + state.config.turnDurationMs;
+  pushEvent(state, `Round time changed to ${seconds} seconds.`);
+  return true;
+}
+
+export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide, accountId?: string, avatarUrl?: string): PlayerState {
   const chosenSide = side ?? chooseSide(state);
   const chosenTeam = state.sideTeams[chosenSide] ?? team;
   const p: PlayerState = {
     id,
     accountId,
     name: sanitizeName(name),
+    ...(avatarUrl ? { avatarUrl } : {}),
     side: chosenSide,
     team: chosenTeam,
     score: state.score[chosenSide],
@@ -176,6 +194,7 @@ export function addPlayer(state: GameState, id: string, name: string, team: Team
     controlledBabbleIds: []
   };
   state.players[id] = p;
+  if (state.phase === 'lobby') buildBabbles(state);
   pushEvent(state, `${p.name} joined ${chosenSide} as ${team}.`);
   return p;
 }
@@ -186,10 +205,21 @@ export function setPlayerTeam(state: GameState, id: string, team: TeamId) {
 
 export function setSideTeam(state: GameState, id: string, team: TeamId) {
   const player = state.players[id];
-  if (!player || !TEAM_IDS.includes(team)) return false;
+  if (state.phase !== 'lobby' || !player || !TEAM_IDS.includes(team)) return false;
   state.sideTeams[player.side] = team;
   for (const p of Object.values(state.players)) if (p.side === player.side) p.team = team;
   pushEvent(state, `${player.side} chose ${team} mascot.`);
+  return true;
+}
+
+export function setPlayerSide(state: GameState, id: string, side: PlayerSide) {
+  const player = state.players[id];
+  if (state.phase !== 'lobby' || !player || player.side === side) return Boolean(player && player.side === side);
+  if (Object.values(state.players).filter(p => p.connected && p.side === side).length >= 4) return false;
+  player.side = side;
+  player.team = state.sideTeams[side];
+  buildBabbles(state);
+  pushEvent(state, `${player.name} moved to the ${side} side.`);
   return true;
 }
 
@@ -220,6 +250,7 @@ export function removePlayer(state: GameState, id: string) {
     state.players[id].connected = false;
     resetReadyVotes(state);
     pushEvent(state, `${state.players[id].name} disconnected.`);
+    if (state.phase === 'lobby') buildBabbles(state);
   }
 }
 
@@ -237,7 +268,7 @@ export function applyFormation(state: GameState, side: PlayerSide, formation: Fo
 
 export function startGame(state: GameState, rng: Rng = Math.random) {
   state.mapId = normalizeMapId(state.mapId);
-  state.config = matchConfig(state.mode, state.mapId);
+  state.config = matchConfig(state.mode, state.mapId, state.config.roundTimeSeconds);
   state.phase = 'planning';
   state.winner = null;
   state.formationSelectionTurn = 1;
@@ -254,6 +285,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.readyPlayerIds = [];
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
+  state.moveVisionUntilTurn = { left: null, right: null };
   state.ball = ballAtKickoff({ x: (rng() - 0.5) * 20, y: 0 });
   buildBabbles(state);
   state.kickoffAt = Date.now();
@@ -266,7 +298,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   const length = GAME_LENGTHS[mode];
   state.mode = mode;
   state.mapId = normalizeMapId(state.mapId);
-  state.config = matchConfig(mode, state.mapId);
+  state.config = matchConfig(mode, state.mapId, state.config.roundTimeSeconds);
   state.phase = 'lobby';
   state.formationSelectionTurn = null;
   state.winner = null;
@@ -283,6 +315,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.readyPlayerIds = [];
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
+  state.moveVisionUntilTurn = { left: null, right: null };
   state.ball = ballAtKickoff({ x: (rng() - 0.5) * 20, y: 0 });
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
@@ -515,10 +548,17 @@ export function grantCheatBox(state: GameState, playerIdOrSide: string | PlayerS
 
 // Redact team-private inventory details for a specific viewer: only your own
 // team's box types/holders are visible; opponents just see how many are held.
-export function redactStateFor(state: GameState, viewerId: string): GameState {
+export function redactStateFor(state: GameState, viewerId: string, serverNowAt = Date.now()): GameState {
   const side = state.players[viewerId]?.side;
+  const canReadOpponent = Boolean(side && state.moveVisionUntilTurn[side] !== null && state.moveVisionUntilTurn[side]! >= state.turn);
+  const visibleIntents = Object.fromEntries(Object.entries(state.pendingIntents).filter(([, intent]) => {
+    const babble = state.babbles.find(candidate => candidate.id === intent.babbleId);
+    return canReadOpponent || Boolean(side && babble?.side === side);
+  }));
   return {
     ...state,
+    serverNowAt,
+    pendingIntents: visibleIntents,
     powerPlayInventories: {
       left: side === 'left' ? state.powerPlayInventories.left : [],
       right: side === 'right' ? state.powerPlayInventories.right : []
@@ -560,7 +600,7 @@ function weightedBoxType(rng: Rng): BoxType {
 function buildBabbles(state: GameState) {
   state.babbles = [];
   for (const side of ['left', 'right'] as const) {
-    const playerIds = Object.values(state.players).filter(p => p.side === side).map(p => p.id);
+    const playerIds = Object.values(state.players).filter(p => p.connected && p.side === side).map(p => p.id);
     const ids = Array.from({ length: 4 }, (_, i) => `${side}-${i + 1}`);
     for (const playerId of playerIds) state.players[playerId].controlledBabbleIds = [];
     ids.forEach((babbleId, i) => {
@@ -589,17 +629,8 @@ function placeFormation(state: GameState, side: PlayerSide) {
   const mirrored = side === 'right';
   const baseX = mirrored ? FIELD.width - 150 : 230;
   const sign = mirrored ? -1 : 1;
-  const layouts: Record<FormationId, Vec[]> = {
-    forward: [{ x: 0, y: -120 }, { x: 80, y: -40 }, { x: 80, y: 40 }, { x: 0, y: 120 }],
-    option: [{ x: 80, y: -120 }, { x: 80, y: 0 }, { x: 80, y: 120 }, { x: -35, y: 0 }],
-    slant: [{ x: 95, y: -135 }, { x: 45, y: -45 }, { x: -5, y: 45 }, { x: -55, y: 135 }],
-    zone: [{ x: 40, y: -135 }, { x: 80, y: -45 }, { x: 80, y: 45 }, { x: 40, y: 135 }],
-    wall: [{ x: 0, y: -135 }, { x: 0, y: -45 }, { x: 0, y: 45 }, { x: 0, y: 135 }],
-    box: [{ x: 35, y: -95 }, { x: 105, y: -95 }, { x: 35, y: 95 }, { x: 105, y: 95 }],
-    rush: [{ x: 110, y: -80 }, { x: 110, y: 80 }, { x: -5, y: -80 }, { x: -5, y: 80 }]
-  };
   const babbles = state.babbles.filter(b => b.side === side).sort((a, b) => a.id.localeCompare(b.id));
-  layouts[formation].forEach((offset, i) => {
+  FORMATION_LAYOUTS[formation].forEach((offset, i) => {
     const babble = babbles[i];
     if (!babble) return;
     babble.pos = { x: baseX + offset.x * sign, y: FIELD.height / 2 + offset.y };
@@ -710,6 +741,7 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, _
       break;
     case 'swapGoals': state.swappedGoalsUntilTurn = state.turn + 1; break;
     case 'bigBumpers': state.bigBumpersUntilTurn = state.turn; break;
+    case 'readPlay': state.moveVisionUntilTurn[side] = state.turn; break;
     case 'boost': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'boost', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
     case 'stickyGoo': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'stickyGoo', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: 0, untilTurn: state.turn + 1 }); break;
     case 'ramp': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'ramp', owner: side, pos: safeFieldPos(use.position, { x: FIELD.width / 2, y: FIELD.height / 2 }, RAMP_HALF_LEN), angle: use.angle ?? -Math.PI / 4, untilTurn: state.turn }); break;
@@ -754,6 +786,7 @@ function expireTurnEffects(state: GameState) {
   state.fieldObjects = state.fieldObjects.filter(o => o.untilTurn >= state.turn);
   if (state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn < state.turn) state.swappedGoalsUntilTurn = null;
   if (state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn < state.turn) state.bigBumpersUntilTurn = null;
+  for (const side of ['left', 'right'] as const) if (state.moveVisionUntilTurn[side] !== null && state.moveVisionUntilTurn[side]! < state.turn) state.moveVisionUntilTurn[side] = null;
   if (state.beachBallUntilTurn !== null && state.beachBallUntilTurn < state.turn) {
     state.beachBallUntilTurn = null;
     state.ball.radius = FIELD.ballRadius;

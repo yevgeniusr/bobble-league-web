@@ -6,7 +6,7 @@ const mapId = process.env.BABBLE_MAP || 'stadium';
 const browser = await chromium.launch({ headless: true, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
 const errors = [];
 let host;
-const displayedRoomCode = () => document.querySelector('.roomCodeValue')?.textContent?.trim() || document.querySelector('.menuRoomCode')?.textContent?.trim() || '';
+const displayedRoomCode = () => document.querySelector('.roomInline b')?.textContent?.trim() || document.querySelector('.menuRoomCode')?.textContent?.trim() || '';
 async function waitRoomCode(page) {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {

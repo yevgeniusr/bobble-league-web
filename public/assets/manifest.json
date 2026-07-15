@@ -11,6 +11,7 @@
     "bigHead": "/assets/abilities/bigHead.png",
     "ghosted": "/assets/abilities/ghosted.png",
     "movePlayer": "/assets/abilities/movePlayer.png",
+    "readPlay": "/assets/abilities/readPlay.png",
     "mysteryBox": "/assets/abilities/mysteryBox.png",
     "spritesheet": "/assets/abilities/ability-spritesheet.png"
   },
@@ -25,6 +26,24 @@
     "heroDesktop": "/assets/brand/planetball-hero-desktop.png",
     "heroMobile": "/assets/brand/planetball-hero-mobile.png",
     "roadToBallOffice": "/assets/brand/road-to-ball-office.png"
+  },
+  "teams": {
+    "fluxOrbs": "/assets/teams/flux-orbs-robot.webp",
+    "forgeBlocks": "/assets/teams/forge-blocks-robot.webp",
+    "vectorWedges": "/assets/teams/vector-wedges-robot.webp",
+    "haloWalkers": "/assets/teams/halo-walkers-robot.webp"
+  },
+  "robots": {
+    "fluxOrbs": "/assets/robots/flux-orbs-surface.jpg",
+    "forgeBlocks": "/assets/robots/forge-blocks-surface.jpg",
+    "vectorWedges": "/assets/robots/vector-wedges-surface.jpg",
+    "haloWalkers": "/assets/robots/halo-walkers-surface.jpg"
+  },
+  "maps": {
+    "planetBall": { "field": "/assets/maps/planetball-field.jpg", "surroundings": "/assets/maps/planetball-surroundings.jpg" },
+    "moon": { "field": "/assets/maps/moon-field.jpg", "surroundings": "/assets/maps/moon-surroundings.jpg" },
+    "coralFoundry": { "field": "/assets/maps/coral-foundry-field.jpg", "surroundings": "/assets/maps/coral-foundry-surroundings.jpg" },
+    "saturn": { "field": "/assets/maps/saturn-field.jpg", "surroundings": "/assets/maps/saturn-surroundings.jpg" }
   },
   "models": {
     "note": "Meshy API key not found under /Users/mac/projects/personal during automated search; generated procedural 2D assets and placeholder folder for future GLB models."

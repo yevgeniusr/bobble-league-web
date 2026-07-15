@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { BUMPERS, FIELD, MAPS, MAP_IDS } from '../shared/types';
-import { ARENA_BARRIER_SCREEN_PRIMITIVE, ARENA_FRAME_SCREEN_OPACITY, ARENA_GOAL_SCREEN_OPACITY, arenaBarrierScreenObject, arenaBarrierVisualProfile, arenaBarrierWorldLayout, arenaCameraFitEnvelope, arenaFloorWorldLayout, arenaSkylineLayout, arenaSkylinePositions, authoritativeBallQuaternion, ballRenderElevation, ballVisualProfile, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperColliderVisualProfile, bumperVisualFootprint, bumperVisualRadii, cameraLayoutForViewport, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, resourcePylonLayout, resourcePylonPositions, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
+import { BUMPERS, FIELD, MAPS, MAP_IDS, TEAM_IDS } from '../shared/types';
+import { ARENA_BARRIER_SCREEN_PRIMITIVE, ARENA_FRAME_SCREEN_OPACITY, ARENA_GOAL_SCREEN_OPACITY, arenaBarrierScreenObject, arenaBarrierVisualProfile, arenaBarrierWorldLayout, arenaCameraFitEnvelope, arenaFloorWorldLayout, arenaSkylineLayout, arenaSkylinePositions, authoritativeBallQuaternion, ballRenderElevation, ballVisualProfile, babbleContactBaseMetrics, babbleContactShadowRadius, babbleGhosted, babbleIndicatorRingRadius, ballSpinToRotation, BUMPER_WORLD_POSITIONS, bumperColliderVisualProfile, bumperVisualFootprint, bumperVisualRadii, cameraLayoutForViewport, fieldToWorld, fieldRadiusToWorld, GHOST_OPACITY, GOAL_COLORS, goalDisplayColors, goalVisualMetrics, mapBumperWorldPositions, resourcePylonLayout, resourcePylonPositions, robotVisualProfile, ROLL_TELEPORT_FIELD_DIST, rollDelta, worldToField } from '../client/src/render3d';
 import { ARENA_WALL_HEIGHT } from '../shared/arena';
 import { BALL_REST_HEIGHT } from '../shared/airborne';
 
@@ -30,12 +30,12 @@ describe('3D renderer coordinate mapping', () => {
     expect(fieldRadiusToWorld(50)).toBe(1);
   });
 
-  it('preserves the established camera angle while fitting the collider skyline', () => {
+  it('uses tighter broadcast framing while fitting the playable court', () => {
     const layout = cameraLayoutForViewport(1600, 900);
     expect(layout.fov).toBe(42);
     expect(layout.target).toEqual({ x: 0, y: 0.4, z: 0 });
-    expect(layout.position.y).toBeGreaterThanOrEqual(16.2);
-    expect(layout.position.z).toBeGreaterThanOrEqual(14.4);
+    expect(layout.position.y).toBeLessThan(24);
+    expect(layout.position.z).toBeLessThan(12);
   });
 
   it.each([
@@ -82,48 +82,21 @@ describe('3D renderer coordinate mapping', () => {
     expect(mapBumperWorldPositions('volcano')).not.toEqual(BUMPER_WORLD_POSITIONS);
   });
 
-  it('keeps PlanetBall skyline props outside the playable field', () => {
-    const halfFieldX = FIELD.width / 100;
-    const halfFieldZ = FIELD.height / 100;
-    const props = arenaSkylineLayout();
-
-    expect(arenaSkylinePositions()).toHaveLength(props.length);
-    for (const prop of props) {
-      const clearsField = prop.x + prop.width / 2 < -halfFieldX
-        || prop.x - prop.width / 2 > halfFieldX
-        || prop.z + prop.depth / 2 < -halfFieldZ
-        || prop.z - prop.depth / 2 > halfFieldZ;
-      expect(clearsField).toBe(true);
-    }
+  it('does not render decorative skyline geometry outside the playable field', () => {
+    expect(arenaSkylineLayout()).toEqual([]);
+    expect(arenaSkylinePositions()).toEqual([]);
   });
 
-  it('places resource pylons behind the far arena rim', () => {
-    const farRimZ = -FIELD.height / 100;
-    const pylons = resourcePylonLayout();
-
-    expect(resourcePylonPositions()).toHaveLength(pylons.length);
-    expect(pylons.length).toBeGreaterThanOrEqual(3);
-    for (const pylon of pylons) expect(pylon.z + pylon.radius).toBeLessThan(farRimZ);
+  it('does not render decorative resource pylons outside the playable field', () => {
+    expect(resourcePylonLayout()).toEqual([]);
+    expect(resourcePylonPositions()).toEqual([]);
   });
 
-  it('frames the complete skyline inside the preserved broadcast camera', () => {
-    const camera = new THREE.PerspectiveCamera(42, 16 / 9, 0.1, 200);
-    camera.position.set(0, 16.2, 14.4);
-    camera.lookAt(0, 0.4, 0);
-    camera.updateMatrixWorld();
-
-    for (const prop of arenaSkylineLayout()) {
-      const top = new THREE.Vector3(prop.x, prop.visualTop, prop.z).project(camera);
-      expect(top.y).toBeLessThanOrEqual(0.96);
-      for (const edgeX of [prop.x - prop.width / 2, prop.x + prop.width / 2]) {
-        expect(Math.abs(new THREE.Vector3(edgeX, prop.height, prop.z).project(camera).x)).toBeLessThanOrEqual(0.98);
-      }
-    }
-
-    const office = arenaSkylineLayout().find(prop => prop.office)!;
-    const officeLeft = new THREE.Vector3(office.x - office.width / 2, office.height, office.z).project(camera).x;
-    const officeRight = new THREE.Vector3(office.x + office.width / 2, office.height, office.z).project(camera).x;
-    expect(officeRight <= -0.34 || officeLeft >= 0.34).toBe(true);
+  it('uses four visibly different robot silhouettes and generated surface maps', () => {
+    const profiles = TEAM_IDS.map(robotVisualProfile);
+    expect(new Set(profiles.map(profile => profile.shape)).size).toBe(4);
+    expect(new Set(profiles.map(profile => profile.texture)).size).toBe(4);
+    expect(new Set(profiles.map(profile => `${profile.width}:${profile.depth}:${profile.height}`)).size).toBe(4);
   });
 
   it('keeps babble contact shadows and control rings close to the real babble radius', () => {
@@ -211,8 +184,8 @@ describe('3D renderer coordinate mapping', () => {
     expect(ARENA_GOAL_SCREEN_OPACITY).toBeGreaterThanOrEqual(ARENA_FRAME_SCREEN_OPACITY);
     for (const barrier of barriers) {
       expect(arenaBarrierVisualProfile(barrier)).toEqual({
-        baseHeight: 0.6,
-        screenHeight: 4.4,
+        baseHeight: 0.36,
+        screenHeight: 1.14,
         primitive: 'lineSegments'
       });
     }

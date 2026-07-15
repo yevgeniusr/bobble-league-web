@@ -18,7 +18,7 @@ import {
   normalizeBabbleVertical,
   normalizeBallVertical
 } from './airborne';
-import { FIELD, GameState, MAPS, MapPhysicsMultipliers, PlayerSide, RAMP_HALF_LEN, RAMP_HALF_WIDTH, Vec, normalizeMapId } from './types';
+import { BabbleState, FIELD, GameState, MAPS, MapPhysicsMultipliers, PlayerSide, RAMP_HALF_LEN, RAMP_HALF_WIDTH, RobotShape, TEAMS, Vec, normalizeMapId } from './types';
 import { PHYSICS_CONFIG } from './physicsConfig';
 
 // Rapier is tuned for meter-scale numbers; the field is 1100x620 px.
@@ -174,7 +174,7 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
     bumperTargets.push({
       id: `babble:${b.id}`,
       body: entry.body,
-      planarRadius: babbleColliderRadius(b.radius) * PX_PER_METER,
+      planarRadius: babbleColliderSpec(state, b).planarRadius * PX_PER_METER,
       start: { x: start.x * PX_PER_METER, y: start.z * PX_PER_METER }
     });
   }
@@ -193,7 +193,7 @@ export function stepPhysics(state: GameState, dt: number): PhysicsStepResult {
     if (cache.babbles.get(b.id)!.ghosted) continue;
     const planar = Math.hypot(b.pos.x - state.ball.pos.x, b.pos.y - state.ball.pos.y);
     const vertical = (state.ball.height ?? ballRestHeight(state.ball.radius)) - (b.height ?? babbleRestHeight(b.radius));
-    const contactRadius = (ballColliderRadius(state.ball.radius) + babbleColliderRadius(b.radius)) * PX_PER_METER;
+    const contactRadius = (ballColliderRadius(state.ball.radius) + babbleColliderSpec(state, b).planarRadius) * PX_PER_METER;
     const gap = Math.hypot(planar, vertical * PX_PER_METER) - contactRadius;
     if (gap <= 2) recordBallTouch(state, b.id, b.side); // 2px: restitution separates ~2px/tick
   }
@@ -312,12 +312,65 @@ function recordBallTouch(state: GameState, babbleId: string, side: PlayerSide) {
 const isBeachy = (state: GameState) =>
   state.beachBallUntilTurn !== null && state.beachBallUntilTurn >= state.turn;
 
-const babbleKeyOf = (state: GameState) => state.babbles.map(b => b.id).join(',');
+export const babblePhysicsKey = (state: GameState) => state.babbles
+  .map(b => `${b.id}:${b.radius}:${state.sideTeams[b.side]}`)
+  .join(',');
+
+export type BabbleColliderSpec = {
+  shape: RobotShape;
+  width: number;
+  depth: number;
+  halfHeight: number;
+  planarRadius: number;
+  densityMultiplier: number;
+  restitutionMultiplier: number;
+};
+
+export function babbleColliderSpec(state: GameState, babble: BabbleState): BabbleColliderSpec {
+  const robot = TEAMS[state.sideTeams[babble.side]].robot;
+  const scale = babble.radius / FIELD.babbleRadius;
+  const width = robot.width * scale;
+  const depth = robot.depth * scale;
+  return {
+    shape: robot.shape,
+    width,
+    depth,
+    halfHeight: (robot.shape === 'orb' ? babbleColliderRadius(babble.radius) : 0.3 * scale),
+    planarRadius: robot.shape === 'orb' ? babbleColliderRadius(babble.radius) : Math.max(width, depth) / 2,
+    densityMultiplier: robot.density,
+    restitutionMultiplier: robot.restitution
+  };
+}
+
+function babbleColliderDesc(state: GameState, babble: BabbleState) {
+  const spec = babbleColliderSpec(state, babble);
+  let desc: RAPIER.ColliderDesc;
+  if (spec.shape === 'orb') {
+    desc = RAPIER.ColliderDesc.ball(spec.planarRadius);
+  } else if (spec.shape === 'block') {
+    desc = RAPIER.ColliderDesc.roundCuboid(spec.width / 2 - 0.06, spec.halfHeight - 0.06, spec.depth / 2 - 0.06, 0.06);
+  } else if (spec.shape === 'walker') {
+    desc = RAPIER.ColliderDesc.roundCuboid(spec.width / 2 - 0.1, spec.halfHeight - 0.1, spec.depth / 2 - 0.1, 0.1);
+  } else {
+    const hx = spec.width / 2;
+    const hz = spec.depth / 2;
+    const hy = spec.halfHeight;
+    const points = new Float32Array([
+      -hx, -hy, -hz, -hx, -hy, hz, hx, -hy, 0,
+      -hx, hy, -hz, -hx, hy, hz, hx, hy, 0
+    ]);
+    desc = RAPIER.ColliderDesc.convexHull(points) ?? RAPIER.ColliderDesc.ball(spec.planarRadius);
+  }
+  if (spec.shape === 'wedge' && babble.side === 'right') {
+    desc.setRotation({ x: 0, y: 1, z: 0, w: 0 });
+  }
+  return desc.setTranslation(0, spec.halfHeight - babbleRestHeight(babble.radius), 0);
+}
 
 function getCache(state: GameState): PhysicsCache {
   const existing = caches.get(state);
   // The babble roster is fixed after startGame; if a test swaps it, rebuild.
-  if (existing && existing.babbleKey === babbleKeyOf(state) && existing.mapId === normalizeMapId(state.mapId)) return existing;
+  if (existing && existing.babbleKey === babblePhysicsKey(state) && existing.mapId === normalizeMapId(state.mapId)) return existing;
   if (existing) freePhysics(state);
   const cache = buildCache(state);
   caches.set(state, cache);
@@ -325,7 +378,7 @@ function getCache(state: GameState): PhysicsCache {
 }
 
 function buildCache(state: GameState): PhysicsCache {
-  const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
+  const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY * mapOf(state).physics.gravity, z: 0 });
   world.maxCcdSubsteps = 4;
   buildArena(world, state);
   const beachy = isBeachy(state);
@@ -357,14 +410,13 @@ function buildCache(state: GameState): PhysicsCache {
         .lockRotations()
     );
     const collider = world.createCollider(
-      RAPIER.ColliderDesc.ball(babbleColliderRadius(b.radius))
+      babbleColliderDesc(state, b)
         // The collision sphere is the physical rolling base of the bobblehead,
         // not its full visual/body height. Its lower center creates a real
         // upward contact normal when it strikes the larger ball.
-        .setTranslation(0, babbleColliderOffsetY(b.radius), 0)
         .setFriction(0.3)
-        .setRestitution(restitutionTune(state, 'babbleRestitution'))
-        .setDensity(babbleDensity(state, b.radius))
+        .setRestitution(clampRestitution(restitutionTune(state, 'babbleRestitution') * babbleColliderSpec(state, b).restitutionMultiplier))
+        .setDensity(babbleDensity(state, b))
         .setCollisionGroups(ghosted ? GHOST_GROUPS : BABBLE_GROUPS),
       body
     );
@@ -380,7 +432,7 @@ function buildCache(state: GameState): PhysicsCache {
     beachy,
     ballStateKey: '',
     babbles,
-    babbleKey: babbleKeyOf(state),
+    babbleKey: babblePhysicsKey(state),
     blocksKey: '',
     blockColliders: [],
     rampsKey: '',
@@ -398,10 +450,10 @@ const ballDensity = (state: GameState, radius: number) => {
 const ballColliderRadius = (radius: number) => ballRestHeight(radius);
 const babbleColliderRadius = (radius: number) => radius / PX_PER_METER;
 const babbleColliderOffsetY = (radius: number) => babbleColliderRadius(radius) - babbleRestHeight(radius);
-const babbleDensity = (state: GameState, _radius: number) =>
+const babbleDensity = (state: GameState, babble: BabbleState) =>
   // Density is a physical material calibration. The smaller rolling-base
   // collider intentionally makes the bobblehead lighter than a full 0.5m ball.
-  tune(state, 'babbleDensity');
+  tune(state, 'babbleDensity') * babbleColliderSpec(state, babble).densityMultiplier;
 
 const isGhosted = (state: GameState, babble: GameState['babbles'][number]) =>
   babble.effects.some(e => e.type === 'ghosted' && e.untilTurn >= state.turn);
@@ -479,9 +531,12 @@ function syncBabble(
     entry.ghosted = ghosted;
   }
   if (babble.radius !== entry.radius) {
-    entry.collider.setRadius(babbleColliderRadius(babble.radius));
-    entry.collider.setTranslationWrtParent({ x: 0, y: babbleColliderOffsetY(babble.radius), z: 0 });
-    entry.collider.setDensity(babbleDensity(state, babble.radius));
+    const spec = babbleColliderSpec(state, babble);
+    if (spec.shape === 'orb') {
+      entry.collider.setRadius(spec.planarRadius);
+      entry.collider.setTranslationWrtParent({ x: 0, y: babbleColliderOffsetY(babble.radius), z: 0 });
+    }
+    entry.collider.setDensity(babbleDensity(state, babble));
     entry.radius = babble.radius;
   }
   if (!ghosted) touchable.set(entry.collider.handle, {

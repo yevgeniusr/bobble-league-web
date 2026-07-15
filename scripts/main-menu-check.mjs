@@ -42,10 +42,10 @@ try {
   await page.getByRole('button', { name: /create room/i }).click();
   await page.locator('.roomCodeValue').waitFor({ state: 'visible' });
   const matchLabel = (await page.locator('.matchStatus > b').textContent()) ?? '';
-  if (!/low orbit.*champion.*first to 5/i.test(matchLabel)) throw new Error(`room did not preserve selected format/map: ${matchLabel}`);
+  if (!/moon.*champion.*first to 5/i.test(matchLabel)) throw new Error(`room did not preserve selected format/map: ${matchLabel}`);
   await page.setViewportSize({ width: 390, height: 844 });
-  const visibleScorePills = await page.locator('.scorePill:visible').count();
-  if (visibleScorePills !== 2) throw new Error(`expected both mobile score pills, received ${visibleScorePills}`);
+  const visibleRosters = await page.locator('.teamRoster:visible').count();
+  if (visibleRosters !== 2) throw new Error(`expected both mobile team rosters, received ${visibleRosters}`);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.locator('button.menuToggle').click();
   const menu = page.getByRole('button', { name: 'Main menu' });

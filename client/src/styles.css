@@ -897,7 +897,9 @@ main {
   height: 100svh;
   place-items: center;
   overflow: hidden;
-  background: var(--ink);
+  background-color: var(--ink);
+  background-position: center;
+  background-size: cover;
 }
 
 .field {
@@ -1103,6 +1105,11 @@ main {
   overflow: auto;
 }
 
+.settingsMenu > *,
+.menuSection {
+  min-width: 0;
+}
+
 .menuHead {
   display: flex;
   align-items: center;
@@ -1172,6 +1179,11 @@ main {
   min-height: 38px;
   padding: 6px 9px;
   font-size: 11px;
+}
+
+.menuRoomRow button {
+  flex: 0 1 auto;
+  max-width: 100%;
 }
 
 .menuActions select {
@@ -2046,6 +2058,311 @@ main {
   }
 }
 
+/* Compact arena controls and robot-era broadcast HUD. */
+.settingsMenu {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.settingsMenu select,
+.settingsMenu button,
+.menuRoomRow > *,
+.menuActions > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.teamTrait {
+  color: #59606d;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.matchStatus {
+  position: relative;
+  min-height: 112px;
+  gap: 1px;
+  padding: 9px 15px 8px;
+  border-color: #111319;
+  color: #f7e4a4;
+  background: #202127;
+  box-shadow: inset 0 0 0 2px #8c7040, 0 6px 0 rgba(0, 0, 0, 0.32);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+}
+
+.matchStatus::before {
+  position: absolute;
+  top: 4px;
+  left: 18%;
+  width: 64%;
+  height: 2px;
+  background: #d5aa58;
+  content: '';
+}
+
+.matchStatus .matchMap {
+  color: #d8bd72;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.matchStatus .timerBadge {
+  min-width: 116px;
+  padding: 2px 12px;
+  border: 0;
+  color: #fff7dc;
+  background: #111319;
+  box-shadow: inset 0 0 0 1px #745d36;
+}
+
+.matchStatus .timerBadge strong {
+  font-size: 46px;
+}
+
+.turnCounter {
+  color: #fff7dc;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.turnCounter b {
+  color: #c8aa69;
+}
+
+.formationDock {
+  position: absolute;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  left: 50%;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: repeat(7, 68px);
+  gap: 4px;
+  padding: 6px;
+  border: 3px solid #111319;
+  background: rgba(29, 31, 38, 0.94);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.28);
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.formationDock button {
+  display: grid;
+  width: 68px;
+  min-height: 70px;
+  place-items: center;
+  gap: 2px;
+  padding: 4px 3px;
+  border: 2px solid #59606d;
+  border-radius: 2px;
+  color: #e8edf1;
+  background: #292c35;
+  box-shadow: none;
+}
+
+.formationFocus {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  display: flex;
+  min-width: 178px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 3px solid #111319;
+  color: var(--yellow);
+  background: rgba(29, 31, 38, 0.96);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.28);
+  transform: translateX(-50%);
+}
+
+.formationFocus .formationGlyph {
+  width: 94px;
+  height: 54px;
+}
+
+.formationFocus b {
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.formationDock button.selected {
+  border-color: var(--yellow);
+  color: var(--yellow);
+  background: #3b3a35;
+}
+
+.formationDock button span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 8px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.formationGlyph {
+  width: 58px;
+  height: 36px;
+  overflow: visible;
+}
+
+.formationGlyph rect,
+.formationGlyph path {
+  fill: #202127;
+  stroke: #7d8592;
+  stroke-width: 1;
+}
+
+.formationGlyph path {
+  fill: none;
+  opacity: 0.55;
+}
+
+.formationGlyph circle {
+  fill: currentColor;
+  stroke: #111319;
+  stroke-width: 0.8;
+}
+
+.abilityTrigger.empty {
+  filter: grayscale(0.8);
+  opacity: 0.66;
+}
+
+.abilityTrigger.held {
+  border-color: #111319;
+  background: #fff7dc;
+  box-shadow: 0 0 0 3px #d5aa58, 0 6px 0 rgba(0, 0, 0, 0.3);
+}
+
+.abilityTrigger.held img {
+  width: 54px;
+  height: 54px;
+}
+
+@media (max-width: 980px) {
+  .formationDock {
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 78px);
+    grid-template-columns: repeat(7, 60px);
+    gap: 3px;
+    padding: 5px;
+  }
+
+  .formationDock button {
+    width: 60px;
+    min-height: 66px;
+  }
+
+  .formationGlyph {
+    width: 52px;
+    height: 33px;
+  }
+}
+
+@media (max-width: 720px) {
+  .topHud {
+    grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr);
+  }
+
+  .rosterIdentity {
+    grid-template-columns: 31px minmax(0, 1fr) 24px;
+  }
+
+  .rosterIdentity > img {
+    width: 31px;
+    height: 31px;
+  }
+
+  .rosterPlayer {
+    height: 34px;
+  }
+
+  .rosterPlayer .playerAvatar {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+  }
+
+  .matchStatus {
+    min-height: 84px;
+    padding: 5px;
+  }
+
+  .matchStatus .timerBadge {
+    min-width: 72px;
+    padding: 2px 4px;
+  }
+
+  .matchStatus .timerBadge strong {
+    font-size: 36px;
+  }
+
+  .matchStatus .turnCounter {
+    display: inline;
+    font-size: 8px;
+  }
+
+  .formationDock {
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 82px);
+    display: flex;
+    width: min(342px, calc(100vw - 20px));
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px;
+  }
+
+  .formationDock button {
+    width: calc((100% - 12px) / 4);
+    flex: 0 0 calc((100% - 12px) / 4);
+    min-height: 64px;
+    padding-inline: 3px;
+  }
+
+  .formationGlyph {
+    width: min(62px, 100%);
+    height: 38px;
+  }
+
+  .formationFocus {
+    min-width: 154px;
+    padding: 5px 9px;
+  }
+
+  .formationFocus .formationGlyph {
+    width: 76px;
+    height: 44px;
+  }
+
+  .abilityTrigger {
+    width: 74px;
+    height: 74px;
+    min-height: 74px;
+  }
+
+  .abilityTrigger img,
+  .abilityTrigger.held img {
+    width: 54px;
+    height: 54px;
+  }
+
+  .startMatchBtn,
+  .readyBtn {
+    min-width: 126px;
+    min-height: 74px;
+    padding: 8px 15px;
+  }
+
+  .readyBtn span {
+    font-size: 20px;
+  }
+}
+
 @media (max-width: 470px) {
   .accountSignIn {
     display: none;
@@ -2175,5 +2492,650 @@ main {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
+  }
+}
+
+/* Universe Cup broadcast HUD */
+.roundTimeField > span,
+.menuSection label > span {
+  justify-self: end;
+  margin-top: -18px;
+  color: var(--blue-dark);
+  font-family: 'Changa One', sans-serif;
+  font-size: 16px;
+}
+
+.roundTimeField input[type='range'],
+.menuSection input[type='range'] {
+  width: 100%;
+  accent-color: var(--coral);
+}
+
+.topHud {
+  top: max(10px, env(safe-area-inset-top));
+  grid-template-columns: minmax(360px, 1fr) 172px minmax(360px, 1fr);
+  width: min(1540px, calc(100vw - 24px));
+  gap: 8px;
+}
+
+.teamRoster {
+  min-width: 0;
+  padding: 7px;
+  border: 3px solid var(--ink);
+  border-top: 5px solid var(--team);
+  border-radius: 3px;
+  color: var(--white);
+  background: rgba(28, 30, 37, 0.94);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.22);
+}
+
+.teamRoster.right {
+  direction: rtl;
+}
+
+.rosterIdentity {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 5px;
+}
+
+.rosterIdentity > img {
+  width: 42px;
+  height: 42px;
+  border: 2px solid var(--team);
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--white);
+}
+
+.rosterIdentity span,
+.rosterPlayer > span {
+  display: grid;
+  min-width: 0;
+  direction: ltr;
+}
+
+.rosterIdentity b,
+.rosterPlayer b {
+  overflow: hidden;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rosterIdentity b {
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.rosterIdentity small,
+.rosterPlayer small {
+  color: #bbc2cc;
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.rosterIdentity > strong {
+  color: var(--team);
+  font-family: 'Changa One', sans-serif;
+  font-size: 34px;
+  font-weight: 400;
+  line-height: 1;
+  text-align: center;
+}
+
+.rosterPlayers {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  direction: ltr;
+}
+
+.rosterPlayer {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  min-width: 0;
+  height: 34px;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border: 1px solid #59606d;
+  background: #292c35;
+}
+
+.rosterPlayer.you {
+  border-color: var(--yellow);
+  background: #3d3940;
+}
+
+.rosterPlayer.open {
+  opacity: 0.52;
+}
+
+.rosterPlayer b {
+  font-size: 9px;
+}
+
+.playerAvatar {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  color: var(--ink);
+  background: var(--yellow);
+  object-fit: cover;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.matchStatus {
+  min-width: 0;
+  min-height: 104px;
+  align-content: center;
+  padding: 7px;
+  border-width: 3px;
+  background: rgba(49, 82, 201, 0.96);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.22);
+}
+
+.timerBadge {
+  min-width: 104px;
+}
+
+.timerBadge strong {
+  font-size: 40px;
+}
+
+.roomInline {
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.roomInline b {
+  color: var(--yellow);
+  font-size: 11px;
+}
+
+.menuToggle {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  width: 44px;
+  height: 42px;
+  min-height: 42px;
+  border-width: 3px;
+  border-radius: 50%;
+  color: var(--white);
+  background: var(--ink);
+  font-size: 18px;
+}
+
+.settingsMenu {
+  top: 148px;
+  right: 12px;
+  max-height: calc(100svh - 170px);
+}
+
+.sideHeader strong {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sideHeader strong img {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.sideHeader strong span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.miniMascots {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.miniMascots button {
+  height: 52px;
+}
+
+.miniMascots img {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.playerPreview span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.playerPreview .playerAvatar {
+  width: 22px;
+  height: 22px;
+  flex-basis: 22px;
+  border-width: 1px;
+}
+
+.sideChoice {
+  min-height: 36px;
+  padding: 6px 9px;
+  border-width: 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.actionBar {
+  display: none;
+}
+
+.actionControls {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 7;
+  height: 0;
+  pointer-events: none;
+}
+
+.abilityCluster,
+.turnCluster {
+  position: absolute;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.abilityCluster {
+  left: max(14px, env(safe-area-inset-left));
+}
+
+.turnCluster {
+  right: max(14px, env(safe-area-inset-right));
+}
+
+.abilityTrigger {
+  position: relative;
+  display: grid;
+  width: 68px;
+  height: 68px;
+  min-height: 68px;
+  place-items: center;
+  padding: 5px;
+  border: 4px solid var(--ink);
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.28);
+}
+
+.abilityTrigger img {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.abilityTrigger > span {
+  position: absolute;
+  top: -4px;
+  right: -2px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  color: var(--white);
+  background: var(--coral);
+  font-size: 10px;
+}
+
+.abilityTray {
+  position: absolute;
+  bottom: 80px;
+  left: 0;
+  display: grid;
+  width: min(310px, calc(100vw - 28px));
+  max-height: min(360px, calc(100svh - 230px));
+  gap: 6px;
+  padding: 8px;
+  border: 4px solid var(--ink);
+  border-radius: 4px;
+  background: rgba(255, 253, 245, 0.97);
+  overflow: auto;
+}
+
+.abilityTray .abilityBtn {
+  width: 100%;
+}
+
+.cancelAbility {
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--white);
+  background: var(--coral);
+  font-size: 24px;
+}
+
+.startMatchBtn,
+.readyBtn {
+  min-width: 122px;
+  min-height: 68px;
+  padding: 8px 16px;
+  border: 4px solid var(--ink);
+  border-radius: 50%;
+  color: var(--ink);
+  background: var(--yellow);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.28);
+  text-transform: uppercase;
+}
+
+.readyBtn span,
+.readyBtn small {
+  display: block;
+}
+
+.readyBtn span {
+  font-family: 'Changa One', sans-serif;
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.readyBtn small {
+  font-size: 9px;
+}
+
+@media (max-width: 980px) {
+  .topHud {
+    grid-template-columns: minmax(0, 1fr) 116px minmax(0, 1fr);
+  }
+
+  .rosterPlayer {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .playerAvatar {
+    width: 24px;
+    height: 24px;
+    flex-basis: 24px;
+  }
+
+  .rosterIdentity {
+    grid-template-columns: 34px minmax(0, 1fr) 28px;
+  }
+
+  .rosterIdentity > img {
+    width: 34px;
+    height: 34px;
+  }
+
+  .rosterIdentity > strong {
+    font-size: 27px;
+  }
+
+  .matchStatus {
+    min-width: 0;
+  }
+
+  .matchStatus > b,
+  .matchStatus small {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .topHud {
+    top: max(5px, env(safe-area-inset-top));
+    grid-template-columns: minmax(0, 1fr) 86px minmax(0, 1fr);
+    width: calc(100vw - 10px);
+    gap: 3px;
+  }
+
+  .teamRoster {
+    padding: 3px;
+    border-width: 2px;
+    border-top-width: 4px;
+  }
+
+  .rosterIdentity {
+    grid-template-columns: 27px minmax(0, 1fr) 22px;
+    gap: 3px;
+    padding-bottom: 3px;
+  }
+
+  .rosterIdentity > img {
+    width: 27px;
+    height: 27px;
+    border-width: 1px;
+  }
+
+  .rosterIdentity b {
+    font-size: 8px;
+  }
+
+  .rosterIdentity small {
+    display: none;
+  }
+
+  .rosterIdentity > strong {
+    font-size: 22px;
+  }
+
+  .rosterPlayers {
+    gap: 2px;
+  }
+
+  .rosterPlayer {
+    display: grid;
+    grid-template-columns: 1fr;
+    height: 29px;
+    place-items: center;
+    padding: 1px;
+  }
+
+  .rosterPlayer > span:not(.playerAvatar) {
+    display: none;
+  }
+
+  .rosterPlayer .playerAvatar {
+    width: 23px;
+    height: 23px;
+    flex-basis: 23px;
+    border-width: 1px;
+  }
+
+  .matchStatus {
+    min-height: 70px;
+    padding: 3px;
+    border-width: 2px;
+  }
+
+  .timerBadge {
+    min-width: 62px;
+    padding: 2px 5px;
+    border-width: 2px;
+  }
+
+  .timerBadge strong {
+    font-size: 28px;
+  }
+
+  .timerBadge em,
+  .roomInline {
+    font-size: 7px;
+  }
+
+  .menuToggle {
+    top: calc(100% + 4px);
+    width: 38px;
+    height: 38px;
+    min-height: 38px;
+  }
+
+  .settingsMenu {
+    top: 92px;
+    right: 5px;
+    width: calc(100vw - 10px);
+    max-height: calc(100svh - 106px);
+  }
+
+  .abilityCluster,
+  .turnCluster {
+    bottom: max(9px, env(safe-area-inset-bottom));
+  }
+
+  .abilityCluster {
+    left: max(9px, env(safe-area-inset-left));
+  }
+
+  .turnCluster {
+    right: max(9px, env(safe-area-inset-right));
+  }
+
+  .abilityTrigger {
+    width: 58px;
+    height: 58px;
+    min-height: 58px;
+  }
+
+  .abilityTrigger img {
+    width: 40px;
+    height: 40px;
+  }
+
+  .abilityTray {
+    bottom: 68px;
+  }
+
+  .startMatchBtn,
+  .readyBtn {
+    min-width: 104px;
+    min-height: 58px;
+    padding: 6px 12px;
+  }
+
+  .readyBtn span {
+    font-size: 17px;
+  }
+}
+
+/* Final precedence for the live HUD; the legacy responsive layer above is
+   retained for menu screens but must not shrink match controls. */
+.matchStatus {
+  position: relative;
+  min-height: 112px;
+  gap: 1px;
+  padding: 9px 15px 8px;
+  border-color: #111319;
+  color: #f7e4a4;
+  background: #202127;
+  box-shadow: inset 0 0 0 2px #8c7040, 0 6px 0 rgba(0, 0, 0, 0.32);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+}
+
+.matchStatus .matchMap {
+  color: #d8bd72;
+}
+
+.matchStatus .timerBadge {
+  min-width: 116px;
+  border: 0;
+  color: #fff7dc;
+  background: #111319;
+  box-shadow: inset 0 0 0 1px #745d36;
+}
+
+.matchStatus .timerBadge strong {
+  font-size: 46px;
+}
+
+@media (max-width: 720px) {
+  .topHud {
+    grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr);
+  }
+
+  .rosterIdentity {
+    grid-template-columns: 31px minmax(0, 1fr) 24px;
+  }
+
+  .rosterIdentity > img {
+    width: 31px;
+    height: 31px;
+  }
+
+  .rosterPlayer {
+    height: 34px;
+  }
+
+  .rosterPlayer .playerAvatar {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+  }
+
+  .matchStatus {
+    min-height: 84px;
+    padding: 5px;
+  }
+
+  .matchStatus .timerBadge {
+    min-width: 72px;
+  }
+
+  .matchStatus .timerBadge strong {
+    font-size: 36px;
+  }
+
+  .matchStatus .turnCounter {
+    display: inline;
+    font-size: 8px;
+  }
+
+  .abilityTrigger {
+    width: 74px;
+    height: 74px;
+    min-height: 74px;
+  }
+
+  .abilityTrigger img,
+  .abilityTrigger.held img {
+    width: 54px;
+    height: 54px;
+  }
+
+  .startMatchBtn,
+  .readyBtn {
+    min-width: 126px;
+    min-height: 74px;
+    padding: 8px 15px;
+  }
+
+  .readyBtn span {
+    font-size: 20px;
   }
 }

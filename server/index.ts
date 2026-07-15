@@ -9,7 +9,7 @@ import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { AnalyticsEvent, drainAnalyticsEvents } from '../shared/analytics';
-import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setPlayerReady, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
+import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setPlayerReady, setPlayerSide, setRoundTime, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { freePhysics } from '../shared/physics';
 import { BOX_TYPES, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId, normalizeBoxType } from '../shared/types';
 import { createXtremepushSender } from './xtremepush';
@@ -171,13 +171,18 @@ io.use(async (socket, next) => {
   next();
 });
 
+const avatarUrlSchema = z.string().url().max(500).refine(value => {
+  try { return new URL(value).hostname === 'img.clerk.com'; } catch { return false; }
+}, 'Unsupported avatar host').optional();
 const createSchema = z.object({
   name: z.string().max(24),
+  avatarUrl: avatarUrlSchema,
   team: z.enum(TEAM_IDS as [string, ...string[]]).optional(),
   mode: z.union([z.literal(1), z.literal(3), z.literal(5)]),
-  mapId: z.enum(MAP_IDS as [string, ...string[]]).optional()
+  mapId: z.enum(MAP_IDS as [string, ...string[]]).optional(),
+  roundTimeSeconds: z.number().int().min(1).max(60).optional()
 });
-const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), team: z.enum(TEAM_IDS as [string, ...string[]]).optional() });
+const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), avatarUrl: avatarUrlSchema, team: z.enum(TEAM_IDS as [string, ...string[]]).optional() });
 const finiteVecSchema = z.object({ x: z.number().finite(), y: z.number().finite() }).strict();
 const powerPlaySchema = z.object({
   type: z.string().min(1).max(40),
@@ -191,10 +196,10 @@ io.on('connection', socket => {
     const parsed = createSchema.safeParse(payload);
     if (!parsed.success) return cb({ ok: false, error: 'Invalid room settings.' });
     const roomCode = uniqueRoomCode();
-    const state = createInitialState(roomCode, parsed.data.mode as GameMode, parsed.data.mapId as MapId | undefined);
+    const state = createInitialState(roomCode, parsed.data.mode as GameMode, parsed.data.mapId as MapId | undefined, parsed.data.roundTimeSeconds);
     const room: Room = { state, inputs: {}, lastActiveAt: Date.now() };
     rooms.set(roomCode, room);
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined, parsed.data.avatarUrl);
     cb({ ok: true, roomCode, playerId: socket.id });
   });
 
@@ -204,7 +209,7 @@ io.on('connection', socket => {
     const room = rooms.get(parsed.data.roomCode);
     if (!room) return cb({ ok: false, error: 'Room not found.' });
     if (Object.values(room.state.players).filter(p => p.connected).length >= 8) return cb({ ok: false, error: 'Room is full.' });
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined);
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined, parsed.data.avatarUrl);
     cb({ ok: true, roomCode: parsed.data.roomCode, playerId: socket.id });
   });
 
@@ -262,6 +267,19 @@ io.on('connection', socket => {
     room.lastActiveAt = Date.now();
   });
 
+  socket.on('player:side', side => {
+    const room = currentRoom(socket); if (!room) return;
+    if (side !== 'left' && side !== 'right') return;
+    if (!setPlayerSide(room.state, socket.id, side)) socket.emit('room:error', 'That side is full or the match has already started.');
+    room.lastActiveAt = Date.now();
+  });
+
+  socket.on('room:roundTime', seconds => {
+    const room = currentRoom(socket); if (!room) return;
+    if (!setRoundTime(room.state, seconds)) socket.emit('room:error', 'Round time must be 1-60 seconds and can only change before kickoff.');
+    room.lastActiveAt = Date.now();
+  });
+
   socket.on('room:map', mapId => {
     const room = currentRoom(socket); if (!room) return;
     if (!MAP_IDS.includes(mapId)) return;
@@ -313,7 +331,7 @@ io.on('connection', socket => {
   socket.on('disconnect', () => { const room = currentRoom(socket); if (room) removePlayer(room.state, socket.id); });
 });
 
-function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
+function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId, avatarUrl?: string) {
   socket.data.roomCode = room.state.roomCode;
   socket.data.playerId = socket.id;
   socket.join(room.state.roomCode);
@@ -321,7 +339,7 @@ function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId) {
   const seat = findDisconnectedSeat(room.state, name, socket.data.accountId);
   const reclaimed = seat ? reclaimPlayer(room.state, seat.id, socket.id) : null;
   if (!reclaimed) {
-    addPlayer(room.state, socket.id, name, team, undefined, socket.data.accountId);
+    addPlayer(room.state, socket.id, name, team, undefined, socket.data.accountId, avatarUrl);
     if (team) setSideTeam(room.state, socket.id, team);
   }
   room.inputs[socket.id] = { ...blankInput };

@@ -12,10 +12,10 @@ describe('match end summary', () => {
 
     const summary = buildMatchEndSummary(state);
 
-    expect(summary.title).toBe('Stripe Squad wins');
+    expect(summary.title).toBe('Forge Blocks wins');
     expect(summary.winnerSideLabel).toBe('Right side');
     expect(summary.scoreline).toBe('2 - 3');
-    expect(summary.stats).toContainEqual({ label: 'Map', value: 'Moon Base' });
+    expect(summary.stats).toContainEqual({ label: 'Map', value: 'Moon' });
     expect(summary.stats).toContainEqual({ label: 'Turns', value: '17 / 90' });
     expect(summary.stats).toContainEqual({ label: 'Target', value: 'First to 3' });
   });

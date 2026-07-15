@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ARENA_BARRIERS, ARENA_FLOORS, ARENA_WALL_HEIGHT, GOAL_COLLISION_BOTTOM, GOAL_COLLISION_TOP } from '../../shared/arena';
-import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, ROTATABLE_FIELD_OBJECTS, TEAMS, Vec, normalizeMapId } from '../../shared/types';
+import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, ROTATABLE_FIELD_OBJECTS, TEAMS, TeamId, Vec, normalizeMapId } from '../../shared/types';
 import { babbleRestHeight, ballRestHeight } from '../../shared/airborne';
 
 export type WorldXZ = { x: number; z: number };
@@ -31,15 +31,7 @@ export type ArenaSkylineProp = WorldXZ & {
 };
 
 export function arenaSkylineLayout(): ArenaSkylineProp[] {
-  const halfFieldX = FIELD.width / 100;
-  const farRimZ = -FIELD.height / 100;
-  return [
-    { x: -halfFieldX - 3.8, z: farRimZ - 2.6, width: 1.55, height: 2.7, depth: 1.15, visualTop: 3.51, office: false },
-    { x: -8.7, z: farRimZ - 2.85, width: 5.2, height: 3, depth: 1.5, visualTop: 3.81, office: true },
-    { x: 0, z: farRimZ - 3, width: 2.2, height: 2.4, depth: 1.15, visualTop: 3.21, office: false },
-    { x: 6.4, z: farRimZ - 2.85, width: 2.2, height: 2.4, depth: 1.15, visualTop: 3.21, office: false },
-    { x: halfFieldX + 3.8, z: farRimZ - 2.6, width: 1.55, height: 2.7, depth: 1.15, visualTop: 3.51, office: false }
-  ];
+  return [];
 }
 
 export function arenaSkylinePositions(): WorldXZ[] {
@@ -49,8 +41,7 @@ export function arenaSkylinePositions(): WorldXZ[] {
 export type ResourcePylonProp = WorldXZ & { radius: number };
 
 export function resourcePylonLayout(): ResourcePylonProp[] {
-  const farRimZ = -FIELD.height / 100;
-  return [-8.6, -4.3, 0, 4.3, 8.6].map(x => ({ x, z: farRimZ - 1.45, radius: 0.34 }));
+  return [];
 }
 
 export function resourcePylonPositions(): WorldXZ[] {
@@ -65,9 +56,10 @@ export type RendererCameraLayout = {
 
 const DESKTOP_CAMERA: RendererCameraLayout = {
   fov: 42,
-  position: { x: 0, y: 16.2, z: 14.4 },
+  position: { x: 0, y: 18, z: 8 },
   target: { x: 0, y: 0.4, z: 0 }
 };
+const PORTRAIT_CAMERA_POSITION = { x: 12, y: 19, z: 0 } as const;
 
 const FIT_CAMERA_ASPECT = 16 / 10;
 const PORTRAIT_CAMERA_ASPECT = 390 / 844;
@@ -83,15 +75,15 @@ export function arenaCameraFitEnvelope(): THREE.Vector3[] {
   for (const barrier of arenaBarrierWorldLayout()) {
     for (const x of [barrier.x - barrier.width / 2, barrier.x + barrier.width / 2]) {
       for (const z of [barrier.z - barrier.depth / 2, barrier.z + barrier.depth / 2]) {
-        points.push(new THREE.Vector3(x, TURF_Y, z), new THREE.Vector3(x, TURF_Y + barrier.height, z));
+        const visual = arenaBarrierVisualProfile(barrier);
+        points.push(new THREE.Vector3(x, TURF_Y, z), new THREE.Vector3(x, TURF_Y + visual.baseHeight + visual.screenHeight, z));
       }
     }
   }
   return points;
 }
 
-function cameraDistanceScaleForFit(aspect: number, fov: number): number {
-  const position = new THREE.Vector3(DESKTOP_CAMERA.position.x, DESKTOP_CAMERA.position.y, DESKTOP_CAMERA.position.z);
+function cameraDistanceScaleForFit(aspect: number, fov: number, position: THREE.Vector3): number {
   const target = new THREE.Vector3(DESKTOP_CAMERA.target.x, DESKTOP_CAMERA.target.y, DESKTOP_CAMERA.target.z);
   const distance = position.distanceTo(target);
   const forward = target.clone().sub(position).normalize();
@@ -119,13 +111,18 @@ export function cameraLayoutForViewport(width: number, height: number): Renderer
   const aspect = Math.max(0.1, width / Math.max(1, height));
   const narrowProgress = smoothstep((FIT_CAMERA_ASPECT - aspect) / (FIT_CAMERA_ASPECT - PORTRAIT_CAMERA_ASPECT));
   const fov = THREE.MathUtils.lerp(DESKTOP_CAMERA.fov, PORTRAIT_CAMERA_FOV, narrowProgress);
-  const fullFitScale = cameraDistanceScaleForFit(aspect, fov);
+  const basePosition = new THREE.Vector3(
+    THREE.MathUtils.lerp(DESKTOP_CAMERA.position.x, PORTRAIT_CAMERA_POSITION.x, narrowProgress),
+    THREE.MathUtils.lerp(DESKTOP_CAMERA.position.y, PORTRAIT_CAMERA_POSITION.y, narrowProgress),
+    THREE.MathUtils.lerp(DESKTOP_CAMERA.position.z, PORTRAIT_CAMERA_POSITION.z, narrowProgress)
+  );
+  const fullFitScale = cameraDistanceScaleForFit(aspect, fov, basePosition);
   return {
     fov,
     position: {
-      x: DESKTOP_CAMERA.target.x + (DESKTOP_CAMERA.position.x - DESKTOP_CAMERA.target.x) * fullFitScale,
-      y: DESKTOP_CAMERA.target.y + (DESKTOP_CAMERA.position.y - DESKTOP_CAMERA.target.y) * fullFitScale,
-      z: DESKTOP_CAMERA.target.z + (DESKTOP_CAMERA.position.z - DESKTOP_CAMERA.target.z) * fullFitScale
+      x: DESKTOP_CAMERA.target.x + (basePosition.x - DESKTOP_CAMERA.target.x) * fullFitScale,
+      y: DESKTOP_CAMERA.target.y + (basePosition.y - DESKTOP_CAMERA.target.y) * fullFitScale,
+      z: DESKTOP_CAMERA.target.z + (basePosition.z - DESKTOP_CAMERA.target.z) * fullFitScale
     },
     target: { ...DESKTOP_CAMERA.target }
   };
@@ -222,11 +219,22 @@ export function arenaFloorWorldLayout(): ArenaFloorWorld[] {
 }
 
 export function arenaBarrierVisualProfile(barrier: ArenaBarrierWorld): { baseHeight: number; screenHeight: number; primitive: typeof ARENA_BARRIER_SCREEN_PRIMITIVE } {
-  const baseHeight = Math.min(0.6, barrier.height);
+  const baseHeight = Math.min(0.36, barrier.height);
   return {
     baseHeight,
-    screenHeight: Math.max(0, barrier.height - baseHeight),
+    screenHeight: Math.max(0, Math.min(1.14, barrier.height - baseHeight)),
     primitive: ARENA_BARRIER_SCREEN_PRIMITIVE
+  };
+}
+
+export function robotVisualProfile(teamId: TeamId) {
+  const robot = TEAMS[teamId].robot;
+  return {
+    shape: robot.shape,
+    texture: robot.texture,
+    width: robot.width,
+    depth: robot.depth,
+    height: robot.height
   };
 }
 
@@ -360,7 +368,8 @@ export class BabbleLeague3DRenderer {
   private camera: THREE.PerspectiveCamera;
   private raycaster = new THREE.Raycaster();
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -TURF_Y);
-  private textCache = new Map<string, THREE.CanvasTexture>();
+  private textCache = new Map<string, THREE.Texture>();
+  private imageLoads = new Set<string>();
   private geoCache = new Map<string, THREE.BufferGeometry>();
   private matCache = new Map<string, THREE.Material>();
   private board = new THREE.Group();
@@ -379,14 +388,14 @@ export class BabbleLeague3DRenderer {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.lowPower = detectSoftwareWebGL();
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.lowPower, preserveDrawingBuffer: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.lowPower, preserveDrawingBuffer: true, alpha: true });
     this.renderer.shadowMap.enabled = !this.lowPower;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setPixelRatio(this.lowPower ? 0.5 : Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setClearColor(MAPS.stadium.theme.sky, 1);
+    this.renderer.setClearColor(MAPS.stadium.theme.sky, 0);
     this.scene.fog = new THREE.Fog(MAPS.stadium.theme.fog, 34, 70);
     this.camera = new THREE.PerspectiveCamera(42, 16 / 9, 0.1, 200);
-    this.camera.position.set(0, 16.2, 14.4);
+    this.camera.position.set(DESKTOP_CAMERA.position.x, DESKTOP_CAMERA.position.y, DESKTOP_CAMERA.position.z);
     this.camera.lookAt(0, 0.4, 0);
     this.scene.add(this.camera);
     this.scene.add(new THREE.HemisphereLight(PLANETBALL.white, PLANETBALL.cobalt, 1.9));
@@ -449,9 +458,9 @@ export class BabbleLeague3DRenderer {
       const w = fieldToWorld(babble.pos);
       const height = Number.isFinite(babble.height) ? babble.height : babbleRestHeight(babble.radius);
       const hop = Math.max(0, height - babbleRestHeight(babble.radius));
-      // Match addBabble's visible oversized-head centre exactly. Turf clicks are
-      // handled by the planar fallback; this path exists for clicking the model.
-      const projected = new THREE.Vector3(w.x, TURF_Y + 1.18 + hop, w.z).project(this.camera);
+      const player = Object.values(state.players).find(p => p.side === babble.side && p.controlledBabbleIds.includes(babble.id));
+      const robot = TEAMS[player?.team ?? state.sideTeams[babble.side] ?? 'pigs'].robot;
+      const projected = new THREE.Vector3(w.x, TURF_Y + robot.height * 0.55 + hop, w.z).project(this.camera);
       if (projected.z < -1 || projected.z > 1) continue;
       const sx = rect.left + (projected.x + 1) * rect.width / 2;
       const sy = rect.top + (1 - projected.y) * rect.height / 2;
@@ -512,6 +521,36 @@ export class BabbleLeague3DRenderer {
     if (!m) { m = make(); this.matCache.set(key, m); }
     return m;
   }
+  private imageTexture(url: string) {
+    const key = `image:${url}`;
+    const existing = this.textCache.get(key);
+    if (existing) return existing;
+    if (!this.imageLoads.has(key)) {
+      this.imageLoads.add(key);
+      new THREE.TextureLoader().load(url, texture => {
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = this.lowPower ? 1 : 4;
+        // Generated arena art is deliberately not constrained to power-of-two
+        // dimensions. Avoid driver-specific mipmap failures on mobile GPUs and
+        // SwiftShader, both of which otherwise present a black surface.
+        texture.generateMipmaps = false;
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.needsUpdate = true;
+        this.textCache.set(key, texture);
+        if (url.startsWith('/assets/maps/')) this.boardMapId = null;
+      }, undefined, () => this.imageLoads.delete(key));
+    }
+    return null;
+  }
+  private imageSprite(url: string) {
+    const texture = this.imageTexture(url);
+    if (!texture) return null;
+    const material = this.texturedMat(`imageSprite:${url}`, () => new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })) as THREE.SpriteMaterial;
+    const sprite = new THREE.Sprite(material);
+    sprite.renderOrder = 25;
+    return sprite;
+  }
   private clearGroup(group: THREE.Group) {
     const geometries = new Set<THREE.BufferGeometry>();
     const materials = new Set<THREE.Material>();
@@ -547,7 +586,7 @@ export class BabbleLeague3DRenderer {
     this.goalTint = { left: [], right: [] };
     this.goalLineTint = { left: [], right: [] };
     const theme = MAPS[mapId].theme;
-    this.renderer.setClearColor(theme.sky, 1);
+    this.renderer.setClearColor(theme.sky, 0);
     this.scene.fog = new THREE.Fog(theme.fog, mapId === 'moon' ? 42 : 34, mapId === 'volcano' ? 62 : 70);
     this.buildBoard(mapId);
     this.boardMapId = mapId;
@@ -559,17 +598,8 @@ export class BabbleLeague3DRenderer {
     const theme = map.theme;
     const fieldFloor = arenaFloorWorldLayout().find(floor => floor.id === 'field');
     if (!fieldFloor) throw new Error('Shared arena is missing its field floor');
-    // Flat two-tone broadcast deck outside the authoritative field surface.
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(theme.tableLeft, 0.85), -(FIELD_X / 4 + 2), -0.45, 0);
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X / 2 + 4, 0.7, FIELD_Z + 7), this.mat(theme.tableRight, 0.85), FIELD_X / 4 + 2, -0.45, 0);
-    // White plinth and hard-color tournament frame.
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 3, 0.76, FIELD_Z + 2.9), this.mat(theme.plinth, 0.7), 0, 0, 0, true);
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 1.4, 0.9, FIELD_Z + 1.2), this.mat(theme.frame, 0.55, { emissive: mapId === 'volcano' ? 0x3b1208 : 0 }), 0, 0.42, 0, true);
-    this.mesh(g, new THREE.BoxGeometry(FIELD_X + 0.5, 0.34, FIELD_Z + 0.3), this.mat(theme.frameDark, 0.5), 0, 0.9, 0, true);
-    // Rounded signal studs along the frame corners.
-    const stud = new THREE.SphereGeometry(0.22, this.lowPower ? 10 : 20, this.lowPower ? 6 : 12);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) this.mesh(g, stud, this.mat(theme.bumperCap, 0.35), sx * (FIELD_X / 2 + 0.55), 1.02, sz * (FIELD_Z / 2 + 0.55), true);
-    // Map-specific PlanetBall court slab; markings stay texture-only.
+    // Only the playable floor is modeled. The generated court art reaches the
+    // edge, and the narrow collision rim below replaces the former giant deck.
     this.mesh(
       g,
       this.geo('arenaFloorSlab:field', () => new THREE.BoxGeometry(fieldFloor.width, 0.24, fieldFloor.depth)),
@@ -578,7 +608,8 @@ export class BabbleLeague3DRenderer {
       0.82,
       fieldFloor.z
     );
-    const turfMat = this.texturedMat(`turfSurface:${mapId}`, () => new THREE.MeshStandardMaterial({ map: this.turfTexture(mapId), roughness: 0.88, metalness: 0.02, emissive: new THREE.Color(mapId === 'volcano' ? 0x180604 : 0x000000), emissiveIntensity: mapId === 'volcano' ? 0.25 : 0 }));
+    const fieldTexture = this.imageTexture(map.art.fieldTexture) ?? this.turfTexture(mapId);
+    const turfMat = this.texturedMat(`turfSurface:${mapId}:${fieldTexture === this.textCache.get(`image:${map.art.fieldTexture}`) ? 'art' : 'fallback'}`, () => new THREE.MeshStandardMaterial({ map: fieldTexture, roughness: 0.88, metalness: 0.02, emissive: new THREE.Color(mapId === 'volcano' ? 0x180604 : 0x000000), emissiveIntensity: mapId === 'volcano' ? 0.25 : 0 }));
     const turf = new THREE.Mesh(this.geo('arenaFloorTurf:field', () => new THREE.PlaneGeometry(fieldFloor.width, fieldFloor.depth)), turfMat);
     turf.rotation.x = -Math.PI / 2;
     turf.position.set(fieldFloor.x, TURF_Y, fieldFloor.z);
@@ -588,7 +619,6 @@ export class BabbleLeague3DRenderer {
     this.addGoal(-1, mapId); this.addGoal(1, mapId);
     // Every bumper remains aligned with the authoritative physics colliders.
     for (const w of mapBumperWorldPositions(mapId)) this.addBumper(w.x, w.z, mapId);
-    this.addTournamentExterior(mapId);
   }
 
   private addArenaBarriers(mapId: MapId) {
@@ -958,99 +988,118 @@ export class BabbleLeague3DRenderer {
 
   private addBabble(b: GameState['babbles'][number], state: GameState, you: string, selectedBabbleId?: string | null, targetable = false) {
     const player = Object.values(state.players).find(p => p.side === b.side && p.controlledBabbleIds.includes(b.id)) ?? Object.values(state.players).find(p => p.side === b.side);
-    const team = TEAMS[player?.team ?? 'pigs'];
+    const team = TEAMS[state.sideTeams[b.side] ?? player?.team ?? 'pigs'];
+    const robot = team.robot;
     const w = fieldToWorld(b.pos);
     const r = fieldRadiusToWorld(b.radius);
     const t = performance.now() / 1000 + hashId(b.id) * 7;
     const bobY = Math.sin(t * 3.1) * 0.05;
-    const wobble = Math.sin(t * 2.4) * 0.09;
-    // Ghosted babbles render translucent with a faint shadow and no cast shadow
+    const wobble = Math.sin(t * 2.4) * 0.025;
     const ghosted = babbleGhosted(b.effects, state.turn);
     const bmat = (color: number | string, roughness: number) =>
       ghosted ? this.mat(color, roughness, { transparent: true, opacity: GHOST_OPACITY }) : this.mat(color, roughness);
+    const surfaceTexture = ghosted ? null : this.imageTexture(robot.texture);
+    const chassisMat = surfaceTexture
+      ? this.texturedMat(`robotSurface:${robot.texture}`, () => new THREE.MeshStandardMaterial({
+          map: surfaceTexture,
+          color: new THREE.Color(team.primary).lerp(new THREE.Color(0xffffff), 0.2),
+          roughness: 0.42,
+          metalness: 0.5
+        }))
+      : bmat(team.primary, 0.38);
+    const trimMat = bmat(team.secondary, 0.32);
+    const darkMat = bmat(PLANETBALL.charcoal, 0.5);
+    const lightMat = bmat(PLANETBALL.white, 0.34);
     const solid = !ghosted;
     this.blobShadow(w.x, w.z, babbleContactShadowRadius(b.radius), ghosted ? 0.08 : 0.18);
 
     const physicsHop = Number.isFinite(b.height) ? Math.max(0, b.height - babbleRestHeight(b.radius)) : 0;
-    // Trampoline elevation is authoritative Rapier 3D state; ramp events only
-    // drive rings/sparks and never add a second render-only hop.
     const hop = physicsHop;
     const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
-    const sideCol = b.side === 'left' ? PLANETBALL.coral : PLANETBALL.cobalt;
     const base = babbleContactBaseMetrics(b.radius);
     const radialSegments = this.lowPower ? 16 : 30;
-    const sphereWidth = this.lowPower ? 18 : 32;
-    const sphereHeight = this.lowPower ? 12 : 20;
-    // Small solid contact skirt: its footprint matches the authoritative
-    // physics radius, while selection rings remain separate affordances.
-    this.mesh(grp, new THREE.CylinderGeometry(base.topRadius, base.radius, base.height, radialSegments), bmat(sideCol, 0.45), 0, TURF_Y + base.height / 2, 0, solid);
-    this.mesh(grp, new THREE.CylinderGeometry(r * 0.72, r * 0.78, 0.18, radialSegments), bmat(PLANETBALL.white, 0.4), 0, TURF_Y + 0.25, 0, solid);
-    // Compact broadcast kit. Babbles are intentionally armless: no limb mesh
-    // is added outside the torso/contact skirt silhouette.
-    const torso = this.mesh(grp, new THREE.SphereGeometry(r * 0.62, sphereWidth, sphereHeight), bmat(team.primary, 0.4), 0, TURF_Y + 0.6, 0, solid);
-    torso.scale.set(1, 1.15, 0.9);
-    const bib = this.mesh(grp, new THREE.SphereGeometry(r * 0.4, this.lowPower ? 14 : 22, this.lowPower ? 9 : 14), bmat(team.secondary, 0.45), 0, TURF_Y + 0.56, r * 0.32, solid);
-    bib.scale.set(0.86, 0.92, 0.55);
-    if (!this.lowPower) {
-      const kitStripe = this.mesh(grp, this.geo('planetBallKitStripe', () => new THREE.BoxGeometry(1, 1, 1)), bmat(PLANETBALL.white, 0.38), 0, TURF_Y + 0.58, r * 0.62);
-      kitStripe.scale.set(r * 0.76, 0.055, 0.055);
+    const mobilePresentationScale = this.canvas.clientWidth <= 720 ? 1.18 : 1;
+    const scale = r / fieldRadiusToWorld(FIELD.babbleRadius) * mobilePresentationScale;
+    const width = robot.width * scale;
+    const depth = robot.depth * scale;
+    const height = robot.height * scale;
+    this.mesh(grp, new THREE.CylinderGeometry(base.topRadius, base.radius, base.height, radialSegments), darkMat, 0, TURF_Y + base.height / 2, 0, solid);
+    const driveRing = this.mesh(grp, new THREE.TorusGeometry(r * 0.77, r * 0.09, 8, radialSegments), trimMat, 0, TURF_Y + base.height + 0.03, 0, solid);
+    driveRing.rotation.x = Math.PI / 2;
+
+    const chassis = new THREE.Group();
+    chassis.position.set(0, 0, 0);
+    chassis.rotation.z = wobble;
+    grp.add(chassis);
+    const bodyY = TURF_Y + base.height + height / 2 + bobY;
+    const frontZ = depth * 0.48;
+
+    if (robot.shape === 'orb') {
+      const body = this.mesh(chassis, new THREE.SphereGeometry(1, this.lowPower ? 18 : 36, this.lowPower ? 12 : 24), chassisMat, 0, bodyY, 0, solid);
+      body.scale.set(width / 2, height / 2, depth / 2);
+      const gyro = this.mesh(chassis, new THREE.TorusGeometry(1, 0.08, 8, this.lowPower ? 24 : 48), bmat(team.primary, 0.3), 0, bodyY, 0, solid);
+      gyro.scale.set(width * 0.56, height * 0.46, depth * 0.56);
+      gyro.rotation.x = Math.PI / 2;
+      const visor = this.mesh(chassis, new THREE.SphereGeometry(1, 18, 12), darkMat, 0, bodyY + height * 0.09, frontZ, solid);
+      visor.scale.set(width * 0.3, height * 0.13, depth * 0.08);
+    } else if (robot.shape === 'block') {
+      const body = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1, 3, 3, 3), chassisMat, 0, bodyY, 0, solid);
+      body.scale.set(width, height * 0.78, depth);
+      const crown = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), bmat(team.primary, 0.3), 0, bodyY + height * 0.43, 0, solid);
+      crown.scale.set(width * 0.78, height * 0.16, depth * 0.84);
+      for (const side of [-1, 1]) {
+        const shoulder = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), bmat(team.primary, 0.34), side * width * 0.5, bodyY, 0, solid);
+        shoulder.scale.set(width * 0.16, height * 0.46, depth * 0.78);
+      }
+      const visor = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), lightMat, 0, bodyY + height * 0.13, frontZ, solid);
+      visor.scale.set(width * 0.55, height * 0.13, depth * 0.08);
+    } else if (robot.shape === 'wedge') {
+      const body = this.mesh(chassis, new THREE.CylinderGeometry(1, 1, 1, 3), chassisMat, 0, bodyY, 0, solid);
+      body.scale.set(width * 0.58, height, depth * 0.58);
+      body.rotation.y = b.side === 'left' ? -Math.PI / 2 : Math.PI / 2;
+      const spine = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), trimMat, 0, bodyY + height * 0.2, 0, solid);
+      spine.scale.set(width * 0.13, height * 0.62, depth * 0.86);
+      const visor = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), darkMat, 0, bodyY + height * 0.08, frontZ * 0.9, solid);
+      visor.scale.set(width * 0.38, height * 0.12, depth * 0.08);
+    } else {
+      const ring = this.mesh(chassis, new THREE.TorusGeometry(0.5, 0.15, this.lowPower ? 8 : 14, this.lowPower ? 24 : 48), chassisMat, 0, bodyY + height * 0.08, 0, solid);
+      ring.scale.set(width, height * 0.78, depth);
+      const core = this.mesh(chassis, new THREE.SphereGeometry(1, 20, 14), trimMat, 0, bodyY + height * 0.08, depth * 0.04, solid);
+      core.scale.set(width * 0.2, height * 0.18, depth * 0.24);
+      for (let i = 0; i < 3; i++) {
+        const a = -Math.PI / 2 + i * Math.PI * 2 / 3;
+        const foot = this.mesh(chassis, new THREE.CylinderGeometry(0.12, 0.17, height * 0.38, 10), darkMat, Math.cos(a) * width * 0.37, TURF_Y + base.height + height * 0.18, Math.sin(a) * depth * 0.37, solid);
+        foot.rotation.z = Math.cos(a) * 0.16;
+      }
     }
 
-    // Oversized anime head. Its center is the existing picking contract.
-    const head = new THREE.Group(); head.position.set(0, TURF_Y + 1.18 + bobY, 0); head.rotation.z = wobble; head.rotation.x = wobble * 0.5; grp.add(head);
-    const skinTones = [0xffd9c2, 0xf2b58d, 0xc98262, 0x8c5545] as const;
-    const skin = skinTones[Math.min(skinTones.length - 1, Math.floor(hashId(b.id) * skinTones.length))];
-    const skull = this.mesh(head, new THREE.SphereGeometry(r * 0.98, this.lowPower ? 22 : 40, this.lowPower ? 14 : 26), bmat(skin, 0.42), 0, 0, 0, solid);
-    skull.scale.set(1, 1.08, 0.96);
-    const hair = this.mesh(head, new THREE.SphereGeometry(r, this.lowPower ? 18 : 30, this.lowPower ? 10 : 18), bmat(team.primary, 0.38), 0, r * 0.38, -r * 0.04, solid);
-    hair.scale.set(1.02, 0.64, 0.98);
-    if (!this.lowPower) {
-      for (const s of [-1, 0, 1]) {
-        const spike = this.mesh(head, this.geo('planetBallHairSpike', () => new THREE.ConeGeometry(1, 1, 8)), bmat(team.primary, 0.38), s * r * 0.28, r * 0.37 - Math.abs(s) * r * 0.05, r * 0.79, solid);
-        spike.scale.set(r * 0.13, r * (s === 0 ? 0.42 : 0.31), r * 0.12);
-        spike.rotation.z = s * 0.3;
-      }
-    }
-    // Ears, wide anime eyes, brows, nose, and a small determined smile.
-    for (const s of [-1, 1]) {
-      if (!this.lowPower) this.mesh(head, new THREE.SphereGeometry(r * 0.18, 16, 10), bmat(skin, 0.44), s * r * 0.9, 0, 0, solid);
-      const eye = this.mesh(head, new THREE.SphereGeometry(r * 0.2, this.lowPower ? 12 : 18, this.lowPower ? 8 : 12), bmat(PLANETBALL.white, 0.25), s * r * 0.34, r * 0.13, r * 0.79);
-      eye.castShadow = false;
-      this.mesh(head, new THREE.SphereGeometry(r * 0.11, this.lowPower ? 8 : 12, this.lowPower ? 6 : 8), bmat(this.lowPower ? PLANETBALL.charcoal : team.secondary, 0.28), s * r * 0.34, r * 0.12, r * 0.94);
-      if (!this.lowPower) {
-        this.mesh(head, new THREE.SphereGeometry(r * 0.055, 8, 6), bmat(PLANETBALL.charcoal, 0.3), s * r * 0.34, r * 0.12, r * 1.025);
-        const brow = this.mesh(head, this.geo('planetBallBrow', () => new THREE.BoxGeometry(1, 1, 1)), bmat(PLANETBALL.charcoal, 0.5), s * r * 0.34, r * 0.41, r * 0.88);
-        brow.scale.set(r * 0.32, r * 0.055, r * 0.055);
-        brow.rotation.z = -s * 0.1;
-      }
-    }
-    if (!this.lowPower) {
-      this.mesh(head, new THREE.SphereGeometry(r * 0.075, 10, 7), bmat(0xe59a79, 0.46), 0, -r * 0.03, r * 0.98);
-      const smile = this.mesh(head, this.geo('planetBallSmile', () => new THREE.TorusGeometry(1, 0.12, 6, 18, Math.PI)), bmat(PLANETBALL.charcoal, 0.46), 0, -r * 0.3, r * 0.91);
-      smile.scale.setScalar(r * 0.15);
-      smile.rotation.z = Math.PI;
-    }
-    // ghost aura: pulsing translucent shell + floating GHOSTED tag
     if (ghosted) {
       const shell = new THREE.Mesh(this.geo('ghostShell', () => new THREE.SphereGeometry(1, 24, 16)),
         new THREE.MeshBasicMaterial({ color: 0xd8b4fe, transparent: true, opacity: 0.16 + Math.sin(t * 3.4) * 0.06, depthWrite: false }));
-      shell.position.set(0, TURF_Y + 1.05, 0);
-      shell.scale.set(r * 1.55, r * 2.15 + Math.sin(t * 3.4) * 0.05, r * 1.55);
+      shell.position.set(0, bodyY, 0);
+      shell.scale.set(width * 0.75, height * 0.68 + Math.sin(t * 3.4) * 0.05, depth * 0.75);
       grp.add(shell);
       const halo = new THREE.Mesh(this.geo('ghostHalo', () => new THREE.TorusGeometry(1, 0.05, 8, 48)),
         new THREE.MeshBasicMaterial({ color: 0xd8b4fe, transparent: true, opacity: 0.55 + Math.sin(t * 3.4) * 0.2 }));
       halo.position.set(w.x, TURF_Y + 0.06, w.z); halo.rotation.x = Math.PI / 2; halo.scale.setScalar(babbleIndicatorRingRadius(b.radius, 'ghost')); this.dynamic.add(halo);
       const tag = this.text('👻 GHOSTED', 24, '#e9d5ff');
-      tag.position.set(w.x, TURF_Y + 2.65 + bobY, w.z);
+      tag.position.set(w.x, TURF_Y + height + 0.75 + hop + bobY, w.z);
       this.dynamic.add(tag);
     }
-
-    // team emoji badge on the chest (hidden while ghosted so the see-through body reads clearly)
-    if (!ghosted) {
-      const badge = this.text(team.emoji, 44);
-      badge.scale.setScalar(0.9);
-      badge.position.set(w.x, TURF_Y + 0.66, w.z + r * 0.66);
-      this.dynamic.add(badge);
+    if (player) {
+      const nameTag = this.text(player.name, 20, '#fffdf5');
+      nameTag.position.set(w.x, TURF_Y + height + 0.62 + hop + bobY, w.z);
+      nameTag.scale.set(2.6, 0.82, 1);
+      nameTag.renderOrder = 24;
+      this.dynamic.add(nameTag);
+      if (player.avatarUrl) {
+        const avatar = this.imageSprite(player.avatarUrl);
+        if (avatar) {
+          avatar.scale.set(0.62, 0.62, 1);
+          avatar.position.set(w.x - 1.02, TURF_Y + height + 0.62 + hop + bobY, w.z);
+          this.dynamic.add(avatar);
+        }
+      }
     }
     // control ring for your babbles
     if (state.players[you]?.controlledBabbleIds.includes(b.id)) {
@@ -1076,7 +1125,7 @@ export class BabbleLeague3DRenderer {
         new THREE.MeshBasicMaterial({ color: PLANETBALL.aqua, transparent: true, opacity: 0.9 }));
       sel.position.set(w.x, TURF_Y + 0.07, w.z); sel.rotation.x = Math.PI / 2; sel.scale.setScalar(babbleIndicatorRingRadius(b.radius, 'target') + (pulse - 1.8) * 0.12); this.dynamic.add(sel);
       const label = this.text('TARGET', 26, '#2cc7c1');
-      label.position.set(w.x, TURF_Y + 2.6 + bobY, w.z);
+      label.position.set(w.x, TURF_Y + height + 0.42 + hop + bobY, w.z);
       this.dynamic.add(label);
     }
   }
@@ -1434,17 +1483,20 @@ export class BabbleLeague3DRenderer {
     for (const intent of Object.values(state.pendingIntents)) {
       if (intent.babbleId === skipBabbleId) continue;
       const babble = state.babbles.find(b => b.id === intent.babbleId);
-      if (!babble || babble.side !== mySide) continue;
-      this.drawLaunchArrow(babble.pos, intent.aimAngle, Math.min(1, intent.impulse / 900), 0.72);
+      if (!babble) continue;
+      const revealedOpponent = babble.side !== mySide;
+      this.drawLaunchArrow(babble.pos, intent.aimAngle, Math.min(1, intent.impulse / 900), revealedOpponent ? 0.88 : 0.72, revealedOpponent);
     }
   }
 
   // chunky launch arrow (shaft + head + trajectory dots + power ring)
-  private drawLaunchArrow(origin: Vec, angle: number, power: number, opacity: number) {
+  private drawLaunchArrow(origin: Vec, angle: number, power: number, opacity: number, revealedOpponent = false) {
     const dir = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
     const o = toV3(origin, TURF_Y + 0.14);
     const len = 1.1 + power * 3.4;
-    const color = new THREE.Color().lerpColors(new THREE.Color(PLANETBALL.signal), new THREE.Color(PLANETBALL.coral), power);
+    const color = revealedOpponent
+      ? new THREE.Color(PLANETBALL.aqua)
+      : new THREE.Color().lerpColors(new THREE.Color(PLANETBALL.signal), new THREE.Color(PLANETBALL.coral), power);
     const basic = (op: number) => new THREE.MeshBasicMaterial({ color, transparent: op < 1, opacity: op });
 
     const shaftLen = len * 0.72;

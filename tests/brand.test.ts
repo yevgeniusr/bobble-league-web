@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TEAMS } from '../shared/types';
+import { TEAM_IDS, TEAMS } from '../shared/types';
 import { UNICUP_BRAND } from '../client/src/brand';
 import { contrastRatio, readableTextColor } from '../client/src/color';
 
@@ -32,6 +32,25 @@ describe('Unicup brand contract', () => {
   it('uses accessible text over every team color', () => {
     for (const team of Object.values(TEAMS)) {
       expect(contrastRatio(team.primary, readableTextColor(team.primary)), team.label).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('defines four distinct textured robot teams with bounded gameplay traits', () => {
+    expect(TEAM_IDS).toHaveLength(4);
+    expect(new Set(Object.values(TEAMS).map(team => team.label)).size).toBe(4);
+    expect(new Set(Object.values(TEAMS).map(team => team.crest)).size).toBe(4);
+    expect(new Set(Object.values(TEAMS).map(team => team.robot.shape)).size).toBe(4);
+    expect(new Set(Object.values(TEAMS).map(team => team.robot.texture)).size).toBe(4);
+    for (const team of Object.values(TEAMS)) {
+      expect(team.crest).toMatch(/^\/assets\/teams\/.+-robot\.webp$/);
+      expect(team.robot.texture).toMatch(/^\/assets\/robots\/.+-surface\.jpg$/);
+      expect(team.robot.density).toBeGreaterThanOrEqual(0.85);
+      expect(team.robot.density).toBeLessThanOrEqual(1.2);
+      expect(team.robot.restitution).toBeGreaterThanOrEqual(0.88);
+      expect(team.robot.restitution).toBeLessThanOrEqual(1.12);
+      expect(team.robot.trait.length).toBeGreaterThan(20);
+      expect(team.lore.length).toBeGreaterThan(30);
+      expect('emoji' in team).toBe(false);
     }
   });
 });

@@ -1,25 +1,27 @@
 # Unicup Web
 
-A production-oriented, web-based multiplayer Universe Cup played by handless bobbleheads on PlanetBall. It uses an authoritative Node/Socket.IO server, a React/Vite canvas client, deterministic shared game rules, multiple teams, first-to-1/3/5 game modes, and mystery box power-ups.
+A production-oriented, web-based multiplayer Universe Cup played by handless bobbleheads. It uses an authoritative Node/Socket.IO server, a React/Vite canvas client, deterministic shared game rules, four lore teams and maps, first-to-1/3/5 game modes, and mystery box power-ups.
 
-> This implementation recreates the requested mechanics with original code, UI, and vector/emoji-rendered teams. It does not copy proprietary assets.
+> This implementation uses original code, UI, lore, and generated visual assets. It does not copy proprietary assets.
 
 ## Features
 
 - Real-time multiplayer rooms with shareable room codes.
 - Authoritative server simulation at 30 ticks/sec.
-- Pre-start map selection: Unicap Qualifier, Moon Base, Coral Foundry, Saturn,
-  or one of three Ball Office calibration arenas. The selected
-  map is included in snapshots and locks after kickoff until reset/new room.
-- Teams: Signal Stingers, Coral Flyers, Cobalt Bruisers, Aqua Circuit, Pink
-  Pilots, Whitehorn United, Meteor Eleven, Polar Caps, Broadcast Birds, and
-  Stripe Squad.
+- Pre-start map selection: PlanetBall, Moon, Coral Foundry, or Saturn. Each map
+  has distinct generated field/surroundings art and gravity derived from the
+  proven Original physics baseline.
+- Four lore teams with custom crests: PlanetBall Pioneers, Saturn Ringkeepers,
+  Lunar Relay, and Coral Forge Union.
+- A configurable 1-60 second round clock (20 seconds by default), synchronized
+  against timestamps from the authoritative server.
+- Lobby rosters, avatars, player labels, and pre-kickoff side switching.
 - Match modes: first to 1, 3, or 5 goals.
 - Goals are deep, roofless physical pockets: goalies can enter from the open mouth, and scoring occurs as soon as the ball centre crosses the front gate line.
 - Unicup soccer mechanics: drag-launch, bounce, score goals.
 - Box spawning: every second kickoff turn creates one random top/bottom lane box.
 - Power Play boxes: Beach Ball, Move Ball, Swap Goals, Big Bumpers, Boost,
-  Sticky Goo, Ramp, Block, Big Head, Ghosted, and Move Player.
+  Sticky Goo, Ramp, Block, Big Head, Ghosted, Move Player, and Read the Play.
 - Responsive web UI and Docker/Coolify-ready deployment.
 
 ## Physics engine
@@ -44,11 +46,10 @@ no Rapier WASM ships in the client bundle.
 Map config lives in `shared/types.ts` (`MAPS`, `MAP_IDS`, `MapId`) so client,
 server, tests, and scripts share one registry.
 
-- `stadium`: PlanetBall's Unicap Qualifier with the classic four corner bumpers.
+- `stadium`: PlanetBall with the classic four corner bumpers.
 - `moon`: a low-orbit relay with crater bumpers and floatier physics.
 - `volcano`: the Coral Foundry, with offset bumpers and faster hazard bounces.
 - `saturn`: a heavy orbital final with ring markings and dense collisions.
-- `original*`: three Ball Office calibration profiles retained for physics comparison.
 
 Players can choose the map while creating a room or from the in-room settings
 menu while the room is still in `lobby`. The server rejects `room:map` after
@@ -73,7 +74,7 @@ BABBLE_IMPULSE_SCALE=1.0 BABBLE_BALL_DENSITY=0.86 npm run smoke
 BABBLE_BUMPER_PLANAR_DELTA_SPEED=450 npm run render-check
 ```
 
-Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano|saturn|original|originalGlide|originalBounce`:
+Smoke and bot scripts accept `BABBLE_MAP=stadium|moon|volcano|saturn`:
 
 ```bash
 BABBLE_MAP=moon npm run smoke
@@ -96,8 +97,9 @@ Common knobs:
 
 ## Controls
 
-- Move: `WASD` or arrow keys
-- Kick/Dash: `Space`
+- Aim and launch: drag a controlled babblehead backward, then release.
+- Commit early: use the bottom-right End Turn control.
+- Power Plays: use the bottom-left ability control and choose a target when required.
 
 ## Development
 
@@ -201,10 +203,10 @@ These emit real socket events; every successful grant publicly announces
 
 Generated art lives in `public/assets` (served at `/assets/...`):
 
-- `/assets/abilities/<boxType>.png` — ability icons (`boost.png`, `ghosted.png`,
-  …, plus `mysteryBox.png` and `ability-spritesheet.png`). The bottom action
-  bar uses these for Power Play buttons and falls back to emoji/procedural
-  icons if an image is missing.
+- `/assets/abilities/<boxType>.png` - ability icons, including `readPlay.png`.
+- `/assets/teams/*.webp` - the four team crests.
+- `/assets/maps/*-field.jpg` and `*-surroundings.jpg` - map-specific court
+  textures and arena backdrops.
 - `/assets/sprites/ball-texture.png`, `goal-gates.png`, `field-props.png` —
   texture/reference sheets for the renderer.
 - `/assets/models/*.obj` — placeholder meshes for future 3D models.

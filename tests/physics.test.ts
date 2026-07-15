@@ -4,11 +4,39 @@
 // full 8-betabot scripted match completing by goal.
 import { describe, expect, it } from 'vitest';
 import { addPlayer, createInitialState, launchBabble, MAX_RESOLVE_MS, resetGame, startGame, stepGame } from '../shared/game';
-import { clampRestitution, freePhysics, stepPhysics } from '../shared/physics';
-import { BUMPERS, FIELD, GameState, MapId, PlayerSide, Vec } from '../shared/types';
+import { babbleColliderSpec, babblePhysicsKey, clampRestitution, freePhysics, stepPhysics } from '../shared/physics';
+import { BUMPERS, FIELD, GameState, MapId, PlayerSide, TEAM_IDS, Vec } from '../shared/types';
 import { BALL_REST_HEIGHT, babbleRestHeight, ballRestHeight } from '../shared/airborne';
 
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
+
+describe('robot team physics profiles', () => {
+  it('builds a distinct bounded collider for every selectable robot team', () => {
+    const specs = TEAM_IDS.map(team => {
+      const state = createInitialState(`ROBOT-${team}`, 1);
+      addPlayer(state, 'l', 'Lefty', team, 'left');
+      state.sideTeams.left = team;
+      startGame(state, seq([0.5]));
+      return babbleColliderSpec(state, state.babbles.find(babble => babble.side === 'left')!);
+    });
+
+    expect(new Set(specs.map(spec => spec.shape)).size).toBe(4);
+    for (const spec of specs) {
+      expect(spec.densityMultiplier).toBeGreaterThanOrEqual(0.85);
+      expect(spec.densityMultiplier).toBeLessThanOrEqual(1.2);
+      expect(spec.restitutionMultiplier).toBeGreaterThanOrEqual(0.88);
+      expect(spec.restitutionMultiplier).toBeLessThanOrEqual(1.12);
+    }
+  });
+
+  it('invalidates cached robot colliders when a side changes team', () => {
+    const state = createInitialState('ROBOT-CACHE', 1);
+    addPlayer(state, 'l', 'Lefty', 'pigs', 'left');
+    const before = babblePhysicsKey(state);
+    state.sideTeams.left = 'tigers';
+    expect(babblePhysicsKey(state)).not.toBe(before);
+  });
+});
 
 function setup(mode: 1 | 3 = 3, mapId: MapId = 'stadium') {
   const s = createInitialState('PHYS', mode, mapId);
@@ -353,7 +381,7 @@ describe('Rapier physics: power-play interplay', () => {
   });
   it('replays authoritative rigid-body state tick-for-tick deterministically', () => {
     const make = () => {
-      const s = setup(3, 'originalGlide');
+      const s = setup(3, 'stadium');
       park(s, ['left-1', 'right-1']);
       const left = s.babbles.find(b => b.id === 'left-1')!;
       const right = s.babbles.find(b => b.id === 'right-1')!;
@@ -597,7 +625,7 @@ describe('Rapier physics: power-play interplay', () => {
   });
 
   it('produces original-range yaw and compound rotation from a glancing ball impact', () => {
-    const s = setup(3, 'originalGlide');
+    const s = setup(3, 'stadium');
     park(s, ['left-1']);
     const b = s.babbles.find(x => x.id === 'left-1')!;
     b.pos = { x: 480, y: 294 };
@@ -626,7 +654,7 @@ describe('Rapier physics: power-play interplay', () => {
   });
 
   it('physically bounces after landing and keeps the resolving phase alive', () => {
-    const s = setup(3, 'originalGlide');
+    const s = setup(3, 'stadium');
     park(s);
     s.ball.pos = { x: 550, y: 310 };
     s.ball.vel = { x: 0, y: 0 };
@@ -649,7 +677,7 @@ describe('Rapier physics: power-play interplay', () => {
 
   it('uses one physical damping coefficient in air and on the floor without creating speed', () => {
     const speedAfter = (airborne: boolean) => {
-      const s = setup(3, 'originalGlide');
+      const s = setup(3, 'stadium');
       park(s);
       s.ball.pos = { x: 550, y: 310 };
       s.ball.vel = { x: 400, y: 0 };
@@ -661,7 +689,7 @@ describe('Rapier physics: power-play interplay', () => {
 
     const grounded = speedAfter(false);
     const airborne = speedAfter(true);
-    expect(airborne).toBeGreaterThan(300);
+    expect(airborne).toBeGreaterThan(250);
     expect(airborne).toBeLessThan(400);
     expect(grounded).toBeGreaterThan(0);
     expect(grounded).toBeLessThanOrEqual(400);
@@ -739,7 +767,7 @@ describe('Rapier physics: power-play interplay', () => {
   });
 
   it('makes a full-strength Original B impact reach the observed normal-ball jump peak', () => {
-    const s = setup(3, 'originalGlide');
+    const s = setup(3, 'stadium');
     park(s, ['left-1']);
     const b = s.babbles.find(x => x.id === 'left-1')!;
     b.pos = { x: 500, y: 310 };

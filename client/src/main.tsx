@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
 import { ClerkProvider, Show, SignInButton, SignUpButton, UserButton, useAuth, useUser } from '@clerk/react';
-import { BOX_TYPE_IDS, BOX_TYPES, BoxType, BoxTypeInput, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATIONS, GameMode, GameState, InventoryItem, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec, normalizeBoxType } from '../../shared/types';
+import { BOX_TYPE_IDS, BOX_TYPES, BoxType, BoxTypeInput, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATION_LAYOUTS, FORMATIONS, FormationId, GameMode, GameState, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec, normalizeBoxType } from '../../shared/types';
 import { initXtremepush, trackAnalyticsEvent, xtremepushCommand } from './analytics';
 import { AudioSettings, audioManager, loadAudioSettings, saveAudioSettings } from './audio';
 import { UNICUP_BRAND } from './brand';
@@ -10,6 +10,7 @@ import { readableTextColor } from './color';
 import { buildMatchEndSummary } from './matchEnd';
 import { authHeaders, ClerkTokenGetter, fetchUnicupIdentity, UnicupIdentity } from './auth';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
+import { heldPowerPlayForPlayer } from './gameUiModel';
 import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -20,10 +21,7 @@ const MAP_SELECT_HINTS: Record<MapId, string> = {
   stadium: 'classic',
   moon: 'low gravity',
   volcano: 'lava',
-  saturn: 'heavy rings',
-  original: 'original A · tight',
-  originalGlide: 'original B · empirical',
-  originalBounce: 'original C · glide'
+  saturn: 'heavy rings'
 };
 
 // Developer console API (no cheat UI ships in the app). Available in dev
@@ -52,13 +50,14 @@ if (devtoolsEnabled) {
 
 type AppAuth = { isLoaded: boolean; userId: string | null; getToken: ClerkTokenGetter };
 
-function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountControls: React.ReactNode; suggestedName?: string }) {
+function App({ auth, accountControls, suggestedName, playerAvatarUrl }: { auth: AppAuth; accountControls: React.ReactNode; suggestedName?: string; playerAvatarUrl?: string }) {
   const [state, setState] = React.useState<GameState | null>(null);
   const [you, setYou] = React.useState('');
   // 'bobble:name' is the legacy pre-rename localStorage key, read only for migration; new writes use 'babble:name'.
   const [name, setName] = React.useState(() => localStorage.getItem('babble:name') || localStorage.getItem('bobble:name') || `Player${Math.floor(Math.random()*99)}`);
   const [mode, setMode] = React.useState<GameMode>(3);
   const [mapId, setMapId] = React.useState<MapId>('stadium');
+  const [roundTimeSeconds, setRoundTimeSeconds] = React.useState(20);
   const [roomCode, setRoomCode] = React.useState('');
   const [error, setError] = React.useState('');
   const [conn, setConn] = React.useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
@@ -81,7 +80,7 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
       setConn('connected');
       const s = stateRef.current;
       if (s?.roomCode) {
-        socket.emit('room:join', { roomCode: s.roomCode, name: nameRef.current }, res => {
+        socket.emit('room:join', { roomCode: s.roomCode, name: nameRef.current, avatarUrl: playerAvatarUrl }, res => {
           if (!res.ok) { setState(null); setYou(''); setError(`Reconnect failed: ${res.error}`); }
         });
       }
@@ -89,7 +88,7 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     return () => { socket.off('game:state'); socket.off('room:error'); socket.off('analytics:event', trackAnalyticsEvent); socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); };
-  }, []);
+  }, [playerAvatarUrl]);
 
   React.useEffect(() => {
     if (!auth.isLoaded) return;
@@ -152,13 +151,13 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
     if (!identity || !socket.connected) return setError('Player identity is still connecting.');
     leavingRef.current = false;
     localStorage.setItem('babble:name', name);
-    socket.emit('room:create', { name, mode, mapId }, res => res.ok ? (setRoomCode(res.roomCode), setError('')) : setError(res.error));
+    socket.emit('room:create', { name, avatarUrl: playerAvatarUrl, mode, mapId, roundTimeSeconds }, res => res.ok ? (setRoomCode(res.roomCode), setError('')) : setError(res.error));
   }
   function joinRoom() {
     if (!identity || !socket.connected) return setError('Player identity is still connecting.');
     leavingRef.current = false;
     localStorage.setItem('babble:name', name);
-    socket.emit('room:join', { roomCode: roomCode.toUpperCase(), name }, res => res.ok ? (setError(''), setRoomCode(res.roomCode)) : setError(res.error));
+    socket.emit('room:join', { roomCode: roomCode.toUpperCase(), name, avatarUrl: playerAvatarUrl }, res => res.ok ? (setError(''), setRoomCode(res.roomCode)) : setError(res.error));
   }
 
   const entryReady = identity !== null && conn === 'connected';
@@ -171,6 +170,8 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
       setMode={setMode}
       mapId={mapId}
       setMapId={setMapId}
+      roundTimeSeconds={roundTimeSeconds}
+      setRoundTimeSeconds={setRoundTimeSeconds}
       roomCode={roomCode}
       setRoomCode={setRoomCode}
       audioSettings={audioSettings}
@@ -183,7 +184,7 @@ function App({ auth, accountControls, suggestedName }: { auth: AppAuth; accountC
       ready={entryReady}
       getToken={auth.getToken}
     />}
-    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ leavingRef.current = true; socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
+    {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} roundTimeSeconds={roundTimeSeconds} setRoundTimeSeconds={setRoundTimeSeconds} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ leavingRef.current = true; socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
   </main>;
 }
@@ -195,6 +196,8 @@ type LandingPageProps = {
   setMode: (mode: GameMode) => void;
   mapId: MapId;
   setMapId: (mapId: MapId) => void;
+  roundTimeSeconds: number;
+  setRoundTimeSeconds: (seconds: number) => void;
   roomCode: string;
   setRoomCode: React.Dispatch<React.SetStateAction<string>>;
   audioSettings: AudioSettings;
@@ -208,7 +211,7 @@ type LandingPageProps = {
   getToken: ClerkTokenGetter;
 };
 
-function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error, accountControls, identity, ready, getToken }: LandingPageProps) {
+function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeSeconds, setRoundTimeSeconds, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error, accountControls, identity, ready, getToken }: LandingPageProps) {
   const [deskView, setDeskView] = React.useState<'host' | 'join'>('host');
   const hostTabRef = React.useRef<HTMLButtonElement>(null);
   const joinTabRef = React.useRef<HTMLButtonElement>(null);
@@ -284,6 +287,9 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roomCode, 
             <select className="mapSelect" value={mapId} onChange={e=>setMapId(e.target.value as MapId)}>
               {MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].label} / {MAP_SELECT_HINTS[id]}</option>)}
             </select>
+          </label>
+          <label className="deskField roundTimeField">Round time <span>{roundTimeSeconds}s</span>
+            <input type="range" min="1" max="60" step="1" value={roundTimeSeconds} onChange={e=>setRoundTimeSeconds(Number(e.target.value))}/>
           </label>
           <button type="button" className="primary deskSubmit" onClick={onCreateRoom} disabled={!ready}>Create room <span aria-hidden="true">&#8594;</span></button>
         </div> : <div id="desk-panel-join" className="deskPanel" role="tabpanel" aria-labelledby="desk-tab-join">
@@ -434,7 +440,7 @@ function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: Cle
 const POWER_ICONS: Record<BoxType, string> = {
   beachBall: '🏖', moveBall: '🎯', swapGoals: '🔄', bigBumpers: '💥', boost: '⚡',
   stickyGoo: '🟢', ramp: '⛰️', block: '🧱', bigHead: '🗣️', ghosted: '👻', movePlayer: '🚚',
-  yellowCard: '🟨', redCard: '🟥'
+  yellowCard: '🟨', redCard: '🟥', readPlay: '◉'
 };
 
 // Ability icon: generated art from public/assets/abilities with an emoji
@@ -466,7 +472,7 @@ function AudioControls({ settings, onChange }: { settings: AudioSettings; onChan
   </div>;
 }
 
-function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings, onAudioChange, error, onDismissError, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; audioSettings: AudioSettings; onAudioChange: (patch: Partial<AudioSettings>)=>void; error: string; onDismissError: ()=>void; onLeave: ()=>void }) {
+function GameScreen({ state, you, mode, setMode, mapId, setMapId, roundTimeSeconds, setRoundTimeSeconds, audioSettings, onAudioChange, error, onDismissError, onLeave }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; roundTimeSeconds: number; setRoundTimeSeconds: (seconds: number)=>void; audioSettings: AudioSettings; onAudioChange: (patch: Partial<AudioSettings>)=>void; error: string; onDismissError: ()=>void; onLeave: ()=>void }) {
   const [placing, setPlacing] = React.useState<PlacingGhost | null>(null);
   const [aiming, setAiming] = React.useState<AbilityAim | null>(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -508,10 +514,10 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings,
 
   const matchFinished = state.phase === 'finished';
 
-  return <section className="gameShell">
+  return <section className="gameShell" style={{ backgroundImage: `url(${MAPS[state.mapId].art.surroundings})` }}>
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
-    {!matchFinished && <TopHud state={state} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>}
-    {!matchFinished && menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} audioSettings={audioSettings} onAudioChange={onAudioChange} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
+    {!matchFinished && <TopHud state={state} you={you} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>}
+    {!matchFinished && menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} roundTimeSeconds={roundTimeSeconds} setRoundTimeSeconds={setRoundTimeSeconds} audioSettings={audioSettings} onAudioChange={onAudioChange} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
     {!matchFinished && <BottomActionBar state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>}
     {matchFinished && <MatchEndOverlay state={state} onPlayAgain={()=>socket.emit('game:start')} onBackToLobby={()=>socket.emit('game:reset', state.mode)} onLeave={onLeave}/>}
     {burst && <CelebrationOverlay key={`${burst.kind}-${burst.nonce}`} kind={burst.kind} side={burst.side} state={state}/>}
@@ -519,13 +525,33 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, audioSettings,
   </section>;
 }
 
-function TeamScorePill({ state, side }: { state: GameState; side: PlayerSide }) {
+function PlayerAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string }) {
+  return avatarUrl
+    ? <img className="playerAvatar" src={avatarUrl} alt="" referrerPolicy="no-referrer"/>
+    : <span className="playerAvatar fallback" aria-hidden="true">{name.trim().slice(0, 1).toUpperCase() || '?'}</span>;
+}
+
+function TeamRoster({ state, side, you }: { state: GameState; side: PlayerSide; you: string }) {
   const team = TEAMS[state.sideTeams[side]];
-  return <div className={`scorePill ${side}`} style={{ borderColor: team.primary }}>
-    <span className="pillTeam" style={{ background: team.primary, color: readableTextColor(team.primary) }}>{team.emoji}</span>
-    <b>{side === 'left' ? 'Left' : 'Right'}</b>
-    <span className="pillScore">{state.score[side]}</span>
-  </div>;
+  const players = Object.values(state.players).filter(player => player.connected && player.side === side);
+  return <section className={`teamRoster ${side}`} style={{ '--team': team.primary } as React.CSSProperties} aria-label={`${team.label} roster`}>
+    <div className="rosterIdentity">
+      <img src={team.crest} alt=""/>
+      <span><b>{team.shortLabel}</b><small>{players.length}/4 players</small></span>
+      <strong>{state.score[side]}</strong>
+    </div>
+    <div className="rosterPlayers">
+      {Array.from({ length: 4 }, (_, index) => {
+        const player = players[index];
+        return player
+          ? <div key={player.id} className={`rosterPlayer ${player.id === you ? 'you' : ''}`}>
+              <PlayerAvatar name={player.name} avatarUrl={player.avatarUrl}/>
+              <span><b>{player.name}</b><small>{player.controlledBabbleIds.length} babble{player.controlledBabbleIds.length === 1 ? '' : 's'}</small></span>
+            </div>
+          : <div key={`open-${index}`} className="rosterPlayer open"><span className="playerAvatar fallback">+</span><span><b>Open slot</b><small>Waiting</small></span></div>;
+      })}
+    </div>
+  </section>;
 }
 
 function MatchEndOverlay({ state, onPlayAgain, onBackToLobby, onLeave }: { state: GameState; onPlayAgain: ()=>void; onBackToLobby: ()=>void; onLeave: ()=>void }) {
@@ -568,26 +594,25 @@ function CelebrationOverlay({ kind, side, state }: { kind: 'goal'; side: PlayerS
 // Compact top HUD: score pills flanking the live match status. The status
 // string keeps the exact "turn X/Y · phase · Ns · aimed n/m" format that the
 // smoke checks and match tooling parse.
-function TopHud({ state, menuOpen, onToggleMenu }: { state: GameState; menuOpen: boolean; onToggleMenu: ()=>void }) {
-  const secs = Math.max(0, Math.ceil((state.turnDeadlineAt - Date.now()) / 1000));
+function TopHud({ state, you, menuOpen, onToggleMenu }: { state: GameState; you: string; menuOpen: boolean; onToggleMenu: ()=>void }) {
+  const secs = Math.max(0, Math.ceil((state.turnDeadlineAt - (state.serverNowAt ?? Date.now())) / 1000));
   return <header className="topHud">
-    <TeamScorePill state={state} side="left"/>
+    <TeamRoster state={state} side="left" you={you}/>
     <div className="matchStatus">
-      <b>{MAPS[state.mapId].shortLabel} · {state.config.length} · first to {state.config.goalTarget}</b>
+      <b className="matchMap">{MAPS[state.mapId].shortLabel} · first to {state.config.goalTarget}</b>
       <span className="timerBadge" aria-label={`${secs} seconds remaining`}><strong>{secs}</strong><em>sec</em></span>
+      <span className="turnCounter">Turn {state.turn}<b>/{state.config.maxTurns}</b></span>
       <small>turn {state.turn}/{state.config.maxTurns} · {state.phase} · {secs}s · aimed {Object.keys(state.pendingIntents).length}/{state.babbles.length}</small>
+      <span className="roomInline">Room <b>{state.roomCode}</b></span>
     </div>
-    <div className="topRight">
-      <TeamScorePill state={state} side="right"/>
-      <div className="roomChip"><span className="roomCodeLabel">Room</span><b className="roomCodeValue">{state.roomCode}</b></div>
-      <button type="button" className={menuOpen ? 'menuToggle selected' : 'menuToggle'} aria-label="Match settings" title="Room, teams & match settings" onClick={onToggleMenu}>⚙</button>
-    </div>
+    <TeamRoster state={state} side="right" you={you}/>
+    <button type="button" className={menuOpen ? 'menuToggle selected' : 'menuToggle'} aria-label="Match settings" title="Room, teams and match settings" onClick={onToggleMenu}>⚙</button>
   </header>;
 }
 
 // Everything app-like (room sharing, players/teams, match admin) lives behind
 // the ⚙ menu so the live match screen stays board-first.
-function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, audioSettings, onAudioChange, onLeave, onClose }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; audioSettings: AudioSettings; onAudioChange: (patch: Partial<AudioSettings>)=>void; onLeave: ()=>void; onClose: ()=>void }) {
+function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, roundTimeSeconds, setRoundTimeSeconds, audioSettings, onAudioChange, onLeave, onClose }: { state: GameState; you: string; mode: GameMode; setMode: (m: GameMode)=>void; mapId: MapId; setMapId: (m: MapId)=>void; roundTimeSeconds: number; setRoundTimeSeconds: (seconds: number)=>void; audioSettings: AudioSettings; onAudioChange: (patch: Partial<AudioSettings>)=>void; onLeave: ()=>void; onClose: ()=>void }) {
   const [copied, setCopied] = React.useState<'code' | 'invite' | null>(null);
   const copy = (text: string, kind: 'code' | 'invite') => {
     navigator.clipboard?.writeText(text).then(() => { setCopied(kind); setTimeout(() => setCopied(null), 1600); }).catch(() => {});
@@ -613,13 +638,15 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, audioSetting
         const inv = state.powerPlayInventories[side] ?? [];
         const boxCount = state.powerPlayCounts?.[side] ?? inv.length;
         return <div key={side} className="sidePreview" style={{ borderColor: team.primary }}>
-          <div className="sideHeader"><span>{side.toUpperCase()}</span>{boxCount > 0 && <span className="boxBadge" title={mine ? 'Boxes held by your team' : 'Opponents hold hidden boxes'}>📦×{boxCount}</span>}<strong>{team.emoji} {team.label}</strong></div>
-          {mine && <div className="miniMascots">{TEAM_IDS.map(id => <button key={id} type="button" className={state.sideTeams[side]===id?'selected':''} aria-label={TEAMS[id].label} title={TEAMS[id].label} style={{ background: TEAMS[id].primary, color: readableTextColor(TEAMS[id].primary) }} onClick={()=>socket.emit('player:team', id)}>{TEAMS[id].emoji}</button>)}</div>}
+          <div className="sideHeader"><span>{side.toUpperCase()}</span>{boxCount > 0 && <span className="boxBadge" title={mine ? 'Boxes held by your team' : 'Opponents hold hidden boxes'}>Box ×{boxCount}</span>}<strong><img src={team.crest} alt=""/><span>{team.label}</span></strong></div>
+          <small className="teamTrait">{team.robot.shape} chassis · {team.robot.trait}</small>
+          {mine && state.phase === 'lobby' && <div className="miniMascots">{TEAM_IDS.map(id => <button key={id} type="button" className={state.sideTeams[side]===id?'selected':''} aria-label={TEAMS[id].label} title={TEAMS[id].label} style={{ background: TEAMS[id].primary }} onClick={()=>socket.emit('player:team', id)}><img src={TEAMS[id].crest} alt=""/></button>)}</div>}
           <div className="playerPreview">{players.length ? players.map(p => {
             // teammates see exactly who holds which box; opponents get nothing (server redacts)
             const held = mine ? inv.find(i => i.holderId === p.id) : undefined;
-            return <span key={p.id} className={p.id===you?'you':''}>{p.name}{p.id===you?' (you)':''}{held ? ` 📦 ${BOX_TYPES[held.type].label}` : ''}</span>;
+            return <span key={p.id} className={p.id===you?'you':''}><PlayerAvatar name={p.name} avatarUrl={p.avatarUrl}/>{p.name}{p.id===you?' (you)':''}{held ? ` · ${BOX_TYPES[held.type].label}` : ''}</span>;
           }) : <span>Waiting…</span>}</div>
+          {state.phase === 'lobby' && <button type="button" className={mine ? 'sideChoice selected' : 'sideChoice'} disabled={mine} onClick={()=>socket.emit('player:side', side)}>{mine ? 'Your side' : `Join ${side}`}</button>}
         </div>; })}
     </section>
     <section className="menuSection">
@@ -633,6 +660,9 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, audioSetting
         </select>
       </label>
       {state.phase !== 'lobby' && <small className="menuNote">{MAPS[state.mapId].label} is locked until reset.</small>}
+      <label>Round time <span>{state.config.roundTimeSeconds}s</span>
+        <input type="range" min="1" max="60" step="1" value={state.phase === 'lobby' ? roundTimeSeconds : state.config.roundTimeSeconds} disabled={state.phase !== 'lobby'} onChange={e => { const next = Number(e.target.value); setRoundTimeSeconds(next); socket.emit('room:roundTime', next); }}/>
+      </label>
       <div className="menuActions">
         <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select>
         <button type="button" onClick={()=>socket.emit('game:start')}>{state.phase === 'lobby' ? 'Start match' : 'Restart kickoff'}</button>
@@ -643,15 +673,35 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, audioSetting
   </aside>;
 }
 
-// Bottom action bar: your chip on the left, ability buttons in the middle,
-// one contextual hint / cancel on the right. No match admin, no long copy.
+function FormationGlyph({ formation }: { formation: FormationId }) {
+  return <svg className="formationGlyph" viewBox="0 0 48 30" aria-hidden="true">
+    <rect x="1" y="1" width="46" height="28" rx="2"/>
+    <path d="M24 1v28M1 15h46"/>
+    {FORMATION_LAYOUTS[formation].map((point, index) => <circle key={index} cx={4 + point.x / FIELD.width * 40} cy={3 + point.y / FIELD.height * 24} r="2.4"/>)}
+  </svg>;
+}
+
+function FormationDock({ state, me }: { state: GameState; me: GameState['players'][string] }) {
+  const kickoffSelection = state.phase === 'planning' && state.formationSelectionTurn === state.turn;
+  if (!me || (state.phase !== 'lobby' && !kickoffSelection)) return null;
+  const selected = state.formations[me.side];
+  return <div className="formationDock" aria-label="Team formation">
+    <div className="formationFocus" aria-live="polite">
+      <FormationGlyph formation={selected}/>
+      <b>{FORMATIONS[selected].label}</b>
+    </div>
+    {FORMATION_IDS.map(id => <button key={id} type="button" className={state.formations[me.side] === id ? 'selected' : ''} aria-label={FORMATIONS[id].label} title={`${FORMATIONS[id].label}: ${FORMATIONS[id].description}`} onClick={() => socket.emit('player:formation', id)}>
+      <FormationGlyph formation={id}/>
+      <span>{FORMATIONS[id].label}</span>
+    </button>)}
+  </div>;
+}
+
 function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }: { state: GameState; you: string; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void; aiming: AbilityAim | null; setAiming: (a: AbilityAim | null)=>void }) {
   const me = state.players[you];
-  const inventory = me ? state.powerPlayInventories[me.side] : [];
+  const held = heldPowerPlayForPlayer(state, you);
   const oppSide: PlayerSide = me?.side === 'left' ? 'right' : 'left';
   const oppCount = state.powerPlayCounts?.[oppSide] ?? 0;
-  const myTeam = me ? TEAMS[me.team] : null;
-  const formationOpen = me && (state.phase === 'lobby' || state.formationSelectionTurn === state.turn);
   const readyTotal = Object.values(state.players).filter(p => p.connected).length;
   const readyCount = state.readyPlayerIds.filter(id => state.players[id]?.connected).length;
   const ready = Boolean(me && state.readyPlayerIds.includes(me.id));
@@ -663,36 +713,21 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
     setPlacing(null);
     setAiming(aiming?.type === type ? null : { type, mode: m });
   };
-  return <footer className="actionBar">
-    {formationOpen && <div className="formationRow">{FORMATION_IDS.map(id=><button key={id} type="button" className={state.formations[me!.side]===id?'selected':''} onClick={()=>socket.emit('player:formation', id)} title={FORMATIONS[id].description}>{FORMATIONS[id].label}</button>)}</div>}
-    <div className="actionBarRow">
-      <div className="barLeft">
-        {me && myTeam
-          ? <span className="youChip" style={{ background: myTeam.primary, color: readableTextColor(myTeam.primary) }}>{myTeam.emoji} {me.name}</span>
-          : <span className="youChip spectator">Spectating</span>}
-        {oppCount > 0 && <span className="oppChip" title={`Opponents hold ${oppCount} hidden box${oppCount === 1 ? '' : 'es'}`}>📦×{oppCount}</span>}
-      </div>
-      <div className="barCenter inventory">
-        {state.phase === 'lobby' && <button type="button" className="primary" onClick={()=>socket.emit('game:start')}>Start match</button>}
-        {me && state.phase !== 'lobby' && (inventory.length ? inventory.map((item: InventoryItem, i: number) => {
-          const holder = item.holderId ? state.players[item.holderId] : undefined;
-          const mine = !item.holderId || item.holderId === you;
-          const locked = item.availableTurn > state.turn;
-          const active = (aiming?.type === item.type || placing?.type === item.type) && mine;
-          return <button key={`${item.type}-${i}`} type="button" className={active ? 'abilityBtn selected' : 'abilityBtn'} disabled={locked || !mine || state.phase !== 'planning'} title={mine ? BOX_TYPES[item.type].description : `Held by teammate ${holder?.name ?? '?'} — only they can use it.`} onClick={()=>onAbility(item.type as BoxType)}>
-            <AbilityIcon type={item.type as BoxType}/>
-            <span>{BOX_TYPES[item.type].label}{locked ? ` (turn ${item.availableTurn})` : ''}</span>
-          </button>;
-        }) : <small className="noPlays">No Power Plays — grab a ? box</small>)}
-      </div>
-      <div className="barRight">
-        {me && state.phase === 'planning' && <button type="button" className={ready ? 'readyBtn selected' : 'readyBtn'} disabled={ready} title="Vote to finish planning now. Changing your aim or using a Power Play clears your vote." onClick={()=>{ audioManager.play('ready'); socket.emit('player:ready'); }}>
-          {ready ? 'Ready' : 'Finish Turn'} {readyCount}/{readyTotal}
-        </button>}
-        {aiming && <><small>{POWER_ICONS[aiming.type]} Targeting {BOX_TYPES[aiming.type].label} · {aiming.mode === 'babble' ? 'click a babblehead' : 'click a field spot'} · Esc cancels</small><button type="button" onClick={()=>setAiming(null)}>Cancel</button></>}
-        {placing && <><small>{POWER_ICONS[placing.type as BoxType]} Placing {BOX_TYPES[placing.type as BoxType].label} · drag to aim · R rotates · Esc cancels</small><button type="button" onClick={()=>setPlacing(null)}>Cancel</button></>}
-        {!me && !placing && !aiming && state.phase === 'planning' && <small className="controlsHint">Hold a babblehead & drag back to aim, release to launch</small>}
-      </div>
+  return <footer className="actionControls">
+    <FormationDock state={state} me={me}/>
+    <div className="abilityCluster">
+      <button type="button" className={`abilityTrigger ${held ? 'held' : 'empty'} ${(held && (aiming?.type === held.type || placing?.type === held.type)) ? 'selected' : ''}`} disabled={!held || held.locked || state.phase !== 'planning'} aria-label={held ? `Use ${BOX_TYPES[held.type].label}` : 'No Power Play held'} title={held ? `${BOX_TYPES[held.type].label}: ${BOX_TYPES[held.type].description}` : 'Pick up a box to hold one Power Play'} onClick={() => held && onAbility(held.type)}>
+        {held ? <AbilityIcon type={held.type}/> : <img src="/assets/abilities/mysteryBox.png" alt=""/>}
+        {held?.locked && <span>{held.availableTurn}</span>}
+      </button>
+      {oppCount > 0 && <span className="oppChip" title={`Opponents hold ${oppCount} hidden box${oppCount === 1 ? '' : 'es'}`}>? ×{oppCount}</span>}
+      {(aiming || placing) && <button type="button" className="cancelAbility" onClick={()=>{ setAiming(null); setPlacing(null); }} aria-label="Cancel Power Play" title="Cancel Power Play">×</button>}
+    </div>
+    <div className="turnCluster">
+      {state.phase === 'lobby' && <button type="button" className="startMatchBtn" onClick={()=>socket.emit('game:start')}>Start match</button>}
+      {me && state.phase === 'planning' && <button type="button" className={ready ? 'readyBtn selected' : 'readyBtn'} disabled={ready} title="Finish planning when everyone is ready" onClick={()=>{ audioManager.play('ready'); socket.emit('player:ready'); }}>
+        <span>{ready ? 'Ready' : 'End turn'}</span><small>{readyCount}/{readyTotal}</small>
+      </button>}
     </div>
   </footer>;
 }
@@ -893,7 +928,7 @@ function ClerkConnectedApp() {
   const { isLoaded, userId, getToken } = useAuth();
   const { user } = useUser();
   const suggestedName = user?.username ?? user?.firstName ?? undefined;
-  return <App auth={{ isLoaded, userId: userId ?? null, getToken }} accountControls={<ClerkAccountControls/>} suggestedName={suggestedName}/>;
+  return <App auth={{ isLoaded, userId: userId ?? null, getToken }} accountControls={<ClerkAccountControls/>} suggestedName={suggestedName} playerAvatarUrl={user?.imageUrl}/>;
 }
 
 function AuthRoot() {
