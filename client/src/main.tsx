@@ -575,7 +575,7 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, roundTimeSecon
   const blindnessTurn = yourSide ? state.blindnessUntilTurn?.[yourSide] : null;
   const blinded = blindnessTurn !== null && blindnessTurn !== undefined && blindnessTurn >= state.turn;
 
-  return <section className="gameShell" style={{ backgroundImage: `url(${MAPS[state.mapId].art.surroundings})` }}>
+  return <section className={`gameShell ${blinded ? 'blinded' : ''}`} style={{ backgroundImage: `url(${MAPS[state.mapId].art.surroundings})` }}>
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming} blinded={blinded}/>
     {!matchFinished && <TopHud state={state} you={you} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>}
     {!matchFinished && menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} roundTimeSeconds={roundTimeSeconds} setRoundTimeSeconds={setRoundTimeSeconds} audioSettings={audioSettings} onAudioChange={onAudioChange} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}

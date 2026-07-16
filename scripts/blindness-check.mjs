@@ -26,7 +26,7 @@ try {
   await waitForHealth();
   browser = await chromium.launch({ headless: true, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
   const hostContext = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-  const guestContext = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const guestContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const host = await hostContext.newPage();
   const guest = await guestContext.newPage();
   const errors = [];
@@ -67,14 +67,18 @@ try {
   const visionPathCount = await visionPaths.count();
   if (await guest.locator('.panel.error').count()) await guest.locator('.panel.error').click({ force: true });
 
-  const from = await visionPaths.first().evaluate(path => {
+  const candidates = await visionPaths.evaluateAll(paths => paths.map(path => {
     const numbers = (path.getAttribute('d')?.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
     const points = Array.from({ length: numbers.length / 2 }, (_, index) => ({ x: numbers[index * 2], y: numbers[index * 2 + 1] }));
-    return {
+    const center = {
       x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
       y: points.reduce((sum, point) => sum + point.y, 0) / points.length
     };
-  });
+    const element = document.elementFromPoint(center.x, center.y);
+    return { ...center, hit: typeof element?.className === 'string' ? element.className : element?.tagName ?? '' };
+  }));
+  const from = candidates.find(candidate => candidate.hit.includes('threeField'));
+  if (!from) throw new Error(`No blinded robot remained directly controllable on mobile: ${JSON.stringify(candidates)}`);
   const to = { x: from.x - 70, y: from.y + 45 };
   const aimedBefore = Number((await guest.locator('.matchStatus small').innerText()).match(/aimed (\d+)\//)?.[1] ?? -1);
   await guest.mouse.move(from.x, from.y);

@@ -3024,6 +3024,12 @@ main {
   pointer-events: none;
 }
 
+.blindnessVeil * { pointer-events: none; }
+
+.gameShell.blinded .formationFocus { display: none; }
+.gameShell.blinded .formationDock { pointer-events: none; }
+.gameShell.blinded .formationDock button { pointer-events: auto; }
+
 .blindnessWarning {
   position: absolute;
   top: 126px;
