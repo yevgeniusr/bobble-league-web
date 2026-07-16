@@ -11,7 +11,7 @@ import { buildMatchEndSummary } from './matchEnd';
 import { authHeaders, ClerkTokenGetter, fetchUnicupIdentity, UnicupIdentity } from './auth';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import { heldPowerPlayForPlayer } from './gameUiModel';
-import { CountrySelector, RoundTimeControl, TournamentArchive } from './landingArchive';
+import { CountrySelector, RoundTimeControl, TournamentArchive, visibleRoundTimeSeconds } from './landingArchive';
 import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -693,7 +693,7 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, roundTimeSec
         </select>
       </label>
       {state.phase !== 'lobby' && <small className="menuNote">{MAPS[state.mapId].label} is locked until reset.</small>}
-      <label>Round time <span>{state.config.roundTimeSeconds}s</span>
+      <label>Round time <span>{visibleRoundTimeSeconds(state.phase, roundTimeSeconds, state.config.roundTimeSeconds)}s</span>
         <RoundTimeControl value={state.phase === 'lobby' ? roundTimeSeconds : state.config.roundTimeSeconds} disabled={state.phase !== 'lobby'} onChange={next => { setRoundTimeSeconds(next); socket.emit('room:roundTime', next); }}/>
       </label>
       <div className="menuActions">

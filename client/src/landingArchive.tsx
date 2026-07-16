@@ -1,9 +1,13 @@
 import React from 'react';
-import { BOX_TYPE_IDS, BOX_TYPES, BoxType, MAP_IDS, MAPS, RobotShape, TEAM_IDS, TEAMS } from '../../shared/types';
+import { BOX_TYPE_IDS, BOX_TYPES, BoxType, GameState, MAP_IDS, MAPS, RobotShape, TEAM_IDS, TEAMS } from '../../shared/types';
 import { COUNTRIES } from '../../shared/countries';
 import { authHeaders, ClerkTokenGetter } from './auth';
 
 export const ROUND_TIME_MILESTONES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60] as const;
+
+export function visibleRoundTimeSeconds(phase: GameState['phase'], localValue: number, serverValue: number) {
+  return phase === 'lobby' ? localValue : serverValue;
+}
 
 export function RoundTimeControl({ value, onChange, disabled = false }: { value: number; onChange: (value: number) => void; disabled?: boolean }) {
   const progress = (value - 2) / 58 * 100;

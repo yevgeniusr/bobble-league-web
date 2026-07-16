@@ -68,6 +68,10 @@ try {
   if (visibleRosters !== 2) throw new Error(`expected both mobile team rosters, received ${visibleRosters}`);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.locator('button.menuToggle').click();
+  const settingsRoundTime = page.locator('.settingsMenu input[aria-label="Round time"]');
+  await settingsRoundTime.fill('42');
+  const settingsRoundLabel = await page.locator('.settingsMenu label').filter({ hasText: 'Round time' }).locator(':scope > span').first().textContent();
+  if (settingsRoundLabel !== '42s') throw new Error(`round-time label lagged behind slider: ${settingsRoundLabel}`);
   const menu = page.getByRole('button', { name: 'Main menu' });
   await menu.waitFor({ state: 'visible' });
   await menu.click();

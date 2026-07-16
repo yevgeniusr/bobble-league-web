@@ -8,6 +8,7 @@ describe('round time controls', () => {
     const module = await import('../client/src/landingArchive') as typeof import('../client/src/landingArchive') & {
       ROUND_TIME_MILESTONES?: readonly number[];
       RoundTimeControl?: React.ComponentType<{ value: number; onChange: (value: number) => void; disabled?: boolean }>;
+      visibleRoundTimeSeconds?: (phase: 'lobby' | 'planning', localValue: number, serverValue: number) => number;
     };
     expect(module.ROUND_TIME_MILESTONES).toEqual([5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]);
     expect(module.RoundTimeControl).toBeTypeOf('function');
@@ -18,6 +19,9 @@ describe('round time controls', () => {
     expect(slider?.getAttribute('max')).toBe('60');
     expect(slider?.getAttribute('step')).toBe('1');
     expect(document.querySelectorAll('.roundTimeMilestone')).toHaveLength(12);
+    expect(module.visibleRoundTimeSeconds).toBeTypeOf('function');
+    expect(module.visibleRoundTimeSeconds!('lobby', 42, 43)).toBe(42);
+    expect(module.visibleRoundTimeSeconds!('planning', 42, 43)).toBe(43);
   });
 });
 
