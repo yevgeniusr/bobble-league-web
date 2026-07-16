@@ -122,7 +122,7 @@ export const BOX_TYPES = {
   yellowCard: { label: 'Yellow Card', targetId: 'yellowcard', color: '#facc15', category: 'instant', durationTurns: 0, description: 'Stop play around the ball and return it immediately to the exact center of the field.' },
   redCard: { label: 'Red Card', targetId: 'redcard', color: '#ef4444', category: 'babble', durationTurns: 0, description: 'Choose any robot and teleport it to midfield with all of its current momentum removed.' },
   readPlay: { label: 'Read the Play', targetId: 'readplay', color: '#6ee7f5', category: 'instant', durationTurns: 1, description: 'Reveal the opposing team\'s committed launch paths for the remainder of the current turn.' },
-  blindness: { label: 'Blindness', targetId: 'blindness', color: '#11131a', category: 'instant', durationTurns: 1, description: 'Black out the opposing team\'s match view until the current turn ends; a warning explains the effect.' }
+  blindness: { label: 'Blindness', targetId: 'blindness', color: '#11131a', category: 'instant', durationTurns: 1, description: 'Limit the opposing team\'s vision to one meter around each robot until the current turn ends.' }
 } as const;
 export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];

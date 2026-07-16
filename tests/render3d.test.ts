@@ -19,6 +19,17 @@ function projectedEnvelope(width: number, height: number): THREE.Vector3[] {
 }
 
 describe('3D renderer coordinate mapping', () => {
+  it('builds a one-meter visibility boundary around blinded robots', async () => {
+    const module = await import('../client/src/render3d') as typeof import('../client/src/render3d') & {
+      blindnessVisionBoundary?: (center: { x: number; y: number }, radius?: number, segments?: number) => Array<{ x: number; y: number }>;
+    };
+    expect(module.blindnessVisionBoundary).toBeTypeOf('function');
+    const center = { x: 320, y: 240 };
+    const points = module.blindnessVisionBoundary!(center);
+    expect(points).toHaveLength(24);
+    for (const point of points) expect(Math.hypot(point.x - center.x, point.y - center.y)).toBeCloseTo(50, 5);
+  });
+
   it('shrinks long world-space labels before they reach the canvas edges', async () => {
     const module = await import('../client/src/render3d') as typeof import('../client/src/render3d') & {
       fitCanvasTextFontSize?: (requestedPx: number, measuredWidth: number, maxWidth?: number) => number;

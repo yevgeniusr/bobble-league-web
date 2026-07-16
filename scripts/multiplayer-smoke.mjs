@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import fs from 'node:fs';
 import { waitPlayerIdentity } from './browser-smoke-helpers.mjs';
 
 const url = process.env.BABBLE_URL || 'http://127.0.0.1:3117';
@@ -19,7 +20,7 @@ async function waitRoomCode(page) {
 async function waitMatchPhase(page) {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
-    const text = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+    const text = await page.evaluate(() => document.body?.textContent || '').catch(() => '');
     if (/planning|resolving|finished/.test(text)) return text;
     await page.waitForTimeout(250);
   }
@@ -27,7 +28,7 @@ async function waitMatchPhase(page) {
 }
 try {
   const hostContext = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
-  const guestContext = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+  const guestContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   host = await hostContext.newPage();
   const guest = await guestContext.newPage();
   for (const page of [host, guest]) {
@@ -46,11 +47,15 @@ try {
   const roomCode = await waitRoomCode(host);
   if (!/^[A-Z0-9]{4,8}$/.test(roomCode)) throw new Error(`Invalid displayed room code: ${roomCode}`);
 
-  await guest.goto(url, { waitUntil: 'domcontentloaded' });
+  await guest.goto(`${url}/?invite=${roomCode}`, { waitUntil: 'domcontentloaded' });
   await waitPlayerIdentity(guest);
-  await guest.getByRole('tab', { name: 'Join room' }).click();
-  await guest.locator('input.codeInput').fill(roomCode);
-  await guest.getByRole('button', { name: /^join room/i }).click();
+  const inviteDialog = guest.getByRole('dialog', { name: 'Join room?' });
+  await inviteDialog.waitFor({ state: 'visible', timeout: 10000 });
+  if (await guest.locator('input.codeInput').inputValue() !== roomCode) throw new Error('Invite link did not prefill the room code');
+  if (await guest.getByRole('tab', { name: 'Join room' }).getAttribute('aria-selected') !== 'true') throw new Error('Invite link did not select the Join room tab');
+  fs.mkdirSync('output/playwright', { recursive: true });
+  await guest.screenshot({ path: 'output/playwright/unicup-invite-mobile.png' });
+  await inviteDialog.getByRole('button', { name: 'Join game' }).click();
   const guestCode = await waitRoomCode(guest);
   if (guestCode !== roomCode) throw new Error(`Guest joined ${guestCode}, expected ${roomCode}`);
 

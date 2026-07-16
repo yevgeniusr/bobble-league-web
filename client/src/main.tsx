@@ -11,7 +11,7 @@ import { buildMatchEndSummary } from './matchEnd';
 import { authHeaders, ClerkTokenGetter, fetchUnicupIdentity, UnicupIdentity } from './auth';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import { heldPowerPlayForPlayer } from './gameUiModel';
-import { CountrySelector, RoundTimeControl, TournamentArchive, visibleRoundTimeSeconds } from './landingArchive';
+import { buildInviteUrl, CountrySelector, parseInviteCode, RoundTimeControl, TournamentArchive, visibleRoundTimeSeconds } from './landingArchive';
 import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -45,6 +45,7 @@ const MAP_SELECT_HINTS: Record<MapId, string> = {
 type AppAuth = { isLoaded: boolean; userId: string | null; getToken: ClerkTokenGetter };
 
 function App({ auth, accountControls, suggestedName, playerAvatarUrl }: { auth: AppAuth; accountControls: React.ReactNode; suggestedName?: string; playerAvatarUrl?: string }) {
+  const [pendingInviteCode, setPendingInviteCode] = React.useState<string | null>(() => parseInviteCode(location.href));
   const [state, setState] = React.useState<GameState | null>(null);
   const [you, setYou] = React.useState('');
   // 'bobble:name' is the legacy pre-rename localStorage key, read only for migration; new writes use 'babble:name'.
@@ -52,7 +53,7 @@ function App({ auth, accountControls, suggestedName, playerAvatarUrl }: { auth: 
   const [mode, setMode] = React.useState<GameMode>(3);
   const [mapId, setMapId] = React.useState<MapId>('stadium');
   const [roundTimeSeconds, setRoundTimeSeconds] = React.useState(20);
-  const [roomCode, setRoomCode] = React.useState('');
+  const [roomCode, setRoomCode] = React.useState(() => parseInviteCode(location.href) ?? '');
   const [error, setError] = React.useState('');
   const [conn, setConn] = React.useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
   const [identity, setIdentity] = React.useState<UnicupIdentity | null>(null);
@@ -155,6 +156,18 @@ function App({ auth, accountControls, suggestedName, playerAvatarUrl }: { auth: 
     socket.emit('room:join', { roomCode: roomCode.toUpperCase(), name, avatarUrl: playerAvatarUrl }, res => res.ok ? (setError(''), setRoomCode(res.roomCode)) : setError(res.error));
   }
 
+  function clearInvitePrompt() {
+    setPendingInviteCode(null);
+    const url = new URL(location.href);
+    url.searchParams.delete('invite');
+    history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  function acceptInvite() {
+    clearInvitePrompt();
+    joinRoom();
+  }
+
   const entryReady = identity !== null && conn === 'connected';
 
   return <main>
@@ -180,6 +193,7 @@ function App({ auth, accountControls, suggestedName, playerAvatarUrl }: { auth: 
       getToken={auth.getToken}
       onIdentityRefresh={()=>setIdentityVersion(value=>value + 1)}
     />}
+    {!state && pendingInviteCode && <InvitePrompt roomCode={pendingInviteCode} ready={entryReady} onJoin={acceptInvite} onDismiss={clearInvitePrompt}/>}
     {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} roundTimeSeconds={roundTimeSeconds} setRoundTimeSeconds={setRoundTimeSeconds} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ leavingRef.current = true; socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
   </main>;
@@ -209,7 +223,7 @@ type LandingPageProps = {
 };
 
 function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeSeconds, setRoundTimeSeconds, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error, accountControls, identity, ready, getToken, onIdentityRefresh }: LandingPageProps) {
-  const [deskView, setDeskView] = React.useState<'host' | 'join'>('host');
+  const [deskView, setDeskView] = React.useState<'host' | 'join'>(() => roomCode ? 'join' : 'host');
   const hostTabRef = React.useRef<HTMLButtonElement>(null);
   const joinTabRef = React.useRef<HTMLButtonElement>(null);
   const onDeskTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -349,6 +363,21 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeS
     </section>
 
     <footer className="landingFooter"><img src={UNICUP_BRAND.art.logo} alt="Unicup"/><span>Universe Cup transmission / PlanetBall season 01</span><a href="#top">Back to orbit &#8593;</a></footer>
+  </div>;
+}
+
+function InvitePrompt({ roomCode, ready, onJoin, onDismiss }: { roomCode: string; ready: boolean; onJoin: () => void; onDismiss: () => void }) {
+  return <div className="invitePromptLayer">
+    <section className="invitePrompt" role="dialog" aria-modal="true" aria-labelledby="invitePromptTitle">
+      <span className="invitePromptKicker">Incoming match invite</span>
+      <h2 id="invitePromptTitle">Join room?</h2>
+      <strong className="invitePromptCode">{roomCode}</strong>
+      <p>An invite code was detected in this link.</p>
+      <div className="invitePromptActions">
+        <button type="button" onClick={onDismiss}>Not now</button>
+        <button type="button" className="primary" onClick={onJoin} disabled={!ready}>{ready ? 'Join game' : 'Connecting...'}</button>
+      </div>
+    </section>
   </div>;
 }
 
@@ -547,14 +576,13 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, roundTimeSecon
   const blinded = blindnessTurn !== null && blindnessTurn !== undefined && blindnessTurn >= state.turn;
 
   return <section className="gameShell" style={{ backgroundImage: `url(${MAPS[state.mapId].art.surroundings})` }}>
-    <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
+    <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming} blinded={blinded}/>
     {!matchFinished && <TopHud state={state} you={you} menuOpen={menuOpen} onToggleMenu={()=>setMenuOpen(v=>!v)}/>}
     {!matchFinished && menuOpen && <SettingsMenu state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} roundTimeSeconds={roundTimeSeconds} setRoundTimeSeconds={setRoundTimeSeconds} audioSettings={audioSettings} onAudioChange={onAudioChange} onLeave={onLeave} onClose={()=>setMenuOpen(false)}/>}
     {!matchFinished && <BottomActionBar state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>}
     {matchFinished && <MatchEndOverlay state={state} onPlayAgain={()=>socket.emit('game:start')} onBackToLobby={()=>socket.emit('game:reset', state.mode)} onLeave={onLeave}/>}
     {burst && <CelebrationOverlay key={`${burst.kind}-${burst.nonce}`} kind={burst.kind} side={burst.side} state={state}/>}
     {error && <section className="panel error" role="alert" title="Click to dismiss" onClick={onDismissError}>{error}<span className="errorClose"> ✕</span></section>}
-    {blinded && <div className="blindnessVeil" role="alert" aria-live="assertive"><span>Opponent power play</span><strong>Blindness</strong><p>Your screen is intentionally hidden until this turn ends.</p><small>Turn {state.turn} / {state.config.maxTurns}</small></div>}
   </section>;
 }
 
@@ -659,7 +687,7 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, roundTimeSec
       <div className="menuRoomRow">
         <span className="menuRoomCode">{state.roomCode}</span>
         <button type="button" onClick={()=>copy(state.roomCode, 'code')}>{copied === 'code' ? 'Copied!' : 'Copy code'}</button>
-        <button type="button" onClick={()=>copy(`Join my Unicup match! Room code: ${state.roomCode} -> ${location.origin}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
+        <button type="button" onClick={()=>copy(`Join my Unicup match: ${buildInviteUrl(location.origin, state.roomCode)}`, 'invite')}>{copied === 'invite' ? 'Copied!' : 'Copy invite'}</button>
       </div>
     </section>
     <section className="menuSection">
@@ -770,9 +798,11 @@ type PointerMode =
   | { kind: 'place'; anchor: Vec; angle: number }
   | { kind: 'rotatePad'; id: string; center: Vec; angle: number };
 
-function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state: GameState; you: string; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void; aiming: AbilityAim | null; setAiming: (a: AbilityAim | null)=>void }) {
+function Game3D({ state, you, placing, setPlacing, aiming, setAiming, blinded }: { state: GameState; you: string; placing: PlacingGhost | null; setPlacing: (p: PlacingGhost | null)=>void; aiming: AbilityAim | null; setAiming: (a: AbilityAim | null)=>void; blinded: boolean }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const rendererRef = React.useRef<BabbleLeague3DRenderer | null>(null);
+  const blindnessRef = React.useRef<SVGSVGElement>(null);
+  const blindnessMaskId = React.useId().replace(/:/g, '');
   const [mode, setMode] = React.useState<PointerMode | null>(null);
   const lastRotateSent = React.useRef(0);
   const [renderError, setRenderError] = React.useState('');
@@ -800,8 +830,8 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
   const rotatingPad = mode?.kind === 'rotatePad' ? { id: mode.id, angle: mode.angle } : null;
   // animation pump: keeps ball rolling, box spin, boost chevrons and launch hops
   // moving smoothly even between server state frames
-  const frame = React.useRef<{ state: GameState; you: string; drag: typeof drag; placing: PlacingGhost | null; targetingBabbles: boolean; rotatingPad: { id: string; angle: number } | null }>({ state, you, drag, placing, targetingBabbles: aiming?.mode === 'babble', rotatingPad });
-  frame.current = { state, you, drag, placing, targetingBabbles: aiming?.mode === 'babble', rotatingPad };
+  const frame = React.useRef<{ state: GameState; you: string; drag: typeof drag; placing: PlacingGhost | null; targetingBabbles: boolean; rotatingPad: { id: string; angle: number } | null; blinded: boolean }>({ state, you, drag, placing, targetingBabbles: aiming?.mode === 'babble', rotatingPad, blinded });
+  frame.current = { state, you, drag, placing, targetingBabbles: aiming?.mode === 'babble', rotatingPad, blinded };
   React.useEffect(() => {
     let raf = 0;
     let timer = 0;
@@ -809,7 +839,16 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
     const tick = () => {
       const f = frame.current;
       const started = performance.now();
-      rendererRef.current?.render({ state: f.state, you: f.you, drag: f.drag, placing: f.placing, targetingBabbles: f.targetingBabbles, rotatingPad: f.rotatingPad });
+      const renderer = rendererRef.current;
+      renderer?.render({ state: f.state, you: f.you, drag: f.drag, placing: f.placing, targetingBabbles: f.targetingBabbles, rotatingPad: f.rotatingPad });
+      if (f.blinded && renderer && blindnessRef.current) {
+        const controlledIds = f.state.players[f.you]?.controlledBabbleIds ?? [];
+        for (const id of controlledIds) {
+          const babble = f.state.babbles.find(candidate => candidate.id === id);
+          const path = blindnessRef.current.querySelector<SVGPathElement>(`[data-babble-id="${id}"]`);
+          if (babble && path) path.setAttribute('d', renderer.blindnessVisionPath(babble.pos));
+        }
+      }
       const cost = performance.now() - started;
       if (stopped) return;
       // Adaptive pump: on weak/software WebGL a frame can take hundreds of ms.
@@ -943,6 +982,19 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming }: { state:
 
   return <>
     <canvas className="field threeField" ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setMode(null)} aria-label="3D Unicup field"/>
+    {blinded && <>
+      <svg className="blindnessVeil" ref={blindnessRef} width="100%" height="100%" aria-hidden="true">
+        <defs>
+          <filter id={`${blindnessMaskId}-soft`} x="-15%" y="-15%" width="130%" height="130%"><feGaussianBlur stdDeviation="10"/></filter>
+          <mask id={blindnessMaskId} maskUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%">
+            <rect width="100%" height="100%" fill="white"/>
+            {(me?.controlledBabbleIds ?? []).map(id=><path key={id} data-babble-id={id} fill="black" filter={`url(#${blindnessMaskId}-soft)`}/>) }
+          </mask>
+        </defs>
+        <rect width="100%" height="100%" fill="black" mask={`url(#${blindnessMaskId})`}/>
+      </svg>
+      <div className="blindnessWarning" role="alert" aria-live="assertive"><strong>Blindness active</strong><span>Vision limited to 1m around your robots · turn {state.turn}</span></div>
+    </>}
     {renderError && <div className="renderFallback"><b>3D preview unavailable</b><span>{renderError}</span></div>}
   </>;
 }

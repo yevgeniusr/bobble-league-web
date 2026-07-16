@@ -25,6 +25,21 @@ describe('round time controls', () => {
   });
 });
 
+describe('invite URLs', () => {
+  it('normalizes valid invite codes and builds shareable links', async () => {
+    const module = await import('../client/src/landingArchive') as typeof import('../client/src/landingArchive') & {
+      parseInviteCode?: (url: string) => string | null;
+      buildInviteUrl?: (origin: string, roomCode: string) => string;
+    };
+    expect(module.parseInviteCode).toBeTypeOf('function');
+    expect(module.buildInviteUrl).toBeTypeOf('function');
+    expect(module.parseInviteCode!('https://unicup.example/?invite=ab12')).toBe('AB12');
+    expect(module.parseInviteCode!('https://unicup.example/?invite=bad-code')).toBeNull();
+    expect(module.parseInviteCode!('https://unicup.example/')).toBeNull();
+    expect(module.buildInviteUrl!('https://unicup.example', 'ab12')).toBe('https://unicup.example/?invite=AB12');
+  });
+});
+
 describe('embedded loyalty normalization', () => {
   it('removes the vendor launcher and expands its iframe inside the custom host', async () => {
     const module = await import('../client/src/analytics') as typeof import('../client/src/analytics') & {

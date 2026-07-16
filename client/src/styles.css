@@ -1517,6 +1517,66 @@ main {
   animation: livePulse 1.2s steps(2, end) infinite;
 }
 
+.invitePromptLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(31, 34, 43, .72);
+}
+
+.invitePrompt {
+  display: grid;
+  width: min(430px, calc(100vw - 36px));
+  gap: 12px;
+  padding: 24px;
+  border: 5px solid var(--ink);
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--white);
+  box-shadow: 9px 9px 0 var(--yellow);
+  text-align: center;
+}
+
+.invitePromptKicker {
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.invitePrompt h2 {
+  margin: 0;
+  font: 400 42px/1 'Changa One', sans-serif;
+  text-transform: uppercase;
+}
+
+.invitePromptCode {
+  padding: 11px;
+  border: 4px solid var(--ink);
+  color: var(--white);
+  background: var(--blue-dark);
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
+.invitePrompt p { margin: 0; font-size: 13px; font-weight: 800; }
+
+.invitePromptActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.invitePromptActions button { min-height: 48px; }
+
+@media (max-width: 420px) {
+  .invitePrompt { padding: 19px 15px; }
+  .invitePromptActions { grid-template-columns: 1fr; }
+}
+
 .matchEndLayer {
   position: absolute;
   inset: 0;
@@ -2957,38 +3017,45 @@ main {
 }
 
 .blindnessVeil {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 5000;
-  display: grid;
-  place-content: center;
-  padding: 28px;
+  z-index: 5;
+  display: block;
+  pointer-events: none;
+}
+
+.blindnessWarning {
+  position: absolute;
+  top: 126px;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  width: min(620px, calc(100vw - 28px));
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  max-width: calc(100vw - 28px);
+  padding: 7px 10px;
+  border: 3px solid #ffd72e;
   color: #fff;
-  background: #000;
-  text-align: center;
-  pointer-events: all;
-}
-
-.blindnessVeil span,
-.blindnessVeil small {
-  color: #ffd72e;
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.blindnessVeil strong {
-  margin: 8px 0;
-  font: 400 clamp(64px, 14vw, 150px)/.8 'Changa One', sans-serif;
-  text-transform: uppercase;
-}
-
-.blindnessVeil p {
-  max-width: 460px;
-  margin: 12px auto 22px;
-  font-size: 17px;
+  background: #111319;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, .55);
+  font-size: 10px;
   font-weight: 800;
-  line-height: 1.45;
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.blindnessWarning strong { color: #ffd72e; white-space: nowrap; }
+
+@media (max-width: 600px) {
+  .blindnessWarning {
+    top: 172px;
+    display: grid;
+    gap: 2px;
+    text-align: center;
+  }
 }
 
 @media (max-width: 470px) {

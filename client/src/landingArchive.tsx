@@ -4,6 +4,25 @@ import { COUNTRIES } from '../../shared/countries';
 import { authHeaders, ClerkTokenGetter } from './auth';
 
 export const ROUND_TIME_MILESTONES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60] as const;
+const INVITE_CODE_PATTERN = /^[A-Z0-9]{3,8}$/;
+
+export function parseInviteCode(url: string): string | null {
+  try {
+    const code = new URL(url).searchParams.get('invite')?.trim().toUpperCase() ?? '';
+    return INVITE_CODE_PATTERN.test(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildInviteUrl(origin: string, roomCode: string): string {
+  const url = new URL(origin);
+  url.pathname = '/';
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('invite', roomCode.trim().toUpperCase());
+  return url.toString();
+}
 
 export function visibleRoundTimeSeconds(phase: GameState['phase'], localValue: number, serverValue: number) {
   return phase === 'lobby' ? localValue : serverValue;

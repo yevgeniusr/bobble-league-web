@@ -26,6 +26,13 @@ export function fitCanvasTextFontSize(requestedPx: number, measuredWidth: number
 export function fieldToWorld(p: Vec): WorldXZ { return { x: (p.x - FIELD.width / 2) / 50, z: (p.y - FIELD.height / 2) / 50 }; }
 export function worldToField(p: WorldXZ): Vec { return { x: p.x * 50 + FIELD.width / 2, y: p.z * 50 + FIELD.height / 2 }; }
 export function fieldRadiusToWorld(r: number): number { return r / 50; }
+export const BLINDNESS_VISION_RADIUS_FIELD = 50;
+export function blindnessVisionBoundary(center: Vec, radius = BLINDNESS_VISION_RADIUS_FIELD, segments = 24): Vec[] {
+  return Array.from({ length: segments }, (_, index) => {
+    const angle = index / segments * Math.PI * 2;
+    return { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius };
+  });
+}
 export const BUMPER_WORLD_POSITIONS: WorldXZ[] = BUMPERS.map(fieldToWorld);
 export const mapBumperWorldPositions = (mapId: MapId): WorldXZ[] => MAPS[normalizeMapId(mapId)].layout.bumpers.map(fieldToWorld);
 
@@ -456,6 +463,19 @@ export class BabbleLeague3DRenderer {
     const hit = new THREE.Vector3();
     this.raycaster.setFromCamera(ndc, this.camera);
     return this.raycaster.ray.intersectPlane(this.plane, hit) ? worldToField({ x: hit.x, z: hit.z }) : null;
+  }
+
+  blindnessVisionPath(center: Vec, radius = BLINDNESS_VISION_RADIUS_FIELD): string {
+    const rect = this.canvas.getBoundingClientRect();
+    const projected = blindnessVisionBoundary(center, radius).map(point => {
+      const world = fieldToWorld(point);
+      const screen = new THREE.Vector3(world.x, TURF_Y + 0.04, world.z).project(this.camera);
+      return {
+        x: rect.left + (screen.x + 1) * rect.width / 2,
+        y: rect.top + (1 - screen.y) * rect.height / 2
+      };
+    });
+    return projected.map((point, index) => `${index ? 'L' : 'M'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ') + ' Z';
   }
 
   /** Pick the visible babble, not the turf beneath it. Screen-space picking
