@@ -42,6 +42,10 @@ const aimedCount = async (page, label = '') => {
   console.log('hud', label, hud ? `turn=${hud[1]} phase=${hud[2]} secs=${hud[3]}` : 'none', 'aimed', m?.[1] ?? '?');
   return m ? Number(m[1]) : -1;
 };
+const secondsRemaining = async page => {
+  const label = await page.locator('.timerBadge').getAttribute('aria-label');
+  return Number(label?.match(/(\d+) seconds/)?.[1] ?? -1);
+};
 try {
   for (let i = 0; i < 60; i++) { try { if ((await fetch(`${url}/healthz`)).ok) break; } catch {} await delay(400); }
   const browser = await chromium.launch({ headless: true });
@@ -150,20 +154,32 @@ try {
 
   // 7. Yellow Card is instant: no field/babble targeting mode should open.
   await grantAbility('yellowCard', 'Yellow Card');
+  const timerBeforeYellow = await secondsRemaining(page);
   await clickAbility('Yellow Card');
   await delay(500);
   const yellowWasInstant = await page.locator('.abilityTrigger.held').count() === 0;
+  const timerAfterYellow = await secondsRemaining(page);
 
   // 8. Red Card requires a babble click and then exits targeting mode.
   await grantAbility('redCard', 'Red Card');
+  const timerBeforeRed = await secondsRemaining(page);
   await clickAbility('Red Card');
   await delay(250);
   const redTarget = project(babbles[2].x, babbles[2].y, TURF_Y + 0.9);
   await page.mouse.click(redTarget.x, redTarget.y);
   await delay(500);
   const redTargetingCleared = await page.locator('.abilityTrigger.held').count() === 0;
+  const timerAfterRed = await secondsRemaining(page);
 
-  // 9. An unresolved targeting mode must disappear when planning ends.
+  // 9. Swap Goals is instant, resets planning and renders a fitted banner.
+  await grantAbility('swapGoals', 'Swap Goals');
+  const timerBeforeSwap = await secondsRemaining(page);
+  await clickAbility('Swap Goals');
+  await delay(500);
+  const timerAfterSwap = await secondsRemaining(page);
+  await page.screenshot({ path: 'output/playwright/unicup-goal-swap.png' });
+
+  // 10. An unresolved targeting mode must disappear when planning ends.
   await grantAbility('redCard', 'Red Card');
   await clickAbility('Red Card');
   await page.locator('.readyBtn').evaluate(button => button.click());
@@ -172,9 +188,9 @@ try {
   const targetingClearedOnResolve = await page.locator('.abilityTrigger.selected').count() === 0;
 
   const out = {
-    ok: aimedBefore >= 1 && aimedAfterReaim === aimedBefore && placingHintCleared && aimedAfterBoost > aimedAfterReaim && targetingCleared && aimedAfterGhost > aimedAfterBoost && trampolinePlacementCleared && yellowWasInstant && redTargetingCleared && targetingClearedOnResolve && errors.length === 0,
+    ok: aimedBefore >= 1 && aimedAfterReaim === aimedBefore && placingHintCleared && aimedAfterBoost > aimedAfterReaim && targetingCleared && aimedAfterGhost > aimedAfterBoost && trampolinePlacementCleared && yellowWasInstant && redTargetingCleared && timerAfterYellow >= 55 && timerAfterYellow > timerBeforeYellow && timerAfterRed >= 55 && timerAfterRed >= timerBeforeRed && timerAfterSwap >= 55 && timerAfterSwap >= timerBeforeSwap && targetingClearedOnResolve && errors.length === 0,
     mapId,
-    aimedBefore, aimedAfterReaim, aimedAfterBoost, aimedAfterGhost, placingHintCleared, targetingCleared, trampolinePlacementCleared, yellowWasInstant, redTargetingCleared, targetingClearedOnResolve,
+    aimedBefore, aimedAfterReaim, aimedAfterBoost, aimedAfterGhost, placingHintCleared, targetingCleared, trampolinePlacementCleared, yellowWasInstant, redTargetingCleared, timerBeforeYellow, timerAfterYellow, timerBeforeRed, timerAfterRed, timerBeforeSwap, timerAfterSwap, targetingClearedOnResolve,
     errors: errors.slice(0, 5)
   };
   console.log(JSON.stringify(out, null, 2));

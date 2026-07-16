@@ -31,6 +31,14 @@ try {
   await page.getByRole('heading', { name: 'Power plays, decoded.' }).waitFor({ state: 'visible' });
   await page.getByRole('heading', { name: 'Meet the machines.' }).waitFor({ state: 'visible' });
   await page.getByRole('heading', { name: 'Four worlds. Four kinds of gravity.' }).waitFor({ state: 'visible' });
+  if (await page.locator('.roundTimeMilestone').count() !== 12) throw new Error('round-time slider is missing five-second milestones');
+  const loyaltyTrigger = page.locator('.loyaltyHomeTrigger');
+  if (await loyaltyTrigger.count()) {
+    await loyaltyTrigger.click();
+    await page.locator('.loyaltyEmbed iframe').waitFor({ state: 'visible', timeout: 15000 });
+    if (await page.locator('.loyaltyEmbed #loyalty-widget-button').count()) throw new Error('embedded loyalty rendered a second launcher');
+    await page.getByRole('button', { name: 'Close rewards' }).click();
+  }
   const firstPower = page.locator('.powerupCard').first();
   await firstPower.waitFor({ state: 'visible' });
   if (await firstPower.getAttribute('aria-expanded') !== 'false') throw new Error('powerup card did not start closed');

@@ -126,6 +126,10 @@ export const BOX_TYPES = {
 } as const;
 export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
+export const PLANNING_TIMER_RESET_BOX_TYPES: readonly BoxType[] = ['swapGoals', 'yellowCard', 'redCard'];
+export function resetsPlanningTimer(type: BoxType) {
+  return PLANNING_TIMER_RESET_BOX_TYPES.includes(type);
+}
 
 export const BOX_TYPE_ALIASES = {
   giantball: 'beachBall',

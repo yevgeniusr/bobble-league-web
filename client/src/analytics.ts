@@ -144,3 +144,29 @@ export function xtremepushCommand(...args: unknown[]) {
   fn(...args);
   return true;
 }
+
+// The current web SDK still emits its own launcher in element mode. Keep the
+// documented element mount, then make the generated iframe a true embedded view
+// controlled exclusively by Unicup's Rewards button and panel.
+export function normalizeEmbeddedLoyaltyMount(host: HTMLElement): HTMLIFrameElement | null {
+  host.querySelector('#loyalty-widget-button')?.remove();
+  const container = host.querySelector<HTMLElement>('#loyalty-frame-container');
+  if (!container) return null;
+  for (const child of Array.from(container.children)) {
+    if (child instanceof host.ownerDocument.defaultView!.HTMLButtonElement) child.remove();
+  }
+  Object.assign(container.style, {
+    position: 'relative',
+    inset: 'auto',
+    right: 'auto',
+    bottom: 'auto',
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    borderRadius: '0',
+    boxShadow: 'none'
+  });
+  const iframe = container.querySelector<HTMLIFrameElement>('iframe');
+  if (iframe) Object.assign(iframe.style, { width: '100%', height: '100%', border: '0' });
+  return iframe;
+}

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { io, Socket } from 'socket.io-client';
 import { ClerkProvider, Show, SignInButton, SignUpButton, UserButton, useAuth, useUser } from '@clerk/react';
 import { BOX_TYPE_IDS, BOX_TYPES, BoxType, BoxTypeInput, ClientToServerEvents, FIELD, FieldObjectType, FORMATION_IDS, FORMATION_LAYOUTS, FORMATIONS, FormationId, GameMode, GameState, MAPS, MAP_IDS, MapId, PlayerSide, ROTATABLE_FIELD_OBJECTS, ServerToClientEvents, TEAM_IDS, TEAMS, Vec, normalizeBoxType } from '../../shared/types';
-import { initXtremepush, trackAnalyticsEvent, xtremepushCommand } from './analytics';
+import { initXtremepush, normalizeEmbeddedLoyaltyMount, trackAnalyticsEvent, xtremepushCommand } from './analytics';
 import { AudioSettings, audioManager, loadAudioSettings, saveAudioSettings } from './audio';
 import { UNICUP_BRAND } from './brand';
 import { readableTextColor } from './color';
@@ -11,7 +11,7 @@ import { buildMatchEndSummary } from './matchEnd';
 import { authHeaders, ClerkTokenGetter, fetchUnicupIdentity, UnicupIdentity } from './auth';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import { heldPowerPlayForPlayer } from './gameUiModel';
-import { CountrySelector, TournamentArchive } from './landingArchive';
+import { CountrySelector, RoundTimeControl, TournamentArchive } from './landingArchive';
 import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -294,7 +294,7 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeS
             </select>
           </label>
           <label className="deskField roundTimeField">Round time <span>{roundTimeSeconds}s</span>
-            <input type="range" min="1" max="60" step="1" value={roundTimeSeconds} onChange={e=>setRoundTimeSeconds(Number(e.target.value))}/>
+            <RoundTimeControl value={roundTimeSeconds} onChange={setRoundTimeSeconds}/>
           </label>
           <button type="button" className="primary deskSubmit" onClick={onCreateRoom} disabled={!ready}>Create room <span aria-hidden="true">&#8594;</span></button>
         </div> : <div id="desk-panel-join" className="deskPanel" role="tabpanel" aria-labelledby="desk-tab-join">
@@ -386,6 +386,7 @@ function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: Cle
     const generation = ++generationRef.current;
     const controller = new AbortController();
     let installedRefresh: (() => void) | null = null;
+    let mountObserver: MutationObserver | null = null;
     const timer = window.setTimeout(async () => {
       try {
         const sdkReady = await initXtremepush();
@@ -419,17 +420,23 @@ function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: Cle
         host.replaceChildren();
         const width = Math.max(280, Math.min(420, host.clientWidth));
         const height = Math.max(360, Math.min(580, window.innerHeight - 190));
+        const captureEmbeddedFrame = () => {
+          if (generation !== generationRef.current) return;
+          iframeRef.current = normalizeEmbeddedLoyaltyMount(host);
+        };
+        mountObserver = new MutationObserver(captureEmbeddedFrame);
+        mountObserver.observe(host, { childList: true, subtree: true });
         xtremepushCommand('mountLoyalty', width, height, host);
-        window.setTimeout(() => {
-          if (generation === generationRef.current) iframeRef.current = host.querySelector('iframe');
-        }, 0);
+        captureEmbeddedFrame();
       } catch { /* The game remains usable when Loyalty is unavailable. */ }
     }, 450);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
+      mountObserver?.disconnect();
       iframeRef.current = null;
       hostRef.current?.replaceChildren();
+      document.getElementById('loyalty-widget-button')?.remove();
       document.getElementById('loyalty-frame-container')?.remove();
       if (refreshLoyaltyToken === installedRefresh) refreshLoyaltyToken = null;
     };
@@ -694,7 +701,7 @@ function SettingsMenu({ state, you, mode, setMode, mapId, setMapId, roundTimeSec
       </label>
       {state.phase !== 'lobby' && <small className="menuNote">{MAPS[state.mapId].label} is locked until reset.</small>}
       <label>Round time <span>{state.config.roundTimeSeconds}s</span>
-        <input type="range" min="1" max="60" step="1" value={state.phase === 'lobby' ? roundTimeSeconds : state.config.roundTimeSeconds} disabled={state.phase !== 'lobby'} onChange={e => { const next = Number(e.target.value); setRoundTimeSeconds(next); socket.emit('room:roundTime', next); }}/>
+        <RoundTimeControl value={state.phase === 'lobby' ? roundTimeSeconds : state.config.roundTimeSeconds} disabled={state.phase !== 'lobby'} onChange={next => { setRoundTimeSeconds(next); socket.emit('room:roundTime', next); }}/>
       </label>
       <div className="menuActions">
         <select value={mode} onChange={e=>setMode(Number(e.target.value) as GameMode)}><option value={1}>Scrimmage</option><option value={3}>Qualifier</option><option value={5}>Champion</option></select>

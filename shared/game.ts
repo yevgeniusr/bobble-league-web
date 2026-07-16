@@ -28,7 +28,8 @@ import {
   TurnIntent,
   Vec,
   normalizeBoxType,
-  normalizeMapId
+  normalizeMapId,
+  resetsPlanningTimer
 } from './types';
 import { buildAbilityUsedEvent, buildBoxPickupEvent, buildGamePlayedEvents, buildGoalScoredEvent, recordAnalyticsEvent } from './analytics';
 import { applyBabblePlanarImpulse, freePhysics, stepPhysics } from './physics';
@@ -494,6 +495,12 @@ export function usePowerPlay(state: GameState, playerId: string, use: PowerPlayU
   if (itemIndex < 0) return false;
   inventory.splice(itemIndex, 1);
   applyPowerPlay(state, player.side, canonicalUse, now);
+  if (resetsPlanningTimer(type)) {
+    state.turnDeadlineAt = now + state.config.turnDurationMs;
+    state.pendingIntents = {};
+    state.allIntentsReadyAt = null;
+    resetReadyVotes(state);
+  }
   recordAnalyticsEvent(state, buildAbilityUsedEvent(state, playerId, canonicalUse, now));
   clearReadyVote(state, playerId);
   pushEvent(state, `${player.name} used ${BOX_TYPES[type].label}.`);

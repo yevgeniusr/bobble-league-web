@@ -662,7 +662,8 @@ main {
 
 .loyaltyEmbed {
   width: 100%;
-  min-height: min(580px, calc(100dvh - 176px));
+  height: min(580px, calc(100dvh - 176px));
+  min-height: 360px;
   overflow: auto;
   background: #f0f3f4;
 }
@@ -3137,6 +3138,67 @@ main {
   width: 100%;
   accent-color: var(--coral);
 }
+
+.roundTimeControl {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.roundTimeControl input[type='range'] {
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.roundTimeControl input[type='range']::-webkit-slider-runnable-track {
+  height: 8px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: linear-gradient(to right, var(--coral) 0 var(--round-progress), #d8dde2 var(--round-progress) 100%);
+}
+
+.roundTimeControl input[type='range']::-moz-range-track {
+  height: 6px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: linear-gradient(to right, var(--coral) 0 var(--round-progress), #d8dde2 var(--round-progress) 100%);
+}
+
+.roundTimeScale {
+  position: relative;
+  display: block;
+  height: 20px;
+  margin-inline: 6px;
+}
+
+.roundTimeMilestone {
+  position: absolute;
+  top: 0;
+  left: var(--milestone);
+  display: grid;
+  justify-items: center;
+  font-style: normal;
+  transform: translateX(-50%);
+}
+
+.roundTimeMilestone b {
+  width: 2px;
+  height: 6px;
+  background: var(--coral);
+}
+
+.roundTimeMilestone small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.roundTimeMilestone:last-child { transform: translateX(-100%); }
 
 .topHud {
   top: max(10px, env(safe-area-inset-top));

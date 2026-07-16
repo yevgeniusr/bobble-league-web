@@ -17,6 +17,12 @@ export type RenderInput = {
   rotatingPad?: { id: string; angle: number } | null;
 };
 
+export const TEXT_DRAW_MAX_WIDTH = 440;
+export function fitCanvasTextFontSize(requestedPx: number, measuredWidth: number, maxWidth = TEXT_DRAW_MAX_WIDTH) {
+  if (!Number.isFinite(measuredWidth) || measuredWidth <= 0) return requestedPx;
+  return Math.max(12, Math.min(requestedPx, requestedPx * maxWidth / measuredWidth));
+}
+
 export function fieldToWorld(p: Vec): WorldXZ { return { x: (p.x - FIELD.width / 2) / 50, z: (p.y - FIELD.height / 2) / 50 }; }
 export function worldToField(p: WorldXZ): Vec { return { x: p.x * 50 + FIELD.width / 2, y: p.z * 50 + FIELD.height / 2 }; }
 export function fieldRadiusToWorld(r: number): number { return r / 50; }
@@ -1652,16 +1658,20 @@ export class BabbleLeague3DRenderer {
     if (!tex) {
       const c = document.createElement('canvas'); c.width = 512; c.height = 256;
       const g = c.getContext('2d')!;
-      g.font = `900 ${size * 2}px Fredoka, Arial`;
+      const lines = text.split('\n');
+      const requestedFontPx = size * 2;
+      g.font = `900 ${requestedFontPx}px Fredoka, Arial`;
+      const measuredWidth = Math.max(...lines.map(line => g.measureText(line).width));
+      const fittedFontPx = fitCanvasTextFontSize(requestedFontPx, measuredWidth);
+      g.font = `900 ${fittedFontPx}px Fredoka, Arial`;
       g.textAlign = 'center'; g.textBaseline = 'middle';
       g.shadowColor = 'rgba(34,37,46,.52)'; g.shadowBlur = 0; g.shadowOffsetY = 7;
       g.strokeStyle = 'rgba(34,37,46,.92)'; g.lineWidth = 14; g.lineJoin = 'round';
       g.fillStyle = fill;
-      const lines = text.split('\n');
       lines.forEach((line, i) => {
-        const y = 128 + (i - (lines.length - 1) / 2) * size * 1.9;
-        g.strokeText(line, 256, y);
-        g.fillText(line, 256, y);
+        const y = 128 + (i - (lines.length - 1) / 2) * fittedFontPx * 0.95;
+        g.strokeText(line, 256, y, TEXT_DRAW_MAX_WIDTH);
+        g.fillText(line, 256, y, TEXT_DRAW_MAX_WIDTH);
       });
       tex = new THREE.CanvasTexture(c); tex.anisotropy = this.lowPower ? 1 : 4;
       this.textCache.set(key, tex);

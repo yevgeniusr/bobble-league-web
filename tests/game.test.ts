@@ -832,6 +832,40 @@ describe('classic Unicup shared rules', () => {
     expect(s.powerPlayInventories.left).toEqual([item]);
   });
 
+  it.each([
+    ['swapGoals', undefined],
+    ['yellowCard', undefined],
+    ['redCard', 'right-1']
+  ] as const)('resets the full planning timer when %s changes the field state', (type, targetBabbleId) => {
+    const s = createInitialState(`RESET-${type}`, 3, 'stadium', 20);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.turnDeadlineAt = 50_000;
+    s.pendingIntents = { 'left-1': { babbleId: 'left-1', aimAngle: 0, impulse: 10 } };
+    s.readyPlayerIds = ['r'];
+    s.allIntentsReadyAt = 39_000;
+    s.powerPlayInventories.left.push({ type, availableTurn: s.turn, holderId: 'l' });
+
+    expect(usePowerPlay(s, 'l', { type, ...(targetBabbleId ? { targetBabbleId } : {}) }, 40_000)).toBe(true);
+    expect(s.turnDeadlineAt).toBe(60_000);
+    expect(s.pendingIntents).toEqual({});
+    expect(s.readyPlayerIds).toEqual([]);
+    expect(s.allIntentsReadyAt).toBeNull();
+  });
+
+  it('does not extend the planning timer for powers without a reset rule', () => {
+    const s = createInitialState('NO-RESET', 3, 'stadium', 20);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.turnDeadlineAt = 50_000;
+    s.powerPlayInventories.left.push({ type: 'bigBumpers', availableTurn: s.turn, holderId: 'l' });
+
+    expect(usePowerPlay(s, 'l', { type: 'bigBumpers' }, 40_000)).toBe(true);
+    expect(s.turnDeadlineAt).toBe(50_000);
+  });
+
   it('red card lets the user choose a babble and teleports only that babble to exact field center', () => {
     const s = createInitialState('RED', 3);
     addPlayer(s, 'l', 'Lefty', 'pigs', 'left');

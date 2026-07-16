@@ -3,6 +3,33 @@ import { BOX_TYPE_IDS, BOX_TYPES, BoxType, MAP_IDS, MAPS, RobotShape, TEAM_IDS, 
 import { COUNTRIES } from '../../shared/countries';
 import { authHeaders, ClerkTokenGetter } from './auth';
 
+export const ROUND_TIME_MILESTONES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60] as const;
+
+export function RoundTimeControl({ value, onChange, disabled = false }: { value: number; onChange: (value: number) => void; disabled?: boolean }) {
+  const progress = (value - 1) / 59 * 100;
+  return <div className="roundTimeControl" style={{ '--round-progress': `${progress}%` } as React.CSSProperties}>
+    <input
+      type="range"
+      min="1"
+      max="60"
+      step="1"
+      list="round-time-milestones"
+      aria-label="Round time"
+      value={value}
+      disabled={disabled}
+      onChange={event=>onChange(Number(event.target.value))}
+    />
+    <datalist id="round-time-milestones">{ROUND_TIME_MILESTONES.map(seconds=><option key={seconds} value={seconds}/>)}</datalist>
+    <span className="roundTimeScale" aria-hidden="true">
+      {ROUND_TIME_MILESTONES.map(seconds=><i
+        key={seconds}
+        className="roundTimeMilestone"
+        style={{ '--milestone': `${(seconds - 1) / 59 * 100}%` } as React.CSSProperties}
+      ><b/><small>{seconds}</small></i>)}
+    </span>
+  </div>;
+}
+
 function PowerupCard({ type }: { type: BoxType }) {
   const [open, setOpen] = React.useState(false);
   const powerup = BOX_TYPES[type];

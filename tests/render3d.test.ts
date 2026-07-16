@@ -19,6 +19,17 @@ function projectedEnvelope(width: number, height: number): THREE.Vector3[] {
 }
 
 describe('3D renderer coordinate mapping', () => {
+  it('shrinks long world-space labels before they reach the canvas edges', async () => {
+    const module = await import('../client/src/render3d') as typeof import('../client/src/render3d') & {
+      fitCanvasTextFontSize?: (requestedPx: number, measuredWidth: number, maxWidth?: number) => number;
+    };
+    expect(module.fitCanvasTextFontSize).toBeTypeOf('function');
+    const fitted = module.fitCanvasTextFontSize!(80, 610, 440);
+    expect(fitted).toBeLessThan(80);
+    expect(610 * fitted / 80).toBeLessThanOrEqual(440);
+    expect(module.fitCanvasTextFontSize!(80, 300, 440)).toBe(80);
+  });
+
   it('maps 2D game coordinates onto a centered XZ WebGL field and back', () => {
     expect(fieldToWorld({ x: FIELD.width / 2, y: FIELD.height / 2 })).toEqual({ x: 0, z: 0 });
     expect(fieldToWorld({ x: 0, y: 0 })).toEqual({ x: -FIELD.width / 100, z: -FIELD.height / 100 });
