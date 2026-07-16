@@ -324,6 +324,7 @@ export type BabbleColliderSpec = {
   planarRadius: number;
   densityMultiplier: number;
   restitutionMultiplier: number;
+  verticalProfile: 'round' | 'flat' | 'ramp';
 };
 
 export function babbleColliderSpec(state: GameState, babble: BabbleState): BabbleColliderSpec {
@@ -338,7 +339,8 @@ export function babbleColliderSpec(state: GameState, babble: BabbleState): Babbl
     halfHeight: (robot.shape === 'orb' ? babbleColliderRadius(babble.radius) : 0.3 * scale),
     planarRadius: robot.shape === 'orb' ? babbleColliderRadius(babble.radius) : Math.max(width, depth) / 2,
     densityMultiplier: robot.density,
-    restitutionMultiplier: robot.restitution
+    restitutionMultiplier: robot.restitution,
+    verticalProfile: robot.shape === 'wedge' ? 'ramp' : robot.shape === 'orb' ? 'round' : 'flat'
   };
 }
 
@@ -356,8 +358,12 @@ function babbleColliderDesc(state: GameState, babble: BabbleState) {
     const hz = spec.depth / 2;
     const hy = spec.halfHeight;
     const points = new Float32Array([
-      -hx, -hy, -hz, -hx, -hy, hz, hx, -hy, 0,
-      -hx, hy, -hz, -hx, hy, hz, hx, hy, 0
+      -hx, -hy, -hz,
+      -hx, -hy, hz,
+      hx, -hy, -hz,
+      hx, -hy, hz,
+      hx, hy, -hz,
+      hx, hy, hz
     ]);
     desc = RAPIER.ColliderDesc.convexHull(points) ?? RAPIER.ColliderDesc.ball(spec.planarRadius);
   }

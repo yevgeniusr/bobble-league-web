@@ -34,6 +34,44 @@ describe('Unicup canonical identity', () => {
     expect((await service.resolve({ authorization: 'Bearer valid' })).accountId).toBe(guest.accountId);
   });
 
+  it('loads the ISO country stored in authenticated Clerk private metadata', async () => {
+    const adapter = {
+      authenticate: vi.fn(async () => 'user_123'),
+      readAccountId: vi.fn(async () => 'unicup:0123456789abcdef0123456789abcdef'),
+      writeAccountId: vi.fn(),
+      readCountry: vi.fn(async () => 'AE'),
+      writeCountry: vi.fn()
+    };
+    const service = createIdentityService({ secret: 'test-secret-that-is-long-enough', clerk: adapter });
+
+    await expect(service.resolve({ authorization: 'Bearer valid' })).resolves.toMatchObject({
+      kind: 'account',
+      country: 'AE'
+    });
+    await expect(service.updateCountry({ authorization: 'Bearer valid' }, 'gb')).resolves.toBe('GB');
+    expect(adapter.writeCountry).toHaveBeenCalledWith('user_123', 'GB');
+    await expect(service.updateCountry({ authorization: 'Bearer valid' }, 'XX')).rejects.toThrow('Invalid country code');
+  });
+
+  it('keeps an authenticated account when the optional country lookup fails', async () => {
+    const service = createIdentityService({
+      secret: 'test-secret-that-is-long-enough',
+      clerk: {
+        authenticate: vi.fn(async () => 'user_123'),
+        readAccountId: vi.fn(async () => 'unicup:0123456789abcdef0123456789abcdef'),
+        writeAccountId: vi.fn(),
+        readCountry: vi.fn(async () => { throw new Error('country metadata unavailable'); }),
+        writeCountry: vi.fn()
+      }
+    });
+
+    await expect(service.resolve({ authorization: 'Bearer valid' })).resolves.toMatchObject({
+      kind: 'account',
+      accountId: 'unicup:0123456789abcdef0123456789abcdef',
+      clerkUserId: 'user_123'
+    });
+  });
+
   it('falls back to a guest when a supplied Clerk token is invalid', async () => {
     const service = createIdentityService({
       secret: 'test-secret-that-is-long-enough',

@@ -29,6 +29,18 @@ describe('robot team physics profiles', () => {
     }
   });
 
+  it('gives Vector Wedges a vertical ramp collider profile', () => {
+    const state = createInitialState('ROBOT-RAMP', 1);
+    addPlayer(state, 'l', 'Lefty', 'bees', 'left');
+    state.sideTeams.left = 'bees';
+    startGame(state, seq([0.5]));
+
+    expect(babbleColliderSpec(state, state.babbles.find(babble => babble.side === 'left')!)).toMatchObject({
+      shape: 'wedge',
+      verticalProfile: 'ramp'
+    });
+  });
+
   it('invalidates cached robot colliders when a side changes team', () => {
     const state = createInitialState('ROBOT-CACHE', 1);
     addPlayer(state, 'l', 'Lefty', 'pigs', 'left');

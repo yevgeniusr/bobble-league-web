@@ -1,4 +1,4 @@
-export type UnicupIdentity = { accountId: string; kind: 'guest' | 'account' };
+export type UnicupIdentity = { accountId: string; kind: 'guest' | 'account'; country?: string };
 export type ClerkTokenGetter = () => Promise<string | null>;
 
 export async function authHeaders(getToken: ClerkTokenGetter): Promise<Record<string, string>> {
@@ -11,5 +11,5 @@ export async function fetchUnicupIdentity(fetcher: typeof fetch, getToken: Clerk
   if (!response.ok) throw new Error('Could not establish a Unicup identity.');
   const value = await response.json() as Partial<UnicupIdentity>;
   if (typeof value.accountId !== 'string' || (value.kind !== 'guest' && value.kind !== 'account')) throw new Error('Invalid Unicup identity response.');
-  return { accountId: value.accountId, kind: value.kind };
+  return { accountId: value.accountId, kind: value.kind, ...(typeof value.country === 'string' ? { country: value.country } : {}) };
 }

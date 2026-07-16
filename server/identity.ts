@@ -1,5 +1,6 @@
 import { createClerkClient } from '@clerk/backend';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { CountryCode, normalizeCountryCode } from '../shared/countries';
 
 export const GUEST_COOKIE_NAME = 'unicup_guest';
 const ACCOUNT_ID_PATTERN = /^unicup:[a-f0-9]{32}$/;
@@ -8,11 +9,14 @@ export type ClerkIdentityAdapter = {
   authenticate: (authorization?: string) => Promise<string | null>;
   readAccountId: (clerkUserId: string) => Promise<string | null>;
   writeAccountId: (clerkUserId: string, accountId: string) => Promise<void>;
+  readCountry?: (clerkUserId: string) => Promise<string | null>;
+  writeCountry?: (clerkUserId: string, country: CountryCode | null) => Promise<void>;
 };
 
 export type ResolvedIdentity = {
   accountId: string;
   kind: 'guest' | 'account';
+  country?: CountryCode;
   clerkUserId?: string;
   guestCookie?: string;
 };
@@ -39,7 +43,8 @@ export function createIdentityService(options: { secret: string; clerk?: ClerkId
             );
           }
           const accountId = await pending;
-          return { accountId, kind: 'account', clerkUserId };
+          const country = await readCountrySafely(options.clerk, clerkUserId);
+          return { accountId, kind: 'account', clerkUserId, ...(country ? { country } : {}) };
         } catch { /* Keep guest play available if Clerk's Backend API is unavailable. */ }
       }
 
@@ -49,6 +54,14 @@ export function createIdentityService(options: { secret: string; clerk?: ClerkId
         kind: 'guest',
         ...(!guestId ? { guestCookie: signGuestCookie(id, key) } : {})
       };
+    },
+    async updateCountry(input: { authorization?: string }, country: unknown): Promise<CountryCode | null> {
+      const clerkUserId = await authenticateSafely(options.clerk, input.authorization);
+      if (!clerkUserId || !options.clerk?.writeCountry) throw new Error('Account authentication required.');
+      const normalized = country === null ? null : normalizeCountryCode(country);
+      if (country !== null && !normalized) throw new Error('Invalid country code.');
+      await options.clerk.writeCountry(clerkUserId, normalized);
+      return normalized;
     }
   };
 }
@@ -87,6 +100,14 @@ export function createClerkIdentityAdapter(options: {
     },
     async writeAccountId(clerkUserId, accountId) {
       await client.users.updateUserMetadata(clerkUserId, { privateMetadata: { unicupAccountId: accountId } });
+    },
+    async readCountry(clerkUserId) {
+      const user = await client.users.getUser(clerkUserId);
+      const value = user.privateMetadata.unicupCountry;
+      return typeof value === 'string' ? value : null;
+    },
+    async writeCountry(clerkUserId, country) {
+      await client.users.updateUserMetadata(clerkUserId, { privateMetadata: { unicupCountry: country } });
     }
   };
 }
@@ -94,6 +115,12 @@ export function createClerkIdentityAdapter(options: {
 async function authenticateSafely(adapter: ClerkIdentityAdapter | undefined, authorization?: string) {
   if (!adapter || !authorization) return null;
   try { return await adapter.authenticate(authorization); }
+  catch { return null; }
+}
+
+async function readCountrySafely(adapter: ClerkIdentityAdapter, clerkUserId: string) {
+  if (!adapter.readCountry) return null;
+  try { return normalizeCountryCode(await adapter.readCountry(clerkUserId)); }
   catch { return null; }
 }
 

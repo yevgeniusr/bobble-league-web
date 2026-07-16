@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createVerify, generateKeyPairSync } from 'node:crypto';
-import { buildGamePlayedEvents, drainAnalyticsEvents } from '../shared/analytics';
+import { buildGamePlayedEvents, countryAnalyticsEvent, drainAnalyticsEvents } from '../shared/analytics';
 import { addPlayer, collectPowerBox, createInitialState, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { FIELD } from '../shared/types';
 import { createXtremepushAnalytics } from '../client/src/analytics';
@@ -290,6 +290,44 @@ describe('Xtremepush backend hit-event sender', () => {
       async: false
     });
     expect(buildHitEventBody('token-for-test', event)).not.toHaveProperty('user_attributes');
+  });
+
+  it('targets an explicit country XP subject while retaining source player metadata', () => {
+    const countryEvent = {
+      ...event,
+      payload: {
+        ...event.payload,
+        xpSubjectId: 'unicup-country:AE',
+        xpSubjectName: 'United Arab Emirates',
+        xpSubjectType: 'country'
+      }
+    };
+
+    expect(buildHitEventBody('token-for-test', countryEvent)).toMatchObject({
+      user_id: 'unicup-country:AE',
+      value: {
+        accountId: event.payload.accountId,
+        xpSubjectType: 'country',
+        babbleUserId: 'unicup-country:AE'
+      }
+    });
+    expect(buildImportProfileBody('token-for-test', 'unicup-country:AE', countryEvent).rows).toEqual([
+      ['unicup-country:AE', 'United Arab Emirates']
+    ]);
+  });
+
+  it('fans a player XP event out to the authenticated country profile only when country is present', () => {
+    const withCountry = { ...event, payload: { ...event.payload, country: 'AE' } };
+    expect(countryAnalyticsEvent(withCountry)).toMatchObject({
+      name: 'abilityUsed',
+      payload: {
+        xpSubjectId: 'unicup-country:AE',
+        xpSubjectName: 'United Arab Emirates',
+        xpSubjectType: 'country',
+        sourceAccountId: event.payload.accountId
+      }
+    });
+    expect(countryAnalyticsEvent(event)).toBeNull();
   });
 
   it('builds the profile import body used to make users visible before events are hit', () => {

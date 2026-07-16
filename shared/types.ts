@@ -19,6 +19,8 @@ export type RobotProfile = {
   shape: RobotShape;
   texture: string;
   trait: string;
+  motion: 'static' | 'rotatingBase';
+  smoothness: number;
   density: number;
   restitution: number;
   width: number;
@@ -33,7 +35,8 @@ export const TEAMS = {
     lore: 'Self-balancing spherical robots built for clean redirects and reliable control across every PlanetBall arena.',
     robot: {
       shape: 'orb', texture: '/assets/robots/flux-orbs-surface.jpg',
-      trait: 'Balanced sphere: predictable rebounds and neutral weight.',
+      trait: 'Balanced sphere: predictable rebounds and neutral weight for controlled passing lanes.',
+      motion: 'static', smoothness: 0.92,
       density: 1, restitution: 1, width: 0.88, depth: 0.88, height: 1.62
     }
   },
@@ -43,7 +46,8 @@ export const TEAMS = {
     lore: 'Dense foundry robots with squared armor, designed to absorb hard contact and hold a defensive line.',
     robot: {
       shape: 'block', texture: '/assets/robots/forge-blocks-surface.jpg',
-      trait: 'Heavy block: steadier on impact with softer rebounds.',
+      trait: 'Heavy rounded block: steadier on impact with softer rebounds for defensive holds.',
+      motion: 'static', smoothness: 0.78,
       density: 1.18, restitution: 0.9, width: 1.02, depth: 0.92, height: 1.48
     }
   },
@@ -53,7 +57,8 @@ export const TEAMS = {
     lore: 'Light triangular robots from the lunar relay yards, tuned for sharp angles and lively attacking deflections.',
     robot: {
       shape: 'wedge', texture: '/assets/robots/vector-wedges-surface.jpg',
-      trait: 'Light wedge: sharper contact angles and livelier rebounds.',
+      trait: 'Light ramp wedge: lifts low contacts and creates lively attacking deflections.',
+      motion: 'static', smoothness: 0.72,
       density: 0.86, restitution: 1.1, width: 1.06, depth: 0.86, height: 1.5
     }
   },
@@ -63,7 +68,8 @@ export const TEAMS = {
     lore: 'Wide three-footed ring machines from Saturn, built to catch glancing passes across an elongated footprint.',
     robot: {
       shape: 'walker', texture: '/assets/robots/halo-walkers-surface.jpg',
-      trait: 'Wide walker: broader side contact with controlled rebound.',
+      trait: 'Wide rotating walker: broader side contact with a stable, controlled rebound.',
+      motion: 'rotatingBase', smoothness: 0.86,
       density: 1.08, restitution: 0.96, width: 1.12, depth: 0.76, height: 1.7
     }
   }
@@ -102,20 +108,21 @@ export const FORMATION_LAYOUTS: Record<FormationId, readonly { x: number; y: num
 };
 
 export const BOX_TYPES = {
-  beachBall: { label: 'Beach Ball', targetId: 'giantball', color: '#facc15', category: 'instant', durationTurns: 1, description: 'Enlarge and lighten the ball for this turn.' },
-  moveBall: { label: 'Move Ball', targetId: 'moveball', color: '#fb923c', category: 'instant', durationTurns: 0, description: 'Teleport the ball to any spot you click.' },
-  swapGoals: { label: 'Swap Goals', targetId: 'goalswap', color: '#e879f9', category: 'instant', durationTurns: 1, description: 'Flip scoring direction for one turn.' },
-  bigBumpers: { label: 'Big Bumpers', targetId: 'bumppadboost', color: '#f97316', category: 'instant', durationTurns: 1, description: 'Corner bumpers grow stronger for one turn.' },
-  boost: { label: 'Boost', targetId: 'boost', color: '#38bdf8', category: 'field', durationTurns: 1, description: 'Place a directional boost pad.' },
-  stickyGoo: { label: 'Sticky Goo', targetId: 'sticky', color: '#84cc16', category: 'field', durationTurns: 1, description: 'Place a sticky slow zone.' },
+  beachBall: { label: 'Beach Ball', targetId: 'giantball', color: '#facc15', category: 'instant', durationTurns: 1, description: 'Enlarge and lighten the ball for the current turn, making every bounce higher and harder to contain.' },
+  moveBall: { label: 'Move Ball', targetId: 'moveball', color: '#fb923c', category: 'instant', durationTurns: 0, description: 'Teleport the ball to a legal field position you choose, with its movement reset on arrival.' },
+  swapGoals: { label: 'Swap Goals', targetId: 'goalswap', color: '#e879f9', category: 'instant', durationTurns: 1, description: 'Reverse which goal scores for each side, turning familiar attacks into dangerous own goals.' },
+  bigBumpers: { label: 'Big Bumpers', targetId: 'bumppadboost', color: '#f97316', category: 'instant', durationTurns: 1, description: 'Enlarge every arena bumper and increase its kick for the remainder of the current turn.' },
+  boost: { label: 'Boost', targetId: 'boost', color: '#38bdf8', category: 'field', durationTurns: 1, description: 'Place and rotate a directional boost pad that accelerates every ball or robot crossing it.' },
+  stickyGoo: { label: 'Sticky Goo', targetId: 'sticky', color: '#84cc16', category: 'field', durationTurns: 1, description: 'Place a temporary slow zone that drains momentum from every ball or robot entering it.' },
   ramp: { label: 'Trampoline', targetId: 'ramp', color: '#a78bfa', category: 'field', durationTurns: 1, description: 'Place a physical ramp for this turn. It adds no artificial boost.' },
-  block: { label: 'Block', targetId: 'block', color: '#94a3b8', category: 'field', durationTurns: 1, description: 'Place a temporary wall.' },
+  block: { label: 'Block', targetId: 'block', color: '#94a3b8', category: 'field', durationTurns: 1, description: 'Place and rotate a temporary physical wall to close a lane or manufacture a bank shot.' },
   bigHead: { label: 'Big Head', targetId: 'bighead', color: '#ef4444', category: 'babble', durationTurns: 1, description: 'Target babblehead grows into a larger, heavier physical collider.' },
   ghosted: { label: 'Ghosted', targetId: 'ghost', color: '#d8b4fe', category: 'babble', durationTurns: 1, description: 'Target babblehead passes through babbleheads and boxes.' },
-  movePlayer: { label: 'Move Player', targetId: 'moveplayer', color: '#fde047', category: 'babble', durationTurns: 0, description: 'Move a target babblehead back toward center field.' },
-  yellowCard: { label: 'Yellow Card', targetId: 'yellowcard', color: '#facc15', category: 'instant', durationTurns: 0, description: 'Teleport the ball to the center of the field.' },
-  redCard: { label: 'Red Card', targetId: 'redcard', color: '#ef4444', category: 'babble', durationTurns: 0, description: 'Choose a babblehead to teleport to the center of the field.' },
-  readPlay: { label: 'Read the Play', targetId: 'readplay', color: '#6ee7f5', category: 'instant', durationTurns: 1, description: 'Reveal the opposing team\'s committed launch paths for this turn.' }
+  movePlayer: { label: 'Move Player', targetId: 'moveplayer', color: '#fde047', category: 'babble', durationTurns: 0, description: 'Reposition a chosen robot at a legal field point and reset its momentum on arrival.' },
+  yellowCard: { label: 'Yellow Card', targetId: 'yellowcard', color: '#facc15', category: 'instant', durationTurns: 0, description: 'Stop play around the ball and return it immediately to the exact center of the field.' },
+  redCard: { label: 'Red Card', targetId: 'redcard', color: '#ef4444', category: 'babble', durationTurns: 0, description: 'Choose any robot and teleport it to midfield with all of its current momentum removed.' },
+  readPlay: { label: 'Read the Play', targetId: 'readplay', color: '#6ee7f5', category: 'instant', durationTurns: 1, description: 'Reveal the opposing team\'s committed launch paths for the remainder of the current turn.' },
+  blindness: { label: 'Blindness', targetId: 'blindness', color: '#11131a', category: 'instant', durationTurns: 1, description: 'Black out the opposing team\'s match view until the current turn ends; a warning explains the effect.' }
 } as const;
 export type BoxType = keyof typeof BOX_TYPES;
 export const BOX_TYPE_IDS = Object.keys(BOX_TYPES) as BoxType[];
@@ -147,7 +154,8 @@ export const BOX_SELECTION_WEIGHTS: Record<BoxType, number> = {
   movePlayer: 80,
   yellowCard: 140,
   redCard: 123,
-  readPlay: 88
+  readPlay: 88,
+  blindness: 72
 };
 
 export function normalizeBoxType(type: unknown): BoxType | null {
@@ -207,6 +215,8 @@ export type MapConfig = {
   label: string;
   shortLabel: string;
   description: string;
+  lore: string;
+  physicsSummary: string;
   art: {
     fieldTexture: string;
     surroundings: string;
@@ -266,6 +276,8 @@ export const MAPS: Record<MapId, MapConfig> = {
     label: 'PlanetBall',
     shortLabel: 'PlanetBall',
     description: 'PlanetBall\'s televised entry arena, framed by the Ball Office resource circuit.',
+    lore: 'The first sanctioned Unicup pitch circles the Ball Office, where new teams prove they can compete before the resource board notices their names.',
+    physicsSummary: 'Original-calibrated gravity with quick settling, lively walls, and a slightly lighter tournament ball.',
     art: { fieldTexture: '/assets/maps/planetball-field.jpg', surroundings: '/assets/maps/planetball-surroundings.jpg' },
     layout: { bumpers: BUMPERS, bumperRadius: BUMPER_RADIUS, bigBumperRadius: BIG_BUMPER_RADIUS, boxSpawnAnchors: ['topMid', 'bottomMid'] },
     theme: {
@@ -308,6 +320,8 @@ export const MAPS: Record<MapId, MapConfig> = {
     label: 'Moon',
     shortLabel: 'Moon',
     description: 'A floaty Unicap relay above PlanetBall, with crater bumpers and broadcast gates.',
+    lore: 'An abandoned lunar relay became the league\'s quietest venue, where long airborne arcs hang over old transmission dishes and crater glass.',
+    physicsSummary: 'Thirty-eight percent gravity, lower density, slower impulses, and the liveliest ball and wall rebounds.',
     art: { fieldTexture: '/assets/maps/moon-field.jpg', surroundings: '/assets/maps/moon-surroundings.jpg' },
     layout: {
       bumpers: [
@@ -366,6 +380,8 @@ export const MAPS: Record<MapId, MapConfig> = {
     label: 'Coral Foundry',
     shortLabel: 'Foundry',
     description: 'A hot resource works where coral rails and offset bumpers reward fearless angles.',
+    lore: 'A coral resource foundry opened its cooling deck to Unicup after workers used maintenance spheres to invent impossible bank shots.',
+    physicsSummary: 'Slightly heavier gravity with powerful bumpers, stronger boost pads, and hard block rebounds.',
     art: { fieldTexture: '/assets/maps/coral-foundry-field.jpg', surroundings: '/assets/maps/coral-foundry-surroundings.jpg' },
     layout: {
       bumpers: [
@@ -424,6 +440,8 @@ export const MAPS: Record<MapId, MapConfig> = {
     label: 'Saturn',
     shortLabel: 'Saturn',
     description: 'Unicap\'s heavy orbital final, with ring markings and dense slow-carry collisions.',
+    lore: 'Saturn\'s ring keepers built this final above a freight orbit, using crushing local mass to test patience instead of raw launch power.',
+    physicsSummary: 'One hundred thirty-six percent gravity, dense bodies, reduced impulse, and muted rebounds that reward control.',
     art: { fieldTexture: '/assets/maps/saturn-field.jpg', surroundings: '/assets/maps/saturn-surroundings.jpg' },
     layout: {
       bumpers: [
@@ -491,6 +509,7 @@ export type ActiveEffect = { type: EffectName; untilTurn: number; until?: number
 export type PlayerState = {
   id: string;
   accountId?: string;
+  country?: string;
   name: string;
   avatarUrl?: string;
   side: PlayerSide;
@@ -592,6 +611,7 @@ export type GameState = {
   score: Record<PlayerSide, number>;
   swappedGoalsUntilTurn: number | null;
   moveVisionUntilTurn: Record<PlayerSide, number | null>;
+  blindnessUntilTurn: Record<PlayerSide, number | null>;
   events: ChatEvent[];
 };
 

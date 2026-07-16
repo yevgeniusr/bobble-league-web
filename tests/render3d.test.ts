@@ -99,6 +99,15 @@ describe('3D renderer coordinate mapping', () => {
     expect(new Set(profiles.map(profile => `${profile.width}:${profile.depth}:${profile.height}`)).size).toBe(4);
   });
 
+  it('declares one rotating robot base and a visibly smoothed body profile', () => {
+    const profiles = TEAM_IDS.map(robotVisualProfile);
+    expect(profiles.filter(profile => profile.motion === 'rotatingBase')).toHaveLength(1);
+    expect(profiles.every(profile => profile.smoothness >= 0.65)).toBe(true);
+    expect(robotVisualProfile('tigers')).toMatchObject({ bodyGeometry: 'roundedBox' });
+    expect(robotVisualProfile('bees')).toMatchObject({ bodyGeometry: 'rampWedge' });
+    expect(robotVisualProfile('parrots')).toMatchObject({ baseGeometry: 'rotor' });
+  });
+
   it('keeps babble contact shadows and control rings close to the real babble radius', () => {
     const radius = fieldRadiusToWorld(FIELD.babbleRadius);
     const base = babbleContactBaseMetrics(FIELD.babbleRadius);

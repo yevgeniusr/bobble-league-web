@@ -119,6 +119,7 @@ export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: 
     score: { left: 0, right: 0 },
     swappedGoalsUntilTurn: null,
     moveVisionUntilTurn: { left: null, right: null },
+    blindnessUntilTurn: { left: null, right: null },
     events: [{ at: Date.now(), message: `Room ${roomCode} created on ${MAPS[selectedMap].label}.` }]
   };
   buildBabbles(state);
@@ -179,12 +180,13 @@ export function setRoundTime(state: GameState, seconds: number) {
   return true;
 }
 
-export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide, accountId?: string, avatarUrl?: string): PlayerState {
+export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide, accountId?: string, avatarUrl?: string, country?: string): PlayerState {
   const chosenSide = side ?? chooseSide(state);
   const chosenTeam = state.sideTeams[chosenSide] ?? team;
   const p: PlayerState = {
     id,
     accountId,
+    ...(country ? { country } : {}),
     name: sanitizeName(name),
     ...(avatarUrl ? { avatarUrl } : {}),
     side: chosenSide,
@@ -286,6 +288,7 @@ export function startGame(state: GameState, rng: Rng = Math.random) {
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
   state.moveVisionUntilTurn = { left: null, right: null };
+  state.blindnessUntilTurn = { left: null, right: null };
   state.ball = ballAtKickoff({ x: (rng() - 0.5) * 20, y: 0 });
   buildBabbles(state);
   state.kickoffAt = Date.now();
@@ -316,6 +319,7 @@ export function resetGame(state: GameState, mode: GameMode, rng: Rng = Math.rand
   state.powerPlayInventories = { left: [], right: [] };
   state.swappedGoalsUntilTurn = null;
   state.moveVisionUntilTurn = { left: null, right: null };
+  state.blindnessUntilTurn = { left: null, right: null };
   state.ball = ballAtKickoff({ x: (rng() - 0.5) * 20, y: 0 });
   state.kickoffAt = Date.now();
   state.turnDeadlineAt = state.kickoffAt + state.config.turnDurationMs;
@@ -742,6 +746,7 @@ function applyPowerPlay(state: GameState, side: PlayerSide, use: PowerPlayUse, _
     case 'swapGoals': state.swappedGoalsUntilTurn = state.turn + 1; break;
     case 'bigBumpers': state.bigBumpersUntilTurn = state.turn; break;
     case 'readPlay': state.moveVisionUntilTurn[side] = state.turn; break;
+    case 'blindness': state.blindnessUntilTurn[side === 'left' ? 'right' : 'left'] = state.turn; break;
     case 'boost': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'boost', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: use.angle ?? 0, untilTurn: state.turn + 1 }); break;
     case 'stickyGoo': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'stickyGoo', owner: side, pos: use.position ?? { x: FIELD.width / 2, y: FIELD.height / 2 }, angle: 0, untilTurn: state.turn + 1 }); break;
     case 'ramp': state.fieldObjects.push({ id: `field-${state.nextBoxId++}`, type: 'ramp', owner: side, pos: safeFieldPos(use.position, { x: FIELD.width / 2, y: FIELD.height / 2 }, RAMP_HALF_LEN), angle: use.angle ?? -Math.PI / 4, untilTurn: state.turn }); break;
@@ -787,6 +792,7 @@ function expireTurnEffects(state: GameState) {
   if (state.swappedGoalsUntilTurn !== null && state.swappedGoalsUntilTurn < state.turn) state.swappedGoalsUntilTurn = null;
   if (state.bigBumpersUntilTurn !== null && state.bigBumpersUntilTurn < state.turn) state.bigBumpersUntilTurn = null;
   for (const side of ['left', 'right'] as const) if (state.moveVisionUntilTurn[side] !== null && state.moveVisionUntilTurn[side]! < state.turn) state.moveVisionUntilTurn[side] = null;
+  for (const side of ['left', 'right'] as const) if (state.blindnessUntilTurn[side] !== null && state.blindnessUntilTurn[side]! < state.turn) state.blindnessUntilTurn[side] = null;
   if (state.beachBallUntilTurn !== null && state.beachBallUntilTurn < state.turn) {
     state.beachBallUntilTurn = null;
     state.ball.radius = FIELD.ballRadius;

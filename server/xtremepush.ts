@@ -244,6 +244,8 @@ function formatXtremepushTimestamp(value: unknown) {
 }
 
 function userIdFor(payload: AnalyticsPayload) {
+  const xpSubjectId = stringOrNull(payload.xpSubjectId);
+  if (xpSubjectId) return xpSubjectId;
   const accountId = stringOrNull(payload.accountId);
   if (accountId) return accountId;
   const playerName = stringOrNull(payload.playerName);
@@ -260,7 +262,8 @@ export function userIdForNickname(nickname: string) {
 }
 
 function displayNameFor(payload: AnalyticsPayload, userId: string) {
-  return stringOrNull(payload.playerName)
+  return stringOrNull(payload.xpSubjectName)
+    ?? stringOrNull(payload.playerName)
     ?? stringOrNull(payload.holderId)
     ?? stringOrNull(payload.roomCode)
     ?? userId.slice(0, 64);

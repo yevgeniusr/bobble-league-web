@@ -11,6 +11,7 @@ import { buildMatchEndSummary } from './matchEnd';
 import { authHeaders, ClerkTokenGetter, fetchUnicupIdentity, UnicupIdentity } from './auth';
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import { heldPowerPlayForPlayer } from './gameUiModel';
+import { CountrySelector, TournamentArchive } from './landingArchive';
 import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -62,6 +63,7 @@ function App({ auth, accountControls, suggestedName, playerAvatarUrl }: { auth: 
   const [error, setError] = React.useState('');
   const [conn, setConn] = React.useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
   const [identity, setIdentity] = React.useState<UnicupIdentity | null>(null);
+  const [identityVersion, setIdentityVersion] = React.useState(0);
   const [audioSettings, setAudioSettings] = React.useState<AudioSettings>(() => loadAudioSettings());
   const stateRef = React.useRef<GameState | null>(null);
   const leavingRef = React.useRef(false);
@@ -110,7 +112,7 @@ function App({ auth, accountControls, suggestedName, playerAvatarUrl }: { auth: 
       }
     })();
     return () => { active = false; };
-  }, [auth.isLoaded, auth.userId]);
+  }, [auth.isLoaded, auth.userId, identityVersion]);
 
   React.useEffect(() => () => { socket.disconnect(); }, []);
 
@@ -183,6 +185,7 @@ function App({ auth, accountControls, suggestedName, playerAvatarUrl }: { auth: 
       identity={identity}
       ready={entryReady}
       getToken={auth.getToken}
+      onIdentityRefresh={()=>setIdentityVersion(value=>value + 1)}
     />}
     {state && <GameScreen state={state} you={you} mode={mode} setMode={setMode} mapId={mapId} setMapId={setMapId} roundTimeSeconds={roundTimeSeconds} setRoundTimeSeconds={setRoundTimeSeconds} audioSettings={audioSettings} onAudioChange={patchAudio} error={error} onDismissError={()=>setError('')} onLeave={()=>{ leavingRef.current = true; socket.emit('room:leave'); setState(null); setYou(''); setRoomCode(''); setError(''); }}/>}
     {conn === 'reconnecting' && <div className="connBanner" role="status">Connection lost — reconnecting…</div>}
@@ -209,9 +212,10 @@ type LandingPageProps = {
   identity: UnicupIdentity | null;
   ready: boolean;
   getToken: ClerkTokenGetter;
+  onIdentityRefresh: () => void;
 };
 
-function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeSeconds, setRoundTimeSeconds, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error, accountControls, identity, ready, getToken }: LandingPageProps) {
+function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeSeconds, setRoundTimeSeconds, roomCode, setRoomCode, audioSettings, onAudioChange, onCreateRoom, onJoinRoom, error, accountControls, identity, ready, getToken, onIdentityRefresh }: LandingPageProps) {
   const [deskView, setDeskView] = React.useState<'host' | 'join'>('host');
   const hostTabRef = React.useRef<HTMLButtonElement>(null);
   const joinTabRef = React.useRef<HTMLButtonElement>(null);
@@ -237,9 +241,9 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeS
         <header className="siteHeader">
           <a className="brandMark" href="#top" aria-label={`${UNICUP_BRAND.name} home`}><img src={UNICUP_BRAND.art.logo} alt=""/></a>
           <nav aria-label="Landing navigation">
-            <a href="#origin">Origin</a>
-            <a href="#ball-office">Ball Office</a>
-            <a href="#fair-play">Fair play</a>
+            <a href="#powerups">Power plays</a>
+            <a href="#teams">Teams</a>
+            <a href="#maps">Maps</a>
             <a className="navPlay" href="#play">Play</a>
           </nav>
           {accountControls}
@@ -265,6 +269,7 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeS
           <span><i/>{identity?.kind === 'account' ? 'Account progress protected' : identity?.kind === 'guest' ? 'Playing as guest' : 'Connecting player'}</span>
           {identity?.kind === 'guest' && <small>Sign up anytime to keep this progress across devices.</small>}
         </div>
+        {identity?.kind === 'account' && <CountrySelector country={identity.country} getToken={getToken} onSaved={onIdentityRefresh}/>}
 
         <label className="deskField">Player name
           <input value={name} onChange={e=>setName(e.target.value)} maxLength={18} autoComplete="nickname"/>
@@ -305,6 +310,8 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeS
         {error && <p className="lobbyError" role="alert">{error}</p>}
       </aside>
     </section>
+
+    <TournamentArchive/>
 
     <section className="originScene" id="origin">
       <div className="sectionLabel">The origin / year very very far away</div>
@@ -354,8 +361,10 @@ function LandingPage({ name, setName, mode, setMode, mapId, setMapId, roundTimeS
 
 function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: ClerkTokenGetter }) {
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
+  const hostRef = React.useRef<HTMLDivElement | null>(null);
   const generationRef = React.useRef(0);
   const [config, setConfig] = React.useState<{ loyaltyEnabled: boolean; loyaltyEndpoint: string | null } | null>(null);
+  const [open, setOpen] = React.useState(false);
 
   React.useEffect(() => {
     let active = true;
@@ -373,7 +382,7 @@ function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: Cle
   React.useEffect(() => {
     const endpoint = config?.loyaltyEndpoint;
     const cleanName = nickname.trim();
-    if (!config?.loyaltyEnabled || !endpoint || !cleanName) return;
+    if (!open || !config?.loyaltyEnabled || !endpoint || !cleanName || !hostRef.current) return;
     const generation = ++generationRef.current;
     const controller = new AbortController();
     let installedRefresh: (() => void) | null = null;
@@ -405,10 +414,14 @@ function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: Cle
           xtremepushCommand('on', 'loyalty_token_expired', () => refreshLoyaltyToken?.());
           loyaltyExpiryHandlerInstalled = true;
         }
-        // Omitting the host element enables Xtremepush's native floating widget mode.
-        xtremepushCommand('mountLoyalty', 420, 640);
+        const host = hostRef.current;
+        if (!host) return;
+        host.replaceChildren();
+        const width = Math.max(280, Math.min(420, host.clientWidth));
+        const height = Math.max(360, Math.min(580, window.innerHeight - 190));
+        xtremepushCommand('mountLoyalty', width, height, host);
         window.setTimeout(() => {
-          if (generation === generationRef.current) iframeRef.current = document.querySelector('#loyalty-frame-container iframe');
+          if (generation === generationRef.current) iframeRef.current = host.querySelector('iframe');
         }, 0);
       } catch { /* The game remains usable when Loyalty is unavailable. */ }
     }, 450);
@@ -416,16 +429,24 @@ function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: Cle
       window.clearTimeout(timer);
       controller.abort();
       iframeRef.current = null;
+      hostRef.current?.replaceChildren();
       document.getElementById('loyalty-frame-container')?.remove();
       if (refreshLoyaltyToken === installedRefresh) refreshLoyaltyToken = null;
     };
-  }, [config, nickname, getToken]);
+  }, [config, nickname, getToken, open]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [open]);
 
   React.useEffect(() => {
     const endpoint = config?.loyaltyEndpoint;
     if (!endpoint) return;
     const onMessage = (event: MessageEvent) => {
-      const mountedFrame = iframeRef.current ?? document.querySelector<HTMLIFrameElement>('#loyalty-frame-container iframe');
+      const mountedFrame = iframeRef.current ?? hostRef.current?.querySelector<HTMLIFrameElement>('iframe') ?? null;
       if (mountedFrame) iframeRef.current = mountedFrame;
       if (event.origin !== `https://${endpoint}` || event.source !== mountedFrame?.contentWindow || !event.data || event.data.source !== 'Scrimmage') return;
       if (event.data.type === 'error') console.warn('Xtremepush Loyalty widget error', event.data.payload?.type ?? 'unknown');
@@ -434,19 +455,27 @@ function LoyaltyWidget({ nickname, getToken }: { nickname: string; getToken: Cle
     return () => window.removeEventListener('message', onMessage);
   }, [config?.loyaltyEndpoint]);
 
-  return null;
+  if (!config?.loyaltyEnabled || !config.loyaltyEndpoint) return null;
+  return <div className="loyaltyHome">
+    {open && <aside className="loyaltyHomePanel" aria-label="Unicup loyalty program">
+      <header><span><small>Unicap season account</small><b>Rewards &amp; XP</b></span><button type="button" onClick={()=>setOpen(false)} aria-label="Close rewards" title="Close">&#215;</button></header>
+      <div className="loyaltyEmbed" ref={hostRef}/>
+    </aside>}
+    <button type="button" className="loyaltyHomeTrigger" aria-expanded={open} onClick={()=>setOpen(value=>!value)}><span aria-hidden="true">&#10022;</span> Rewards</button>
+  </div>;
 }
 // One icon per Power Play, reused across HUD buttons and hints.
 const POWER_ICONS: Record<BoxType, string> = {
   beachBall: '🏖', moveBall: '🎯', swapGoals: '🔄', bigBumpers: '💥', boost: '⚡',
   stickyGoo: '🟢', ramp: '⛰️', block: '🧱', bigHead: '🗣️', ghosted: '👻', movePlayer: '🚚',
-  yellowCard: '🟨', redCard: '🟥', readPlay: '◉'
+  yellowCard: '🟨', redCard: '🟥', readPlay: '◉', blindness: '●'
 };
 
 // Ability icon: generated art from public/assets/abilities with an emoji
 // fallback if the asset is missing or fails to load.
 function AbilityIcon({ type }: { type: BoxType }) {
   const [failed, setFailed] = React.useState(false);
+  if (type === 'blindness') return <span className="abilityBlindnessGlyph" aria-hidden="true"><i/></span>;
   if (failed) return <span className="abilityEmoji" aria-hidden="true">{POWER_ICONS[type]}</span>;
   return <img className="abilityImg" src={`/assets/abilities/${type}.png`} alt="" draggable={false} onError={() => setFailed(true)}/>;
 }
@@ -513,6 +542,9 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, roundTimeSecon
   }, [state.phase]);
 
   const matchFinished = state.phase === 'finished';
+  const yourSide = state.players[you]?.side;
+  const blindnessTurn = yourSide ? state.blindnessUntilTurn?.[yourSide] : null;
+  const blinded = blindnessTurn !== null && blindnessTurn !== undefined && blindnessTurn >= state.turn;
 
   return <section className="gameShell" style={{ backgroundImage: `url(${MAPS[state.mapId].art.surroundings})` }}>
     <Game3D state={state} you={you} placing={placing} setPlacing={setPlacing} aiming={aiming} setAiming={setAiming}/>
@@ -522,6 +554,7 @@ function GameScreen({ state, you, mode, setMode, mapId, setMapId, roundTimeSecon
     {matchFinished && <MatchEndOverlay state={state} onPlayAgain={()=>socket.emit('game:start')} onBackToLobby={()=>socket.emit('game:reset', state.mode)} onLeave={onLeave}/>}
     {burst && <CelebrationOverlay key={`${burst.kind}-${burst.nonce}`} kind={burst.kind} side={burst.side} state={state}/>}
     {error && <section className="panel error" role="alert" title="Click to dismiss" onClick={onDismissError}>{error}<span className="errorClose"> ✕</span></section>}
+    {blinded && <div className="blindnessVeil" role="alert" aria-live="assertive"><span>Opponent power play</span><strong>Blindness</strong><p>Your screen is intentionally hidden until this turn ends.</p><small>Turn {state.turn} / {state.config.maxTurns}</small></div>}
   </section>;
 }
 

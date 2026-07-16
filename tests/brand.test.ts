@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TEAM_IDS, TEAMS } from '../shared/types';
+import { BOX_TYPE_IDS, BOX_TYPES, MAPS, MAP_IDS, TEAM_IDS, TEAMS } from '../shared/types';
 import { UNICUP_BRAND } from '../client/src/brand';
 import { contrastRatio, readableTextColor } from '../client/src/color';
 
@@ -51,6 +51,21 @@ describe('Unicup brand contract', () => {
       expect(team.robot.trait.length).toBeGreaterThan(20);
       expect(team.lore.length).toBeGreaterThan(30);
       expect('emoji' in team).toBe(false);
+    }
+  });
+
+  it('publishes complete landing archive copy for every powerup, team, and map', () => {
+    expect(BOX_TYPE_IDS).toContain('blindness');
+    for (const powerup of Object.values(BOX_TYPES)) {
+      expect(powerup.description.length).toBeGreaterThan(24);
+    }
+    for (const team of Object.values(TEAMS)) {
+      expect(team.lore.length).toBeGreaterThan(50);
+      expect(team.robot.trait.length).toBeGreaterThan(30);
+    }
+    for (const mapId of MAP_IDS) {
+      expect(MAPS[mapId].lore.length).toBeGreaterThan(50);
+      expect(MAPS[mapId].physicsSummary.length).toBeGreaterThan(30);
     }
   });
 });

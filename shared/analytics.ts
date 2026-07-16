@@ -11,6 +11,7 @@ import {
   Vec
 } from './types';
 import { boxTargetPowerId, normalizeBoxType } from './types';
+import { countryName, normalizeCountryCode } from './countries';
 
 export type AnalyticsEventName = 'abilityUsed' | 'boxPickup' | 'gamePlayed' | 'goalScored';
 export type GameOutcome = 'won' | 'loss' | 'draw';
@@ -95,10 +96,26 @@ function playerFields(state: GameState, playerId?: string) {
   return {
     playerId: player.id,
     accountId: player.accountId,
+    country: player.country,
     playerSide: player.side,
     playerTeam: player.team,
     playerName: player.name,
     babbleIds: [...player.controlledBabbleIds]
+  };
+}
+
+export function countryAnalyticsEvent(event: AnalyticsEvent): AnalyticsEvent | null {
+  const country = normalizeCountryCode(event.payload.country);
+  if (!country || typeof event.payload.accountId !== 'string') return null;
+  return {
+    name: event.name,
+    payload: {
+      ...event.payload,
+      xpSubjectId: `unicup-country:${country}`,
+      xpSubjectName: countryName(country),
+      xpSubjectType: 'country',
+      sourceAccountId: event.payload.accountId
+    }
   };
 }
 

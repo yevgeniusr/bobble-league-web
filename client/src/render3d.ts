@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { ARENA_BARRIERS, ARENA_FLOORS, ARENA_WALL_HEIGHT, GOAL_COLLISION_BOTTOM, GOAL_COLLISION_TOP } from '../../shared/arena';
 import { ActiveEffect, BOX_TYPES, BUMPERS, FIELD, FieldObjectType, GameState, MAPS, MapId, RAMP_HALF_LEN, RAMP_HALF_WIDTH, ROTATABLE_FIELD_OBJECTS, TEAMS, TeamId, Vec, normalizeMapId } from '../../shared/types';
 import { babbleRestHeight, ballRestHeight } from '../../shared/airborne';
@@ -234,7 +235,11 @@ export function robotVisualProfile(teamId: TeamId) {
     texture: robot.texture,
     width: robot.width,
     depth: robot.depth,
-    height: robot.height
+    height: robot.height,
+    motion: robot.motion,
+    smoothness: robot.smoothness,
+    bodyGeometry: robot.shape === 'block' ? 'roundedBox' : robot.shape === 'wedge' ? 'rampWedge' : robot.shape === 'orb' ? 'sphere' : 'ring',
+    baseGeometry: robot.motion === 'rotatingBase' ? 'rotor' : 'driveRing'
   };
 }
 
@@ -1003,8 +1008,8 @@ export class BabbleLeague3DRenderer {
       ? this.texturedMat(`robotSurface:${robot.texture}`, () => new THREE.MeshStandardMaterial({
           map: surfaceTexture,
           color: new THREE.Color(team.primary).lerp(new THREE.Color(0xffffff), 0.2),
-          roughness: 0.42,
-          metalness: 0.5
+          roughness: Math.max(0.2, 0.62 - robot.smoothness * 0.38),
+          metalness: 0.36
         }))
       : bmat(team.primary, 0.38);
     const trimMat = bmat(team.secondary, 0.32);
@@ -1017,49 +1022,68 @@ export class BabbleLeague3DRenderer {
     const hop = physicsHop;
     const grp = new THREE.Group(); grp.position.set(w.x, hop, w.z); this.dynamic.add(grp);
     const base = babbleContactBaseMetrics(b.radius);
-    const radialSegments = this.lowPower ? 16 : 30;
+    const radialSegments = this.lowPower ? 18 : 40;
     const mobilePresentationScale = this.canvas.clientWidth <= 720 ? 1.18 : 1;
     const scale = r / fieldRadiusToWorld(FIELD.babbleRadius) * mobilePresentationScale;
     const width = robot.width * scale;
     const depth = robot.depth * scale;
     const height = robot.height * scale;
     this.mesh(grp, new THREE.CylinderGeometry(base.topRadius, base.radius, base.height, radialSegments), darkMat, 0, TURF_Y + base.height / 2, 0, solid);
-    const driveRing = this.mesh(grp, new THREE.TorusGeometry(r * 0.77, r * 0.09, 8, radialSegments), trimMat, 0, TURF_Y + base.height + 0.03, 0, solid);
+    const baseRotor = new THREE.Group();
+    baseRotor.rotation.y = robot.motion === 'rotatingBase' ? t * 1.45 : 0;
+    grp.add(baseRotor);
+    const driveRing = this.mesh(baseRotor, new THREE.TorusGeometry(r * 0.77, r * 0.09, 10, radialSegments), trimMat, 0, TURF_Y + base.height + 0.03, 0, solid);
     driveRing.rotation.x = Math.PI / 2;
+    if (robot.motion === 'rotatingBase') {
+      for (let i = 0; i < 3; i++) {
+        const angle = i * Math.PI * 2 / 3;
+        const marker = this.mesh(baseRotor, new THREE.CapsuleGeometry(r * 0.07, r * 0.2, 4, 10), lightMat, Math.cos(angle) * r * 0.7, TURF_Y + base.height + 0.08, Math.sin(angle) * r * 0.7, solid);
+        marker.rotation.z = Math.PI / 2;
+        marker.rotation.y = -angle;
+      }
+    }
 
     const chassis = new THREE.Group();
     chassis.position.set(0, 0, 0);
     chassis.rotation.z = wobble;
+    chassis.rotation.x = Math.sin(t * 2.1) * 0.012;
     grp.add(chassis);
     const bodyY = TURF_Y + base.height + height / 2 + bobY;
     const frontZ = depth * 0.48;
 
     if (robot.shape === 'orb') {
-      const body = this.mesh(chassis, new THREE.SphereGeometry(1, this.lowPower ? 18 : 36, this.lowPower ? 12 : 24), chassisMat, 0, bodyY, 0, solid);
+      const body = this.mesh(chassis, new THREE.SphereGeometry(1, this.lowPower ? 20 : 48, this.lowPower ? 14 : 32), chassisMat, 0, bodyY, 0, solid);
       body.scale.set(width / 2, height / 2, depth / 2);
       const gyro = this.mesh(chassis, new THREE.TorusGeometry(1, 0.08, 8, this.lowPower ? 24 : 48), bmat(team.primary, 0.3), 0, bodyY, 0, solid);
       gyro.scale.set(width * 0.56, height * 0.46, depth * 0.56);
       gyro.rotation.x = Math.PI / 2;
-      const visor = this.mesh(chassis, new THREE.SphereGeometry(1, 18, 12), darkMat, 0, bodyY + height * 0.09, frontZ, solid);
+      const visor = this.mesh(chassis, new THREE.SphereGeometry(1, 24, 16), darkMat, 0, bodyY + height * 0.09, frontZ, solid);
       visor.scale.set(width * 0.3, height * 0.13, depth * 0.08);
     } else if (robot.shape === 'block') {
-      const body = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1, 3, 3, 3), chassisMat, 0, bodyY, 0, solid);
+      const body = this.mesh(chassis, new RoundedBoxGeometry(1, 1, 1, this.lowPower ? 2 : 5, 0.16), chassisMat, 0, bodyY, 0, solid);
       body.scale.set(width, height * 0.78, depth);
-      const crown = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), bmat(team.primary, 0.3), 0, bodyY + height * 0.43, 0, solid);
+      const crown = this.mesh(chassis, new RoundedBoxGeometry(1, 1, 1, 3, 0.18), bmat(team.primary, 0.3), 0, bodyY + height * 0.43, 0, solid);
       crown.scale.set(width * 0.78, height * 0.16, depth * 0.84);
       for (const side of [-1, 1]) {
-        const shoulder = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), bmat(team.primary, 0.34), side * width * 0.5, bodyY, 0, solid);
+        const shoulder = this.mesh(chassis, new RoundedBoxGeometry(1, 1, 1, 3, 0.2), bmat(team.primary, 0.34), side * width * 0.5, bodyY, 0, solid);
         shoulder.scale.set(width * 0.16, height * 0.46, depth * 0.78);
       }
-      const visor = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), lightMat, 0, bodyY + height * 0.13, frontZ, solid);
+      const visor = this.mesh(chassis, new RoundedBoxGeometry(1, 1, 1, 3, 0.22), lightMat, 0, bodyY + height * 0.13, frontZ, solid);
       visor.scale.set(width * 0.55, height * 0.13, depth * 0.08);
     } else if (robot.shape === 'wedge') {
-      const body = this.mesh(chassis, new THREE.CylinderGeometry(1, 1, 1, 3), chassisMat, 0, bodyY, 0, solid);
-      body.scale.set(width * 0.58, height, depth * 0.58);
-      body.rotation.y = b.side === 'left' ? -Math.PI / 2 : Math.PI / 2;
-      const spine = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), trimMat, 0, bodyY + height * 0.2, 0, solid);
+      const rampShape = new THREE.Shape();
+      rampShape.moveTo(-0.5, -0.5);
+      rampShape.lineTo(0.5, -0.5);
+      rampShape.lineTo(0.5, 0.5);
+      rampShape.closePath();
+      const rampGeometry = new THREE.ExtrudeGeometry(rampShape, { depth: 1, steps: 1, bevelEnabled: true, bevelSegments: this.lowPower ? 1 : 4, bevelSize: 0.055, bevelThickness: 0.055 });
+      rampGeometry.translate(0, 0, -0.5);
+      const body = this.mesh(chassis, rampGeometry, chassisMat, 0, bodyY, 0, solid);
+      body.scale.set(width, height, depth);
+      body.rotation.y = b.side === 'left' ? 0 : Math.PI;
+      const spine = this.mesh(chassis, new RoundedBoxGeometry(1, 1, 1, 3, 0.18), trimMat, 0, bodyY + height * 0.2, 0, solid);
       spine.scale.set(width * 0.13, height * 0.62, depth * 0.86);
-      const visor = this.mesh(chassis, new THREE.BoxGeometry(1, 1, 1), darkMat, 0, bodyY + height * 0.08, frontZ * 0.9, solid);
+      const visor = this.mesh(chassis, new RoundedBoxGeometry(1, 1, 1, 3, 0.2), darkMat, 0, bodyY + height * 0.08, frontZ * 0.9, solid);
       visor.scale.set(width * 0.38, height * 0.12, depth * 0.08);
     } else {
       const ring = this.mesh(chassis, new THREE.TorusGeometry(0.5, 0.15, this.lowPower ? 8 : 14, this.lowPower ? 24 : 48), chassisMat, 0, bodyY + height * 0.08, 0, solid);
@@ -1068,10 +1092,22 @@ export class BabbleLeague3DRenderer {
       core.scale.set(width * 0.2, height * 0.18, depth * 0.24);
       for (let i = 0; i < 3; i++) {
         const a = -Math.PI / 2 + i * Math.PI * 2 / 3;
-        const foot = this.mesh(chassis, new THREE.CylinderGeometry(0.12, 0.17, height * 0.38, 10), darkMat, Math.cos(a) * width * 0.37, TURF_Y + base.height + height * 0.18, Math.sin(a) * depth * 0.37, solid);
+        const foot = this.mesh(baseRotor, new THREE.CapsuleGeometry(0.13, height * 0.24, 4, this.lowPower ? 8 : 14), darkMat, Math.cos(a) * width * 0.37, TURF_Y + base.height + height * 0.18, Math.sin(a) * depth * 0.37, solid);
         foot.rotation.z = Math.cos(a) * 0.16;
       }
     }
+
+    const eyeY = bodyY + height * 0.13;
+    for (const side of [-1, 1]) {
+      const eye = this.mesh(chassis, new THREE.SphereGeometry(1, this.lowPower ? 10 : 18, this.lowPower ? 7 : 12), lightMat, side * width * 0.12, eyeY, frontZ * 1.09, solid);
+      eye.scale.set(width * 0.085, height * 0.075, depth * 0.045);
+      const pupil = this.mesh(chassis, new THREE.SphereGeometry(1, 10, 7), darkMat, side * width * 0.12, eyeY, frontZ * 1.145, solid);
+      pupil.scale.set(width * 0.034, height * 0.034, depth * 0.022);
+    }
+    const antenna = this.mesh(chassis, new THREE.CapsuleGeometry(0.025, height * 0.14, 3, 8), trimMat, 0, bodyY + height * 0.56, 0, solid);
+    antenna.rotation.z = wobble * 3;
+    const antennaTip = this.mesh(chassis, new THREE.SphereGeometry(height * 0.065, 14, 10), lightMat, 0, bodyY + height * 0.67, 0, solid);
+    antennaTip.scale.set(1, 0.85, 1);
 
     if (ghosted) {
       const shell = new THREE.Mesh(this.geo('ghostShell', () => new THREE.SphereGeometry(1, 24, 16)),

@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { AnalyticsEvent, drainAnalyticsEvents } from '../shared/analytics';
+import { AnalyticsEvent, countryAnalyticsEvent, drainAnalyticsEvents } from '../shared/analytics';
+import { CountryCode, normalizeCountryCode } from '../shared/countries';
 import { addCheatBoxes, addPlayer, applyFormation, blankInput, createInitialState, findDisconnectedSeat, grantCheatBox, launchBabble, reclaimPlayer, redactStateFor, removePlayer, resetGame, rotateFieldObject, setFieldObjectAngle, setMap, setPlayerReady, setPlayerSide, setRoundTime, setSideTeam, startGame, stepGame, usePowerPlay } from '../shared/game';
 import { freePhysics } from '../shared/physics';
 import { BOX_TYPES, ClientToServerEvents, FORMATION_IDS, GAME_MODES, GameMode, GameState, MAP_IDS, MapId, ServerToClientEvents, TEAM_IDS, TeamId, normalizeBoxType } from '../shared/types';
@@ -56,7 +57,7 @@ const CHEAT_BOX_COOLDOWN_MS = 800;
 const CHEAT_ALL_COOLDOWN_MS = 5000;
 
 type InterServerEvents = Record<string, never>;
-type SocketData = { roomCode?: string; playerId?: string; accountId?: string; identityKind?: 'guest' | 'account'; lastCheatAt?: number; lastCheatAllAt?: number };
+type SocketData = { roomCode?: string; playerId?: string; accountId?: string; country?: CountryCode; identityKind?: 'guest' | 'account'; lastCheatAt?: number; lastCheatAllAt?: number };
 type IOServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 type IOSocket = Parameters<Parameters<IOServer['on']>[1]>[0];
 
@@ -93,7 +94,19 @@ app.get('/healthz', (_, res) => res.json({ ok: true, rooms: rooms.size, uptime: 
 app.get('/api/identity', async (req, res) => {
   const resolved = await identity.resolve({ authorization: req.headers.authorization, cookieHeader: req.headers.cookie });
   setGuestCookie(res, resolved.guestCookie);
-  return res.json({ accountId: resolved.accountId, kind: resolved.kind });
+  return res.json({ accountId: resolved.accountId, kind: resolved.kind, country: resolved.country ?? null });
+});
+app.put('/api/account/country', async (req, res) => {
+  const parsed = z.object({ country: z.string().nullable() }).strict().safeParse(req.body);
+  if (!parsed.success || (parsed.data.country !== null && !normalizeCountryCode(parsed.data.country))) {
+    return res.status(400).json({ error: 'Choose a valid country.' });
+  }
+  try {
+    const country = await identity.updateCountry({ authorization: req.headers.authorization }, parsed.data.country);
+    return res.json({ country });
+  } catch {
+    return res.status(403).json({ error: 'Sign in to choose a country.' });
+  }
 });
 app.get('/api/config', (req, res) => {
   res.setHeader('cache-control', 'no-store');
@@ -167,6 +180,7 @@ io.use(async (socket, next) => {
   const token = typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : undefined;
   const resolved = await identity.resolve({ authorization: token ? `Bearer ${token}` : undefined, cookieHeader: socket.handshake.headers.cookie });
   socket.data.accountId = resolved.accountId;
+  socket.data.country = resolved.country;
   socket.data.identityKind = resolved.kind;
   next();
 });
@@ -339,7 +353,7 @@ function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId, ava
   const seat = findDisconnectedSeat(room.state, name, socket.data.accountId);
   const reclaimed = seat ? reclaimPlayer(room.state, seat.id, socket.id) : null;
   if (!reclaimed) {
-    addPlayer(room.state, socket.id, name, team, undefined, socket.data.accountId, avatarUrl);
+    addPlayer(room.state, socket.id, name, team, undefined, socket.data.accountId, avatarUrl, socket.data.country);
     if (team) setSideTeam(room.state, socket.id, team);
   }
   room.inputs[socket.id] = { ...blankInput };
@@ -358,6 +372,8 @@ function flushAnalytics(room: Room) {
 
 function sendAnalyticsEvent(event: AnalyticsEvent) {
   void xtremepush.send(event);
+  const countryEvent = countryAnalyticsEvent(event);
+  if (countryEvent) void xtremepush.send(countryEvent);
 }
 
 function loadLocalEnv() {

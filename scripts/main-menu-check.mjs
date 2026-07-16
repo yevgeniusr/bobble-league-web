@@ -28,6 +28,15 @@ try {
   await page.goto(base, { waitUntil: 'networkidle' });
   await waitPlayerIdentity(page);
   await page.getByRole('heading', { level: 1, name: /^Unicup$/i }).waitFor({ state: 'visible' });
+  await page.getByRole('heading', { name: 'Power plays, decoded.' }).waitFor({ state: 'visible' });
+  await page.getByRole('heading', { name: 'Meet the machines.' }).waitFor({ state: 'visible' });
+  await page.getByRole('heading', { name: 'Four worlds. Four kinds of gravity.' }).waitFor({ state: 'visible' });
+  const firstPower = page.locator('.powerupCard').first();
+  await firstPower.waitFor({ state: 'visible' });
+  if (await firstPower.getAttribute('aria-expanded') !== 'false') throw new Error('powerup card did not start closed');
+  await firstPower.click();
+  if (await firstPower.getAttribute('aria-expanded') !== 'true') throw new Error('powerup card did not flip open');
+  await firstPower.click();
   const sealName = (await page.locator('.seasonSeal b').textContent())?.replace(/\s/g, '').toUpperCase();
   if (sealName !== 'UNICUP') throw new Error(`expected Unicup hero seal, received ${sealName ?? 'nothing'}`);
   await page.getByText('No hands. No weapons. All skill.', { exact: true }).waitFor({ state: 'visible' });
@@ -40,9 +49,10 @@ try {
   await page.getByLabel('Planet arena').selectOption('moon');
   await page.getByRole('slider', { name: /Music/ }).fill('0.25');
   await page.getByRole('button', { name: /create room/i }).click();
-  await page.locator('.roomCodeValue').waitFor({ state: 'visible' });
+  await page.locator('.roomInline').waitFor({ state: 'visible' });
+  if (await page.locator('.loyaltyHomeTrigger, .loyaltyHomePanel, #loyalty-frame-container').count()) throw new Error('home-only loyalty UI leaked into the match');
   const matchLabel = (await page.locator('.matchStatus > b').textContent()) ?? '';
-  if (!/moon.*champion.*first to 5/i.test(matchLabel)) throw new Error(`room did not preserve selected format/map: ${matchLabel}`);
+  if (!/moon.*first to 5/i.test(matchLabel)) throw new Error(`room did not preserve selected format/map: ${matchLabel}`);
   await page.setViewportSize({ width: 390, height: 844 });
   const visibleRosters = await page.locator('.teamRoster:visible').count();
   if (visibleRosters !== 2) throw new Error(`expected both mobile team rosters, received ${visibleRosters}`);
@@ -60,10 +70,12 @@ try {
   await page.setViewportSize({ width: 320, height: 568 });
   const shortViewport = await page.evaluate(() => ({
     deskTop: document.querySelector('.tournamentDesk')?.getBoundingClientRect().top ?? Infinity,
-    rootOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
+    rootOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    archiveOverflow: [...document.querySelectorAll('.archiveBand')].some(section => section.scrollWidth > section.clientWidth + 1)
   }));
   if (shortViewport.deskTop > 548) throw new Error(`short viewport has no tournament-desk hint: ${shortViewport.deskTop}`);
   if (shortViewport.rootOverflow) throw new Error('short viewport has horizontal overflow');
+  if (shortViewport.archiveOverflow) throw new Error('landing archive has horizontal overflow');
   if (errors.length) throw new Error(errors.join('\n'));
   console.log(JSON.stringify({ ok: true, oneClickMainMenu: true, errors }, null, 2));
 } finally {

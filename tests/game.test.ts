@@ -100,6 +100,20 @@ describe('classic Unicup shared rules', () => {
     expect(revealed.moveVisionUntilTurn.left).toBe(s.turn);
   });
 
+  it('blinds only the opposing side through the end of the current turn', () => {
+    const s = createInitialState('BLIND', 3);
+    addPlayer(s, 'l', 'Lefty', 'pigs', 'left');
+    addPlayer(s, 'r', 'Righty', 'tigers', 'right');
+    startGame(s, seq([0.5]));
+    s.powerPlayInventories.left.push({ type: 'blindness', availableTurn: s.turn, holderId: 'l' });
+
+    expect(usePowerPlay(s, 'l', { type: 'blindness' }, 1100)).toBe(true);
+    expect(s.blindnessUntilTurn).toEqual({ left: null, right: s.turn });
+    expect(s.blindnessUntilTurn.right! >= s.turn).toBe(true);
+    s.turn += 1;
+    expect(s.blindnessUntilTurn.right! >= s.turn).toBe(false);
+  });
+
   it('uses a larger normal ball and smaller physics babbles', () => {
     expect(FIELD.ballRadius).toBe(25);
     expect(FIELD.babbleRadius).toBe(18);
@@ -532,7 +546,7 @@ describe('classic Unicup shared rules', () => {
     expect(normalizeBoxType('yellowcard')).toBe('yellowCard');
     expect(normalizeBoxType('redcard')).toBe('redCard');
     expect(BOX_TYPES.readPlay.category).toBe('instant');
-    expect(BOX_TYPE_IDS).toHaveLength(14);
+    expect(BOX_TYPE_IDS).toHaveLength(15);
   });
 
   it('uses original-log-inspired box selection weights', () => {
