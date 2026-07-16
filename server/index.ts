@@ -194,7 +194,7 @@ const createSchema = z.object({
   team: z.enum(TEAM_IDS as [string, ...string[]]).optional(),
   mode: z.union([z.literal(1), z.literal(3), z.literal(5)]),
   mapId: z.enum(MAP_IDS as [string, ...string[]]).optional(),
-  roundTimeSeconds: z.number().int().min(1).max(60).optional()
+  roundTimeSeconds: z.number().int().min(2).max(60).optional()
 });
 const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), avatarUrl: avatarUrlSchema, team: z.enum(TEAM_IDS as [string, ...string[]]).optional() });
 const finiteVecSchema = z.object({ x: z.number().finite(), y: z.number().finite() }).strict();
@@ -290,7 +290,7 @@ io.on('connection', socket => {
 
   socket.on('room:roundTime', seconds => {
     const room = currentRoom(socket); if (!room) return;
-    if (!setRoundTime(room.state, seconds)) socket.emit('room:error', 'Round time must be 1-60 seconds and can only change before kickoff.');
+    if (!setRoundTime(room.state, seconds)) socket.emit('room:error', 'Round time must be 2-60 seconds and can only change before kickoff.');
     room.lastActiveAt = Date.now();
   });
 

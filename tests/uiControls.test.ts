@@ -14,7 +14,7 @@ describe('round time controls', () => {
     const html = renderToStaticMarkup(React.createElement(module.RoundTimeControl!, { value: 20, onChange: vi.fn() }));
     const document = new JSDOM(html).window.document;
     const slider = document.querySelector('input[type="range"]');
-    expect(slider?.getAttribute('min')).toBe('1');
+    expect(slider?.getAttribute('min')).toBe('2');
     expect(slider?.getAttribute('max')).toBe('60');
     expect(slider?.getAttribute('step')).toBe('1');
     expect(document.querySelectorAll('.roundTimeMilestone')).toHaveLength(12);

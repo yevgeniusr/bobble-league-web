@@ -45,13 +45,14 @@ describe('classic Unicup shared rules', () => {
     expect(MAP_IDS).toEqual(['stadium', 'moon', 'volcano', 'saturn']);
   });
 
-  it('configures an authoritative round time from 1 to 60 seconds', () => {
+  it('configures an authoritative round time from 2 to 60 seconds', () => {
     const s = createInitialState('ROUND', 3, 'stadium', 7);
     expect(s.config.roundTimeSeconds).toBe(7);
     expect(s.config.turnDurationMs).toBe(7000);
 
-    expect(setRoundTime(s, 1)).toBe(true);
-    expect(s.config.roundTimeSeconds).toBe(1);
+    expect(setRoundTime(s, 1)).toBe(false);
+    expect(setRoundTime(s, 2)).toBe(true);
+    expect(s.config.roundTimeSeconds).toBe(2);
     expect(setRoundTime(s, 60)).toBe(true);
     expect(s.config.turnDurationMs).toBe(60000);
     expect(setRoundTime(s, 0)).toBe(false);

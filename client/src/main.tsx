@@ -25,29 +25,22 @@ const MAP_SELECT_HINTS: Record<MapId, string> = {
   saturn: 'heavy rings'
 };
 
-// Developer console API (no cheat UI ships in the app). Available in dev
-// builds, with ?dev=1, or after localStorage.setItem('babble:devtools', '1').
-// Production servers reject these events unless ENABLE_CHEATS=true; every
-// successful grant publicly warns the whole room.
-const devtoolsEnabled =
-  import.meta.env.DEV ||
-  new URLSearchParams(location.search).has('dev') ||
-  localStorage.getItem('babble:devtools') === '1';
-if (devtoolsEnabled) {
-  (window as unknown as { __babbleDev?: unknown }).__babbleDev = {
-    listTypes: () => [...BOX_TYPE_IDS],
-    grantBox: (type: BoxTypeInput) => {
-      const normalized = normalizeBoxType(type);
-      if (!normalized) throw new Error(`Unknown box type "${type}". Try listTypes().`);
-      socket.emit('player:cheatBox', { type: normalized });
-      return `requested ${normalized} (server may reject; the whole room is warned)`;
-    },
-    grantAll: () => {
-      socket.emit('player:cheatBoxes');
-      return 'requested every box type (server may reject; the whole room is warned)';
-    }
-  };
-}
+// Developer console API (no cheat UI ships in the app). It is available in
+// every build; the server remains authoritative and warns the whole room after
+// every successful grant.
+(window as unknown as { __babbleDev?: unknown }).__babbleDev = {
+  listTypes: () => [...BOX_TYPE_IDS],
+  grantBox: (type: BoxTypeInput) => {
+    const normalized = normalizeBoxType(type);
+    if (!normalized) throw new Error(`Unknown box type "${type}". Try listTypes().`);
+    socket.emit('player:cheatBox', { type: normalized });
+    return `requested ${normalized} (server may reject; the whole room is warned)`;
+  },
+  grantAll: () => {
+    socket.emit('player:cheatBoxes');
+    return 'requested every box type (server may reject; the whole room is warned)';
+  }
+};
 
 type AppAuth = { isLoaded: boolean; userId: string | null; getToken: ClerkTokenGetter };
 

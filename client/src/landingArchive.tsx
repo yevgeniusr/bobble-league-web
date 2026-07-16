@@ -6,11 +6,11 @@ import { authHeaders, ClerkTokenGetter } from './auth';
 export const ROUND_TIME_MILESTONES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60] as const;
 
 export function RoundTimeControl({ value, onChange, disabled = false }: { value: number; onChange: (value: number) => void; disabled?: boolean }) {
-  const progress = (value - 1) / 59 * 100;
+  const progress = (value - 2) / 58 * 100;
   return <div className="roundTimeControl" style={{ '--round-progress': `${progress}%` } as React.CSSProperties}>
     <input
       type="range"
-      min="1"
+      min="2"
       max="60"
       step="1"
       list="round-time-milestones"
@@ -24,7 +24,7 @@ export function RoundTimeControl({ value, onChange, disabled = false }: { value:
       {ROUND_TIME_MILESTONES.map(seconds=><i
         key={seconds}
         className="roundTimeMilestone"
-        style={{ '--milestone': `${(seconds - 1) / 59 * 100}%` } as React.CSSProperties}
+        style={{ '--milestone': `${(seconds - 2) / 58 * 100}%` } as React.CSSProperties}
       ><b/><small>{seconds}</small></i>)}
     </span>
   </div>;

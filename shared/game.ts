@@ -58,7 +58,7 @@ export const MAX_RESOLVE_MS = 8000;
 // where headless WebGL is too slow to finish a scripted turn in 20s). Browsers have
 // no `process`, so players get the original-game 20s planning window.
 const TURN_DURATION_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_TURN_MS)) || 20000;
-export const DEFAULT_ROUND_TIME_SECONDS = Math.max(1, Math.min(60, Math.round(TURN_DURATION_MS / 1000)));
+export const DEFAULT_ROUND_TIME_SECONDS = Math.max(2, Math.min(60, Math.round(TURN_DURATION_MS / 1000)));
 const ALL_AIMED_RESOLVE_GRACE_MS = (typeof process !== 'undefined' && Number(process.env?.BABBLE_ALL_AIMED_GRACE_MS)) || 3000;
 export const BUMPER_PLANAR_DELTA_SPEED = PHYSICS_CONFIG.bumperPlanarDeltaSpeed;
 export const SUPER_BUMPER_POWER_MULTIPLIER = PHYSICS_CONFIG.superBumperPowerMultiplier;
@@ -171,7 +171,7 @@ export function setMap(state: GameState, mapId: MapId) {
   return true;
 }
 
-const validRoundTime = (seconds: number) => Number.isInteger(seconds) && seconds >= 1 && seconds <= 60;
+const validRoundTime = (seconds: number) => Number.isInteger(seconds) && seconds >= 2 && seconds <= 60;
 
 export function setRoundTime(state: GameState, seconds: number) {
   if (state.phase !== 'lobby' || !validRoundTime(seconds)) return false;

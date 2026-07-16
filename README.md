@@ -178,12 +178,8 @@ stable `user_id` and `first_name` fields.
 
 ## Developer console (testing hooks)
 
-There is no cheat UI in the app. For testing, a developer console API is
-attached to the page as `window.__babbleDev` when any of these is true:
-
-- dev build (`import.meta.env.DEV`)
-- the page URL has `?dev=1`
-- `localStorage.setItem('babble:devtools', '1')`
+There is no cheat UI in the app. For testing, the developer console API is
+attached to every build as `window.__babbleDev`, including production.
 
 API (run in the browser devtools console while in a room):
 
@@ -195,8 +191,9 @@ window.__babbleDev.grantAll();         // grant one of every type
 
 These emit real socket events; every successful grant publicly announces
 `CHEAT MODE: …` to the whole room. The server **rejects** cheat events when
-`NODE_ENV=production` unless `ENABLE_CHEATS=true` is set, and rate limits them
-(one grant per ~0.8s, one grant-all per 5s). The Playwright box-control check
+`NODE_ENV=production` unless `ENABLE_CHEATS=true` is set. The public Unicup
+deployment explicitly enables it and rate limits requests (one grant per
+~0.8s, one grant-all per 5s). The Playwright box-control check
 (`scripts/box-control-check.mjs`) enables both gates for its own test server.
 
 ## Assets

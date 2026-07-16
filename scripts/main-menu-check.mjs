@@ -27,6 +27,8 @@ try {
   page.on('pageerror', error => errors.push(String(error)));
   await page.goto(base, { waitUntil: 'networkidle' });
   await waitPlayerIdentity(page);
+  const cheatTypes = await page.evaluate(() => window.__babbleDev?.listTypes());
+  if (!Array.isArray(cheatTypes) || cheatTypes.length !== 15) throw new Error('production client did not expose window.__babbleDev.listTypes()');
   await page.getByRole('heading', { level: 1, name: /^Unicup$/i }).waitFor({ state: 'visible' });
   await page.getByRole('heading', { name: 'Power plays, decoded.' }).waitFor({ state: 'visible' });
   await page.getByRole('heading', { name: 'Meet the machines.' }).waitFor({ state: 'visible' });

@@ -1,11 +1,10 @@
 # Unicup Cheat Sheet
 
 Unicup cheats are developer tools for testing Power Play boxes. They are
-available only from the browser console, have no in-game cheat menu, and are
-blocked by production servers unless the server is explicitly configured to
-allow them.
+available only from the browser console and have no in-game cheat menu. The API
+is available in local and production builds.
 
-## Local use
+## Use
 
 1. Start the app:
 
@@ -62,29 +61,15 @@ unused box is already in your inventory.
 Accepted legacy aliases are `giantball`, `bumppadboost`, `sticky`, `ghost`,
 `goalswap`, `bighead`, `yellowcard`, and `redcard`.
 
-## Enabling the console hook
+## Production
 
-The hook is enabled automatically in the development build. For a local
-production build, either add `?dev=1` to the page URL or enable it persistently:
-
-```js
-localStorage.setItem('babble:devtools', '1')
-location.reload()
-```
-
-Remove the persistent setting with:
-
-```js
-localStorage.removeItem('babble:devtools')
-location.reload()
-```
-
-The browser hook only exposes the request API. A production-mode server still
-rejects every cheat request unless it starts with `ENABLE_CHEATS=true`.
+`window.__babbleDev` is exposed in every client build. The public Unicup server
+is configured with `ENABLE_CHEATS=true`, so `grantBox()` and `grantAll()` work
+there as well as locally. A separately hosted production-mode server must set
+the same environment variable to accept grant requests.
 
 ## Safeguards
 
-- Never enable `ENABLE_CHEATS` on the public production deployment.
 - A player must already be in a room before requesting a box.
 - Every successful grant posts a visible `CHEAT MODE` warning to the room.
 - Single-box grants are limited to one request every 800 ms per connection.

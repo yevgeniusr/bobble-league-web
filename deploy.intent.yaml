@@ -19,6 +19,7 @@ spec:
     env:
       NODE_ENV: production
       PORT: "3000"
+      ENABLE_CHEATS: "true"
       PUBLIC_HOSTNAME: unicup.rachkovan.com
       XTREMEPUSH_ALLOW_LOCAL: "false"
       XTREMEPUSH_LOYALTY_TOKEN_TTL: "300"
