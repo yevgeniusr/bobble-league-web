@@ -67,7 +67,7 @@ export function createXtremepushSender(options: {
   const fetcher = options.fetcher ?? globalThis.fetch;
   const logger = options.logger ?? console;
   const stats = createStats(false);
-  const importedProfiles = new Set<string>();
+  const importedProfiles = new Map<string, string>();
 
   if (!appToken || !fetcher) {
     return { enabled: false, send: async () => false, debugSnapshot: () => snapshot(stats, false) };
@@ -78,6 +78,7 @@ export function createXtremepushSender(options: {
   return {
     enabled: true,
     send: async event => {
+      if (event.payload.isBot === true) return false;
       const body = buildHitEventBody(appToken, event);
       stats.attempted += 1;
       try {
@@ -129,10 +130,19 @@ export function buildHitEventBody(appToken: string, event: AnalyticsEvent): Xtre
 }
 
 export function buildImportProfileBody(appToken: string, userId: string, event: AnalyticsEvent): XtremepushImportBody {
+  const avatarUrl = stringOrNull(event.payload.xpSubjectType) === 'country'
+    ? null
+    : stringOrNull(event.payload.avatarUrl);
+  const columns = ['user_id', 'first_name'];
+  const row: unknown[] = [userId, displayNameFor(event.payload, userId)];
+  if (avatarUrl) {
+    columns.push('avatar_url');
+    row.push(avatarUrl);
+  }
   return {
     apptoken: appToken,
-    columns: ['user_id', 'first_name'],
-    rows: [[userId, displayNameFor(event.payload, userId)]],
+    columns,
+    rows: [row],
     async: false
   };
 }
@@ -142,14 +152,15 @@ async function ensureProfile({ apiBase, appToken, event, fetcher, importedProfil
   appToken: string;
   event: AnalyticsEvent;
   fetcher: Fetcher;
-  importedProfiles: Set<string>;
+  importedProfiles: Map<string, string>;
   logger: Pick<Console, 'warn'> & Partial<Pick<Console, 'info'>>;
   stats: ReturnType<typeof createStats>;
   userId: string;
 }): Promise<{ ok: boolean; status?: number }> {
-  if (importedProfiles.has(userId)) return { ok: true };
-  stats.profilesAttempted += 1;
   const body = buildImportProfileBody(appToken, userId, event);
+  const profileSignature = JSON.stringify([body.columns, body.rows[0]]);
+  if (importedProfiles.get(userId) === profileSignature) return { ok: true };
+  stats.profilesAttempted += 1;
   try {
     const res = await fetcher(`${apiBase}/import/profile`, {
       method: 'POST',
@@ -159,7 +170,7 @@ async function ensureProfile({ apiBase, appToken, event, fetcher, importedProfil
     const response = await parseJsonResponse(res);
     const ok = res.ok && responseOk(response);
     if (ok) {
-      importedProfiles.add(userId);
+      importedProfiles.set(userId, profileSignature);
       stats.profilesSucceeded += 1;
       return { ok: true, status: res.status };
     }

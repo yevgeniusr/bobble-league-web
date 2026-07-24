@@ -86,7 +86,8 @@ function commonPayload(state: GameState, now = Date.now()): AnalyticsPayload {
     goalTarget: state.config.goalTarget,
     maxTurns: state.config.maxTurns,
     winner: state.winner,
-    mapId: state.mapId
+    mapId: state.mapId,
+    matchId: state.matchId
   };
 }
 
@@ -100,6 +101,9 @@ function playerFields(state: GameState, playerId?: string) {
     playerSide: player.side,
     playerTeam: player.team,
     playerName: player.name,
+    avatarUrl: player.avatarUrl,
+    isBot: player.isBot,
+    xpSubjectType: 'player',
     babbleIds: [...player.controlledBabbleIds]
   };
 }
@@ -193,12 +197,14 @@ export function buildGamePlayedEvents(state: GameState, now = Date.now()): Analy
   return Object.values(state.players).map(player => {
     const opponentSide = player.side === 'left' ? 'right' : 'left';
     const outcome: GameOutcome = state.winner === null ? 'draw' : state.winner === player.side ? 'won' : 'loss';
+    const cupPoints = outcome === 'won' ? 3 : outcome === 'draw' ? 2 : 1;
     return {
       name: 'gamePlayed',
       payload: {
         ...commonPayload(state, now),
         ...playerFields(state, player.id),
         outcome,
+        cupPoints,
         playerScore: state.score[player.side],
         opponentScore: state.score[opponentSide],
         opponentSide,

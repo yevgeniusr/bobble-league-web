@@ -191,12 +191,13 @@ const avatarUrlSchema = z.string().url().max(500).refine(value => {
 const createSchema = z.object({
   name: z.string().max(24),
   avatarUrl: avatarUrlSchema,
+  isBot: z.boolean().optional(),
   team: z.enum(TEAM_IDS as [string, ...string[]]).optional(),
   mode: z.union([z.literal(1), z.literal(3), z.literal(5)]),
   mapId: z.enum(MAP_IDS as [string, ...string[]]).optional(),
   roundTimeSeconds: z.number().int().min(2).max(60).optional()
 });
-const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), avatarUrl: avatarUrlSchema, team: z.enum(TEAM_IDS as [string, ...string[]]).optional() });
+const joinSchema = z.object({ roomCode: z.string().min(3).max(8), name: z.string().max(24), avatarUrl: avatarUrlSchema, isBot: z.boolean().optional(), team: z.enum(TEAM_IDS as [string, ...string[]]).optional() });
 const finiteVecSchema = z.object({ x: z.number().finite(), y: z.number().finite() }).strict();
 const powerPlaySchema = z.object({
   type: z.string().min(1).max(40),
@@ -213,7 +214,7 @@ io.on('connection', socket => {
     const state = createInitialState(roomCode, parsed.data.mode as GameMode, parsed.data.mapId as MapId | undefined, parsed.data.roundTimeSeconds);
     const room: Room = { state, inputs: {}, lastActiveAt: Date.now() };
     rooms.set(roomCode, room);
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined, parsed.data.avatarUrl);
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined, parsed.data.avatarUrl, parsed.data.isBot);
     cb({ ok: true, roomCode, playerId: socket.id });
   });
 
@@ -223,7 +224,7 @@ io.on('connection', socket => {
     const room = rooms.get(parsed.data.roomCode);
     if (!room) return cb({ ok: false, error: 'Room not found.' });
     if (Object.values(room.state.players).filter(p => p.connected).length >= 8) return cb({ ok: false, error: 'Room is full.' });
-    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined, parsed.data.avatarUrl);
+    joinRoom(socket, room, parsed.data.name, parsed.data.team as TeamId | undefined, parsed.data.avatarUrl, parsed.data.isBot);
     cb({ ok: true, roomCode: parsed.data.roomCode, playerId: socket.id });
   });
 
@@ -345,7 +346,7 @@ io.on('connection', socket => {
   socket.on('disconnect', () => { const room = currentRoom(socket); if (room) removePlayer(room.state, socket.id); });
 });
 
-function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId, avatarUrl?: string) {
+function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId, avatarUrl?: string, isBot = false) {
   socket.data.roomCode = room.state.roomCode;
   socket.data.playerId = socket.id;
   socket.join(room.state.roomCode);
@@ -353,7 +354,7 @@ function joinRoom(socket: IOSocket, room: Room, name: string, team?: TeamId, ava
   const seat = findDisconnectedSeat(room.state, name, socket.data.accountId);
   const reclaimed = seat ? reclaimPlayer(room.state, seat.id, socket.id) : null;
   if (!reclaimed) {
-    addPlayer(room.state, socket.id, name, team, undefined, socket.data.accountId, avatarUrl, socket.data.country);
+    addPlayer(room.state, socket.id, name, team, undefined, socket.data.accountId, avatarUrl, socket.data.country, isBot);
     if (team) setSideTeam(room.state, socket.id, team);
   }
   room.inputs[socket.id] = { ...blankInput };
@@ -371,6 +372,7 @@ function flushAnalytics(room: Room) {
 }
 
 function sendAnalyticsEvent(event: AnalyticsEvent) {
+  if (event.payload.isBot === true) return;
   void xtremepush.send(event);
   const countryEvent = countryAnalyticsEvent(event);
   if (countryEvent) void xtremepush.send(countryEvent);

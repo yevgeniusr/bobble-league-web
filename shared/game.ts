@@ -91,6 +91,8 @@ export function createInitialState(roomCode: string, mode: GameMode = 3, mapId: 
   const safeRoundTime = validRoundTime(roundTimeSeconds) ? roundTimeSeconds : DEFAULT_ROUND_TIME_SECONDS;
   const state: GameState = {
     roomCode,
+    matchId: `${roomCode}:pending`,
+    matchSequence: 0,
     phase: 'lobby',
     mode,
     mapId: selectedMap,
@@ -181,7 +183,7 @@ export function setRoundTime(state: GameState, seconds: number) {
   return true;
 }
 
-export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide, accountId?: string, avatarUrl?: string, country?: string): PlayerState {
+export function addPlayer(state: GameState, id: string, name: string, team: TeamId = randomTeam(Math.random), side?: PlayerSide, accountId?: string, avatarUrl?: string, country?: string, isBot = false): PlayerState {
   const chosenSide = side ?? chooseSide(state);
   const chosenTeam = state.sideTeams[chosenSide] ?? team;
   const p: PlayerState = {
@@ -190,6 +192,7 @@ export function addPlayer(state: GameState, id: string, name: string, team: Team
     ...(country ? { country } : {}),
     name: sanitizeName(name),
     ...(avatarUrl ? { avatarUrl } : {}),
+    isBot,
     side: chosenSide,
     team: chosenTeam,
     score: state.score[chosenSide],
@@ -270,6 +273,8 @@ export function applyFormation(state: GameState, side: PlayerSide, formation: Fo
 }
 
 export function startGame(state: GameState, rng: Rng = Math.random) {
+  state.matchSequence += 1;
+  state.matchId = `${state.roomCode}:${state.matchSequence}`;
   state.mapId = normalizeMapId(state.mapId);
   state.config = matchConfig(state.mode, state.mapId, state.config.roundTimeSeconds);
   state.phase = 'planning';

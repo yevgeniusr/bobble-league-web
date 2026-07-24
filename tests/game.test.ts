@@ -36,6 +36,26 @@ import { PHYSICS_CONFIG } from '../shared/physicsConfig';
 const seq = (values: number[]) => { let i = 0; return () => values[i++ % values.length]; };
 
 describe('classic Unicup shared rules', () => {
+  it('assigns a new stable match id at every kickoff', () => {
+    const state = createInitialState('MATCHID', 1);
+    const lobbyMatchId = state.matchId;
+
+    startGame(state, seq([0.5]));
+    const firstMatchId = state.matchId;
+    startGame(state, seq([0.5]));
+
+    expect(firstMatchId).not.toBe(lobbyMatchId);
+    expect(state.matchId).not.toBe(firstMatchId);
+    expect(firstMatchId).toMatch(/^MATCHID:/);
+  });
+
+  it('uses the stronger player launch-power baseline on every map', () => {
+    expect(PHYSICS_CONFIG.babbleImpulseScale).toBe(1.1);
+    for (const mapId of MAP_IDS) {
+      expect(PHYSICS_CONFIG.babbleImpulseScale * MAPS[mapId].physics.babbleImpulseScale).toBeGreaterThanOrEqual(0.94);
+    }
+  });
+
   it('defaults to stadium and snapshots the selected map config', () => {
     const s = createInitialState('MAPS', 3);
     expect(s.mapId).toBe('stadium');

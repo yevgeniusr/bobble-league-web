@@ -17,7 +17,7 @@ const envNumber = (name: string, fallback: number) => {
 };
 
 export const PHYSICS_CONFIG = {
-  babbleImpulseScale: envNumber('BABBLE_IMPULSE_SCALE', 0.9),
+  babbleImpulseScale: envNumber('BABBLE_IMPULSE_SCALE', 1.1),
   settleSpeed: envNumber('BABBLE_SETTLE_SPEED', 24),
   // Bumpers add one deterministic planar delta-speed on contact. Super power
   // is derived from the normal value so the competitive 5x contract cannot

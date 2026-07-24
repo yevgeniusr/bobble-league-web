@@ -64,11 +64,11 @@ async function main() {
   if (botCount !== 8) throw new Error('This gate is intentionally configured for 8 Betabots: 4 per team.');
   const bots = Array.from({ length: botCount }, (_, i) => connectBot(`Betabot ${i + 1}`));
   await waitFor(() => bots.every(b => b.socket.connected), 'all 8 bot sockets connected', 10000);
-  const created = await emitAck(bots[0].socket, 'room:create', { name: bots[0].name, team: 'pigs', mode: 1, mapId });
+  const created = await emitAck(bots[0].socket, 'room:create', { name: bots[0].name, isBot: true, team: 'pigs', mode: 1, mapId });
   if (!created.ok) throw new Error(`create failed: ${created.error}`);
   for (let i = 1; i < bots.length; i++) {
     const team = i % 2 === 0 ? 'pigs' : 'parrots';
-    const joined = await emitAck(bots[i].socket, 'room:join', { roomCode: created.roomCode, name: bots[i].name, team });
+    const joined = await emitAck(bots[i].socket, 'room:join', { roomCode: created.roomCode, name: bots[i].name, isBot: true, team });
     if (!joined.ok) throw new Error(`join ${i} failed: ${joined.error}`);
   }
   for (const bot of bots) bot.socket.emit('player:formation', 'forward');
