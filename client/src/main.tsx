@@ -12,6 +12,7 @@ import { authHeaders, ClerkTokenGetter, fetchUnicupIdentity, UnicupIdentity } fr
 import { BabbleLeague3DRenderer, PlacingGhost } from './render3d';
 import { heldPowerPlayForPlayer } from './gameUiModel';
 import { buildInviteUrl, CountrySelector, parseInviteCode, RoundTimeControl, TournamentArchive, visibleRoundTimeSeconds } from './landingArchive';
+import { LaunchDrag, launchIntentForDrag, updateLaunchDrag } from './launchInput';
 import './styles.css';
 
 type Sock = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -794,7 +795,7 @@ function BottomActionBar({ state, you, placing, setPlacing, aiming, setAiming }:
 }
 
 type PointerMode =
-  | { kind: 'launch'; babbleId: string; start: Vec; current: Vec }
+  | LaunchDrag
   | { kind: 'place'; anchor: Vec; angle: number }
   | { kind: 'rotatePad'; id: string; center: Vec; angle: number };
 
@@ -954,7 +955,10 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming, blinded }:
       }
       return;
     }
-    if (mode?.kind === 'launch') { setMode({ ...mode, current: p }); return; }
+    if (mode?.kind === 'launch') {
+      setMode(updateLaunchDrag(mode, p, intent => socket.emit('player:launch', intent)));
+      return;
+    }
     if (placing) setPlacing({ ...placing, pos: clampPos(p) });
   };
   const up = () => {
@@ -966,14 +970,11 @@ function Game3D({ state, you, placing, setPlacing, aiming, setAiming, blinded }:
     } else if (mode?.kind === 'rotatePad') {
       socket.emit('player:fieldRotate', { id: mode.id, angle: mode.angle });
     } else if (mode?.kind === 'launch') {
-      const dx = mode.start.x - mode.current.x;
-      const dy = mode.start.y - mode.current.y;
-      const pull = Math.hypot(dx, dy);
-      // a click with no pull is ignored so a launch is never wasted by accident
-      if (pull >= 8) {
+      const intent = launchIntentForDrag(mode);
+      if (intent) {
         audioManager.play('launch');
         audioManager.play('ballKick', { volume: 0.45 });
-        socket.emit('player:launch', { babbleId: mode.babbleId, aimAngle: Math.atan2(dy, dx), impulse: Math.min(900, Math.max(1, pull * 6)) });
+        socket.emit('player:launch', intent);
       }
     }
     // always drop the pointer mode: a stale mode must never block later launches

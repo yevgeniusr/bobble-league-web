@@ -140,8 +140,9 @@ describe('Xtremepush gameplay analytics payloads', () => {
 
   it('builds one personalized gamePlayed result for every participant', () => {
     const state = createInitialState('ANL6', 1);
-    addPlayer(state, 'left-socket', 'Lefty', 'pigs', 'left');
-    addPlayer(state, 'right-socket', 'Righty', 'tigers', 'right');
+    addPlayer(state, 'left-socket', 'Lefty', 'pigs', 'left', 'unicup:left', 'https://img.clerk.com/left.png');
+    addPlayer(state, 'right-socket', 'Righty', 'tigers', 'right', 'unicup:right');
+    startGame(state, seq([0.5]));
     state.phase = 'finished';
     state.winner = 'left';
     state.score = { left: 3, right: 1 };
@@ -151,10 +152,26 @@ describe('Xtremepush gameplay analytics payloads', () => {
     expect(events).toHaveLength(2);
     expect(events.map(event => event.name)).toEqual(['gamePlayed', 'gamePlayed']);
     expect(events[0].payload).toMatchObject({
-      playerId: 'left-socket', playerName: 'Lefty', outcome: 'won', playerScore: 3, opponentScore: 1
+      playerId: 'left-socket',
+      playerName: 'Lefty',
+      avatarUrl: 'https://img.clerk.com/left.png',
+      isBot: false,
+      xpSubjectType: 'player',
+      matchId: expect.stringMatching(/^ANL6:/),
+      cupPoints: 3,
+      outcome: 'won',
+      playerScore: 3,
+      opponentScore: 1
     });
     expect(events[1].payload).toMatchObject({
-      playerId: 'right-socket', playerName: 'Righty', outcome: 'loss', playerScore: 1, opponentScore: 3
+      playerId: 'right-socket',
+      playerName: 'Righty',
+      isBot: false,
+      matchId: events[0].payload.matchId,
+      cupPoints: 1,
+      outcome: 'loss',
+      playerScore: 1,
+      opponentScore: 3
     });
   });
 });
@@ -331,12 +348,24 @@ describe('Xtremepush backend hit-event sender', () => {
   });
 
   it('builds the profile import body used to make users visible before events are hit', () => {
-    expect(buildImportProfileBody('token-for-test', 'babble-player:lefty', event)).toEqual({
+    const eventWithAvatar = { ...event, payload: { ...event.payload, avatarUrl: 'https://img.clerk.com/left.png' } };
+    expect(buildImportProfileBody('token-for-test', 'babble-player:lefty', eventWithAvatar)).toEqual({
       apptoken: 'token-for-test',
-      columns: ['user_id', 'first_name'],
-      rows: [['babble-player:lefty', 'Lefty']],
+      columns: ['user_id', 'first_name', 'avatar_url'],
+      rows: [['babble-player:lefty', 'Lefty', 'https://img.clerk.com/left.png']],
       async: false
     });
+  });
+
+  it('does not forward bot gameplay or import bot profiles', async () => {
+    const fetcher = vi.fn();
+    const sender = createXtremepushSender({ appToken: 'token-for-test', fetcher, logger: { warn: vi.fn() } });
+    const botEvent = { ...event, payload: { ...event.payload, isBot: true } };
+
+    await expect(sender.send(botEvent)).resolves.toBe(false);
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(sender.debugSnapshot()).toMatchObject({ attempted: 0, profilesAttempted: 0 });
   });
 
   it('imports the user profile before posting gameplay analytics to Xtremepush hit/event', async () => {

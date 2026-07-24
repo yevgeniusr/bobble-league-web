@@ -516,6 +516,7 @@ export type PlayerState = {
   country?: string;
   name: string;
   avatarUrl?: string;
+  isBot: boolean;
   side: PlayerSide;
   team: TeamId;
   score: number;
@@ -582,6 +583,8 @@ export type MatchConfig = {
 
 export type GameState = {
   roomCode: string;
+  matchId: string;
+  matchSequence: number;
   phase: RoomPhase;
   mode: GameMode;
   mapId: MapId;
@@ -620,8 +623,8 @@ export type GameState = {
 };
 
 export type ClientToServerEvents = {
-  'room:create': (payload: { name: string; avatarUrl?: string; team?: TeamId; mode: GameMode; mapId?: MapId; roundTimeSeconds?: number }, cb: (r: JoinResult) => void) => void;
-  'room:join': (payload: { roomCode: string; name: string; avatarUrl?: string; team?: TeamId }, cb: (r: JoinResult) => void) => void;
+  'room:create': (payload: { name: string; avatarUrl?: string; isBot?: boolean; team?: TeamId; mode: GameMode; mapId?: MapId; roundTimeSeconds?: number }, cb: (r: JoinResult) => void) => void;
+  'room:join': (payload: { roomCode: string; name: string; avatarUrl?: string; isBot?: boolean; team?: TeamId }, cb: (r: JoinResult) => void) => void;
   'player:input': (input: PlayerInput) => void;
   'player:launch': (intent: TurnIntent) => void;
   'player:power': (use: PowerPlayUse) => void;
