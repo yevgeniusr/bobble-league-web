@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "Unicup: a web-based multiplayer Universe Cup played by handless bobbleheads on PlanetBall.",
+  "description": "Unicup: a web-based multiplayer Universe Cup played by handless robots on PlanetBall.",
+  "homepage": "https://unicup.rachkovan.com/",
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "build": "tsc -p tsconfig.json --noEmit && vite build",

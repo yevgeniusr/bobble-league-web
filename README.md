@@ -1,6 +1,12 @@
 # Unicup Web
 
-A production-oriented, web-based multiplayer Universe Cup played by handless bobbleheads. It uses an authoritative Node/Socket.IO server, a React/Vite canvas client, deterministic shared game rules, four lore teams and maps, first-to-1/3/5 game modes, and mystery box power-ups.
+A web-based multiplayer Universe Cup played by handless robots. It uses an authoritative Node/Socket.IO server, a React/Vite client with Three.js rendering, deterministic shared game rules, four robot teams and maps, first-to-1/3/5 game modes, and mystery box power-ups.
+
+**[Play Unicup online](https://unicup.rachkovan.com/)** — no installation required; guests can play immediately.
+
+Create a room, share its invite link or room code with a friend, and start a match once both players have joined. Drag a robot backward and release to launch it.
+
+The game is branded **Unicup**; the repository and package retain the original `bobble-league-web` name for deployment compatibility.
 
 > This implementation uses original code, UI, lore, and generated visual assets. It does not copy proprietary assets.
 
@@ -11,8 +17,8 @@ A production-oriented, web-based multiplayer Universe Cup played by handless bob
 - Pre-start map selection: PlanetBall, Moon, Coral Foundry, or Saturn. Each map
   has distinct generated field/surroundings art and gravity derived from the
   proven Original physics baseline.
-- Four lore teams with custom crests: PlanetBall Pioneers, Saturn Ringkeepers,
-  Lunar Relay, and Coral Forge Union.
+- Four robot teams with distinct chassis, physics profiles, and portraits: Flux Orbs,
+  Forge Blocks, Vector Wedges, and Halo Walkers.
 - A configurable 1-60 second round clock (20 seconds by default), synchronized
   against timestamps from the authoritative server.
 - Lobby rosters, avatars, player labels, and pre-kickoff side switching.
@@ -21,7 +27,8 @@ A production-oriented, web-based multiplayer Universe Cup played by handless bob
 - Unicup soccer mechanics: drag-launch, bounce, score goals.
 - Box spawning: every second kickoff turn creates one random top/bottom lane box.
 - Power Play boxes: Beach Ball, Move Ball, Swap Goals, Big Bumpers, Boost,
-  Sticky Goo, Ramp, Block, Big Head, Ghosted, Move Player, and Read the Play.
+  Sticky Goo, Trampoline, Block, Big Head, Ghosted, Move Player, Yellow Card,
+  Red Card, Read the Play, and Blindness.
 - Responsive web UI and Docker/Coolify-ready deployment.
 
 ## Physics engine
@@ -201,7 +208,8 @@ deployment explicitly enables it and rate limits requests (one grant per
 Generated art lives in `public/assets` (served at `/assets/...`):
 
 - `/assets/abilities/<boxType>.png` - ability icons, including `readPlay.png`.
-- `/assets/teams/*.webp` - the four team crests.
+- `/assets/teams/*-robot.webp` - the four robot team portraits.
+- `/assets/robots/*-surface.jpg` - textures for the 3D robot chassis.
 - `/assets/maps/*-field.jpg` and `*-surroundings.jpg` - map-specific court
   textures and arena backdrops.
 - `/assets/sprites/ball-texture.png`, `goal-gates.png`, `field-props.png` —
@@ -210,6 +218,9 @@ Generated art lives in `public/assets` (served at `/assets/...`):
 - `/assets/manifest.json` — stable asset paths.
 
 ## Production
+
+Public game: **[https://unicup.rachkovan.com/](https://unicup.rachkovan.com/)**.
+The deployment configuration is documented in [`deploy.intent.yaml`](deploy.intent.yaml).
 
 ```bash
 npm ci
